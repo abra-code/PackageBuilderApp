@@ -181,7 +181,7 @@
                                                     "id": 106,
                                                     "properties": {
                                                         "title": "Browse...",
-                                                        "disabled": true
+                                                        "actionID": "PackageBuilder.choose.artifacts"
                                                     }
                                                 }
                                             ]
@@ -226,6 +226,12 @@
                                                                     120,
                                                                     45
                                                                 ],
+                                                                "actionID": "PackageBuilder.payload.select",
+                                                                "onDropTypes": [
+                                                                    "public.file-url",
+                                                                    "public.folder"
+                                                                ],
+                                                                "onDropActionID": "PackageBuilder.payload.drop",
                                                                 "frame": {
                                                                     "minHeight": 140,
                                                                     "maxWidth": "infinity",
@@ -246,6 +252,7 @@
                                                                     "properties": {
                                                                         "systemImage": "plus",
                                                                         "disabled": true,
+                                                                        "actionID": "PackageBuilder.payload.add",
                                                                         "help": "Add an artifact to the payload"
                                                                     }
                                                                 },
@@ -255,6 +262,7 @@
                                                                     "properties": {
                                                                         "systemImage": "minus",
                                                                         "disabled": true,
+                                                                        "actionID": "PackageBuilder.payload.remove",
                                                                         "help": "Remove the selected payload item"
                                                                     }
                                                                 },
@@ -264,6 +272,7 @@
                                                                     "properties": {
                                                                         "systemImage": "chevron.up",
                                                                         "disabled": true,
+                                                                        "actionID": "PackageBuilder.payload.move",
                                                                         "help": "Move the selected item up"
                                                                     }
                                                                 },
@@ -273,6 +282,7 @@
                                                                     "properties": {
                                                                         "systemImage": "chevron.down",
                                                                         "disabled": true,
+                                                                        "actionID": "PackageBuilder.payload.move",
                                                                         "help": "Move the selected item down"
                                                                     }
                                                                 },
@@ -337,7 +347,9 @@
                                                                                         "id": 110,
                                                                                         "properties": {
                                                                                             "prompt": "Path to the artifact",
-                                                                                            "disabled": true
+                                                                                            "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
+                                                                                            "help": "Absolute, or relative to the artifacts folder or the project file"
                                                                                         }
                                                                                     },
                                                                                     {
@@ -345,7 +357,8 @@
                                                                                         "id": 111,
                                                                                         "properties": {
                                                                                             "title": "Browse...",
-                                                                                            "disabled": true
+                                                                                            "disabled": true,
+                                                                                            "actionID": "PackageBuilder.payload.browse"
                                                                                         }
                                                                                     }
                                                                                 ]
@@ -371,7 +384,9 @@
                                                                                         "id": 112,
                                                                                         "properties": {
                                                                                             "prompt": "/usr/local/bin/tool",
-                                                                                            "disabled": true
+                                                                                            "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
+                                                                                            "help": "Absolute path on the target volume, including the item's own name"
                                                                                         }
                                                                                     },
                                                                                     {
@@ -379,49 +394,64 @@
                                                                                         "id": 121,
                                                                                         "properties": {
                                                                                             "title": "Presets",
-                                                                                            "disabled": true
+                                                                                            "disabled": true,
+                                                                                            "help": "Fill the destination with a standard folder plus the source's name"
                                                                                         },
                                                                                         "children": [
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1211,
                                                                                                 "properties": {
-                                                                                                    "title": "/Applications"
+                                                                                                    "title": "/Applications",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1212,
                                                                                                 "properties": {
-                                                                                                    "title": "/usr/local/bin"
+                                                                                                    "title": "/usr/local/bin",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1213,
                                                                                                 "properties": {
-                                                                                                    "title": "/Library/Frameworks"
+                                                                                                    "title": "/Library/Frameworks",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1214,
                                                                                                 "properties": {
-                                                                                                    "title": "/Library/Application Support"
+                                                                                                    "title": "/Library/Application Support/${NAME}",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1215,
                                                                                                 "properties": {
-                                                                                                    "title": "/Library/LaunchDaemons"
+                                                                                                    "title": "/Library/LaunchDaemons",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1216,
                                                                                                 "properties": {
-                                                                                                    "title": "/Library/LaunchAgents"
+                                                                                                    "title": "/Library/LaunchAgents",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             },
                                                                                             {
                                                                                                 "type": "Button",
+                                                                                                "id": 1217,
                                                                                                 "properties": {
-                                                                                                    "title": "/Library/PreferencePanes"
+                                                                                                    "title": "/Library/PreferencePanes",
+                                                                                                    "actionID": "PackageBuilder.payload.destination.preset"
                                                                                                 }
                                                                                             }
                                                                                         ]
@@ -450,6 +480,7 @@
                                                                                         "properties": {
                                                                                             "prompt": "root",
                                                                                             "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
                                                                                             "frame": {
                                                                                                 "width": 90
                                                                                             }
@@ -467,6 +498,7 @@
                                                                                         "properties": {
                                                                                             "prompt": "wheel",
                                                                                             "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
                                                                                             "frame": {
                                                                                                 "width": 90
                                                                                             }
@@ -484,6 +516,7 @@
                                                                                         "properties": {
                                                                                             "prompt": "0755",
                                                                                             "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
                                                                                             "frame": {
                                                                                                 "width": 70
                                                                                             }
@@ -517,7 +550,8 @@
                                                                                 "properties": {
                                                                                     "title": "Universal (x86_64 + arm64)",
                                                                                     "style": "checkbox",
-                                                                                    "disabled": true
+                                                                                    "disabled": true,
+                                                                                    "actionID": "PackageBuilder.field.changed"
                                                                                 }
                                                                             },
                                                                             {
@@ -526,7 +560,8 @@
                                                                                 "properties": {
                                                                                     "title": "Signed with Developer ID",
                                                                                     "style": "checkbox",
-                                                                                    "disabled": true
+                                                                                    "disabled": true,
+                                                                                    "actionID": "PackageBuilder.field.changed"
                                                                                 }
                                                                             },
                                                                             {
@@ -535,7 +570,8 @@
                                                                                 "properties": {
                                                                                     "title": "Hardened runtime",
                                                                                     "style": "checkbox",
-                                                                                    "disabled": true
+                                                                                    "disabled": true,
+                                                                                    "actionID": "PackageBuilder.field.changed"
                                                                                 }
                                                                             },
                                                                             {
@@ -544,7 +580,8 @@
                                                                                 "properties": {
                                                                                     "title": "Secure timestamp",
                                                                                     "style": "checkbox",
-                                                                                    "disabled": true
+                                                                                    "disabled": true,
+                                                                                    "actionID": "PackageBuilder.field.changed"
                                                                                 }
                                                                             },
                                                                             {
@@ -564,7 +601,9 @@
                                                                                         "id": 120,
                                                                                         "properties": {
                                                                                             "prompt": "--version (blank = skip)",
-                                                                                            "disabled": true
+                                                                                            "disabled": true,
+                                                                                            "actionID": "PackageBuilder.field.changed",
+                                                                                            "help": "Run the artifact with this flag and compare against the project version"
                                                                                         }
                                                                                     }
                                                                                 ]
@@ -689,7 +728,7 @@
                                                         "id": 132,
                                                         "properties": {
                                                             "title": "Read from artifact",
-                                                            "disabled": true,
+                                                            "actionID": "PackageBuilder.read.version",
                                                             "help": "Read the version from the selected payload item"
                                                         }
                                                     },
@@ -967,7 +1006,7 @@
                                                         "id": 152,
                                                         "properties": {
                                                             "title": "Read from artifact",
-                                                            "disabled": true,
+                                                            "actionID": "PackageBuilder.read.minos",
                                                             "help": "Read the deployment target from the selected payload item"
                                                         }
                                                     },

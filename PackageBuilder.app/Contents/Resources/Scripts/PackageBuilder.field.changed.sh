@@ -37,6 +37,76 @@ fi
 
 failed=0
 
+# --- the payload inspector ----------------------------------------------------
+# These controls edit the selected entry of COMPONENTS/0/PAYLOAD, so their key
+# path depends on the selection rather than on the view id alone.
+if is_payload_field "$vid"; then
+    idx="$(selected_payload_index)"
+    if [ -z "$idx" ]; then
+        # No row is selected, so there is nothing this value belongs to. The
+        # inspector is disabled in that state; a value arriving anyway is the
+        # engine echoing a programmatic clear, not an edit.
+        dbg "field.changed: payload view $vid with no selection"
+        model_unlock
+        exit 0
+    fi
+
+    if is_verify_toggle "$vid"; then
+        case "$value" in
+            1|true|TRUE|YES) new=1 ;;
+            *) new=0 ;;
+        esac
+        # Each of the four is stored in a shape a plain bool write cannot reach:
+        # two are projections of a list and a string, two are ordinary bools
+        # that still need their VERIFY dict to exist first.
+        case "$vid" in
+            "$VERIFY_UNIVERSAL_ID") old="$(payload_universal_get "$idx")" ;;
+            "$VERIFY_SIGNED_ID")    old="$(payload_signed_get "$idx")" ;;
+            "$VERIFY_HARDENED_ID")  old="$(payload_bool_get "$idx" VERIFY/HARDENED_RUNTIME)" ;;
+            *)                      old="$(payload_bool_get "$idx" VERIFY/SECURE_TIMESTAMP)" ;;
+        esac
+        if [ "$new" = "$old" ]; then
+            model_unlock
+            exit 0
+        fi
+        case "$vid" in
+            "$VERIFY_UNIVERSAL_ID") payload_universal_set "$idx" "$new" || failed=1 ;;
+            "$VERIFY_SIGNED_ID")    payload_signed_set "$idx" "$new" || failed=1 ;;
+            "$VERIFY_HARDENED_ID")  payload_bool_set "$idx" VERIFY/HARDENED_RUNTIME "$new" || failed=1 ;;
+            *)                      payload_bool_set "$idx" VERIFY/SECURE_TIMESTAMP "$new" || failed=1 ;;
+        esac
+    else
+        pkey="$(payload_field_key "$vid")"
+        if [ "$value" = "$(payload_get "$idx" "$pkey")" ]; then
+            model_unlock
+            exit 0
+        fi
+        case "$pkey" in
+            VERIFY/*) ensure_payload_verify "$idx" || failed=1 ;;
+        esac
+        if [ "$failed" != "1" ]; then
+            payload_set "$idx" "$pkey" "$value" || failed=1
+        fi
+    fi
+
+    if [ "$failed" = "1" ]; then
+        model_unlock
+        dbg "field.changed: payload write for view $vid failed"
+        set_status "Could not record that change"
+        exit 0
+    fi
+    mark_dirty
+    # Source, destination and mode are the table's three visible columns, so
+    # editing one has to be repeated there. Setting the rows drops the
+    # selection, hence the reselect.
+    if is_payload_column_field "$vid"; then
+        populate_payload_table
+        select_payload_row "$idx"
+    fi
+    model_unlock
+    exit 0
+fi
+
 # The two architecture toggles are one array in the model, so they are written
 # together from both toggles' current states rather than through the field map.
 if [ "$vid" = "$ARCH_ARM64_ID" ] || [ "$vid" = "$ARCH_X86_64_ID" ]; then

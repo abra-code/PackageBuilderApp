@@ -83,6 +83,78 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.select",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.drop",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.add",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_OBJECT_DIALOG": {
+        "MESSAGE": "Choose an artifact to add to the payload",
+        "BUTTON_PROMPT": "Add"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.remove",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.move",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.browse",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_OBJECT_DIALOG": {
+        "MESSAGE": "Choose the artifact this payload item installs",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.destination.preset",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.artifacts",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FOLDER_DIALOG": {
+        "MESSAGE": "Choose the folder the payload sources are relative to",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.read.version",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.read.minos",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "app.will.terminate",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"
