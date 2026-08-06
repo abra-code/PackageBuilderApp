@@ -1,0 +1,44 @@
+{
+  "FORMAT_VERSION": 1,
+  "PROJECT": {
+    "NAME": "",
+    "VERSION": "",
+    "MIN_OS_VERSION": "",
+    "ARTIFACTS_DIR": "",
+    "OUTPUT_DIR": "",
+    "PACKAGE_NAME": "${NAME}_${VERSION}.pkg"
+  },
+  "COMPONENTS": [
+    {
+      "IDENTIFIER": "",
+      "INSTALL_LOCATION": "/",
+      "OVERWRITE_PERMISSIONS": false,
+      "RELOCATABLE": false,
+      "AUTH": "Root",
+      "PREINSTALL": "",
+      "POSTINSTALL": "",
+      "PAYLOAD": [
+      ]
+    }
+  ],
+  "DISTRIBUTION": {
+    "TITLE": "",
+    "HOST_ARCHITECTURES": [
+      "arm64",
+      "x86_64"
+    ],
+    "CUSTOMIZE": "never",
+    "REQUIRE_SCRIPTS": false,
+    "RESOURCES": {
+      "README": "",
+      "LICENSE": "",
+      "WELCOME": "",
+      "CONCLUSION": "",
+      "BACKGROUND": ""
+    }
+  },
+  "SIGNING": {
+    "ENABLED": true,
+    "INSTALLER_IDENTITY": ""
+  }
+}

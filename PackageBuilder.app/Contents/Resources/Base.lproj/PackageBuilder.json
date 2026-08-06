@@ -1,0 +1,1616 @@
+{
+    "type": "NavigationStack",
+    "content": {
+        "type": "VStack",
+        "properties": {
+            "spacing": 0,
+            "frame": {
+                "minWidth": 860,
+                "minHeight": 560,
+                "idealWidth": 980,
+                "idealHeight": 720,
+                "maxWidth": "infinity",
+                "maxHeight": "infinity"
+            }
+        },
+        "toolbar": [
+            {
+                "type": "ToolbarItemGroup",
+                "id": 90,
+                "properties": {
+                    "placement": "navigation"
+                },
+                "children": [
+                    {
+                        "type": "Button",
+                        "id": 30,
+                        "properties": {
+                            "title": "Build Package",
+                            "systemImage": "shippingbox",
+                            "disabled": true,
+                            "help": "Verify the payload, build the component and distribution packages, and sign the result"
+                        }
+                    },
+                    {
+                        "type": "Button",
+                        "id": 31,
+                        "properties": {
+                            "title": "Stop",
+                            "systemImage": "stop.circle",
+                            "disabled": true,
+                            "help": "Stop the current operation"
+                        }
+                    },
+                    {
+                        "type": "Menu",
+                        "id": 32,
+                        "properties": {
+                            "title": "Actions",
+                            "disabled": true,
+                            "help": "Run a single stage of the pipeline, or import and export"
+                        },
+                        "children": [
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Verify Payload"
+                                }
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Build Component Only"
+                                }
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Build Distribution Only"
+                                }
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Sign Only"
+                                }
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Inspect Built Package"
+                                }
+                            },
+                            {
+                                "type": "Divider"
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Export Packaging Script..."
+                                }
+                            },
+                            {
+                                "type": "Button",
+                                "properties": {
+                                    "title": "Import Packages.app Project..."
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "Button",
+                        "id": 33,
+                        "properties": {
+                            "title": "Notarize...",
+                            "systemImage": "checkmark.seal",
+                            "disabled": true,
+                            "help": "Hand the signed package to Notarize.app"
+                        }
+                    }
+                ]
+            }
+        ],
+        "children": [
+            {
+                "type": "VSplitView",
+                "id": 41,
+                "properties": {
+                    "frame": {
+                        "maxWidth": "infinity",
+                        "maxHeight": "infinity"
+                    }
+                },
+                "children": [
+                    {
+                        "type": "TabView",
+                        "id": 40,
+                        "properties": {
+                            "frame": {
+                                "minHeight": 300,
+                                "idealHeight": 440,
+                                "maxWidth": "infinity",
+                                "maxHeight": "infinity"
+                            }
+                        },
+                        "children": [
+                            {
+                                "type": "Tab",
+                                "properties": {
+                                    "title": "Payload",
+                                    "systemImage": "doc.on.doc"
+                                },
+                                "content": {
+                                    "type": "VStack",
+                                    "properties": {
+                                        "spacing": 8,
+                                        "alignment": "leading",
+                                        "padding": "default",
+                                        "frame": {
+                                            "maxWidth": "infinity",
+                                            "maxHeight": "infinity"
+                                        }
+                                    },
+                                    "children": [
+                                        {
+                                            "type": "HStack",
+                                            "properties": {
+                                                "spacing": 8
+                                            },
+                                            "children": [
+                                                {
+                                                    "type": "Text",
+                                                    "properties": {
+                                                        "text": "Artifacts folder",
+                                                        "frame": {
+                                                            "width": 110,
+                                                            "alignment": "trailing"
+                                                        }
+                                                    }
+                                                },
+                                                {
+                                                    "type": "TextField",
+                                                    "id": 105,
+                                                    "properties": {
+                                                        "prompt": "Folder the payload sources are relative to",
+                                                        "actionID": "PackageBuilder.field.changed",
+                                                        "help": "Payload sources may refer to this folder as ${ARTIFACTS_DIR}"
+                                                    }
+                                                },
+                                                {
+                                                    "type": "Button",
+                                                    "id": 106,
+                                                    "properties": {
+                                                        "title": "Browse...",
+                                                        "disabled": true
+                                                    }
+                                                }
+                                            ]
+                                        },
+                                        {
+                                            "type": "HSplitView",
+                                            "properties": {
+                                                "frame": {
+                                                    "maxWidth": "infinity",
+                                                    "maxHeight": "infinity"
+                                                }
+                                            },
+                                            "children": [
+                                                {
+                                                    "type": "VStack",
+                                                    "properties": {
+                                                        "spacing": 6,
+                                                        "alignment": "leading",
+                                                        "frame": {
+                                                            "minWidth": 330,
+                                                            "idealWidth": 420,
+                                                            "maxHeight": "infinity"
+                                                        }
+                                                    },
+                                                    "children": [
+                                                        {
+                                                            "type": "Table",
+                                                            "id": 100,
+                                                            "properties": {
+                                                                "columns": [
+                                                                    "Source",
+                                                                    "Destination",
+                                                                    "Mode"
+                                                                ],
+                                                                "widths": [
+                                                                    150,
+                                                                    190,
+                                                                    60
+                                                                ],
+                                                                "minWidths": [
+                                                                    90,
+                                                                    120,
+                                                                    45
+                                                                ],
+                                                                "frame": {
+                                                                    "minHeight": 140,
+                                                                    "maxWidth": "infinity",
+                                                                    "maxHeight": "infinity"
+                                                                }
+                                                            }
+                                                        },
+                                                        {
+                                                            "type": "HStack",
+                                                            "properties": {
+                                                                "spacing": 6,
+                                                                "controlSize": "small"
+                                                            },
+                                                            "children": [
+                                                                {
+                                                                    "type": "Button",
+                                                                    "id": 101,
+                                                                    "properties": {
+                                                                        "systemImage": "plus",
+                                                                        "disabled": true,
+                                                                        "help": "Add an artifact to the payload"
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "type": "Button",
+                                                                    "id": 102,
+                                                                    "properties": {
+                                                                        "systemImage": "minus",
+                                                                        "disabled": true,
+                                                                        "help": "Remove the selected payload item"
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "type": "Button",
+                                                                    "id": 103,
+                                                                    "properties": {
+                                                                        "systemImage": "chevron.up",
+                                                                        "disabled": true,
+                                                                        "help": "Move the selected item up"
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "type": "Button",
+                                                                    "id": 104,
+                                                                    "properties": {
+                                                                        "systemImage": "chevron.down",
+                                                                        "disabled": true,
+                                                                        "help": "Move the selected item down"
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "type": "Spacer"
+                                                                }
+                                                            ]
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    "type": "ScrollView",
+                                                    "properties": {
+                                                        "axis": "vertical",
+                                                        "frame": {
+                                                            "minWidth": 300,
+                                                            "maxWidth": "infinity",
+                                                            "maxHeight": "infinity"
+                                                        }
+                                                    },
+                                                    "content": {
+                                                        "type": "VStack",
+                                                        "properties": {
+                                                            "spacing": 10,
+                                                            "alignment": "leading",
+                                                            "padding": {
+                                                                "leading": 10
+                                                            }
+                                                        },
+                                                        "children": [
+                                                            {
+                                                                "type": "GroupBox",
+                                                                "properties": {
+                                                                    "title": "Payload item"
+                                                                },
+                                                                "children": [
+                                                                    {
+                                                                        "type": "VStack",
+                                                                        "properties": {
+                                                                            "spacing": 6,
+                                                                            "alignment": "leading"
+                                                                        },
+                                                                        "children": [
+                                                                            {
+                                                                                "type": "HStack",
+                                                                                "properties": {
+                                                                                    "spacing": 8
+                                                                                },
+                                                                                "children": [
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Source",
+                                                                                            "frame": {
+                                                                                                "width": 80,
+                                                                                                "alignment": "trailing"
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 110,
+                                                                                        "properties": {
+                                                                                            "prompt": "Path to the artifact",
+                                                                                            "disabled": true
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "Button",
+                                                                                        "id": 111,
+                                                                                        "properties": {
+                                                                                            "title": "Browse...",
+                                                                                            "disabled": true
+                                                                                        }
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            {
+                                                                                "type": "HStack",
+                                                                                "properties": {
+                                                                                    "spacing": 8
+                                                                                },
+                                                                                "children": [
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Destination",
+                                                                                            "frame": {
+                                                                                                "width": 80,
+                                                                                                "alignment": "trailing"
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 112,
+                                                                                        "properties": {
+                                                                                            "prompt": "/usr/local/bin/tool",
+                                                                                            "disabled": true
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "Menu",
+                                                                                        "id": 121,
+                                                                                        "properties": {
+                                                                                            "title": "Presets",
+                                                                                            "disabled": true
+                                                                                        },
+                                                                                        "children": [
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Applications"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/usr/local/bin"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Library/Frameworks"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Library/Application Support"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Library/LaunchDaemons"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Library/LaunchAgents"
+                                                                                                }
+                                                                                            },
+                                                                                            {
+                                                                                                "type": "Button",
+                                                                                                "properties": {
+                                                                                                    "title": "/Library/PreferencePanes"
+                                                                                                }
+                                                                                            }
+                                                                                        ]
+                                                                                    }
+                                                                                ]
+                                                                            },
+                                                                            {
+                                                                                "type": "HStack",
+                                                                                "properties": {
+                                                                                    "spacing": 8
+                                                                                },
+                                                                                "children": [
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Owner",
+                                                                                            "frame": {
+                                                                                                "width": 80,
+                                                                                                "alignment": "trailing"
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 113,
+                                                                                        "properties": {
+                                                                                            "prompt": "root",
+                                                                                            "disabled": true,
+                                                                                            "frame": {
+                                                                                                "width": 90
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Group"
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 114,
+                                                                                        "properties": {
+                                                                                            "prompt": "wheel",
+                                                                                            "disabled": true,
+                                                                                            "frame": {
+                                                                                                "width": 90
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Mode"
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 115,
+                                                                                        "properties": {
+                                                                                            "prompt": "0755",
+                                                                                            "disabled": true,
+                                                                                            "frame": {
+                                                                                                "width": 70
+                                                                                            }
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "Spacer"
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            },
+                                                            {
+                                                                "type": "GroupBox",
+                                                                "properties": {
+                                                                    "title": "Verify before packaging"
+                                                                },
+                                                                "children": [
+                                                                    {
+                                                                        "type": "VStack",
+                                                                        "properties": {
+                                                                            "spacing": 6,
+                                                                            "alignment": "leading"
+                                                                        },
+                                                                        "children": [
+                                                                            {
+                                                                                "type": "Toggle",
+                                                                                "id": 116,
+                                                                                "properties": {
+                                                                                    "title": "Universal (x86_64 + arm64)",
+                                                                                    "style": "checkbox",
+                                                                                    "disabled": true
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "type": "Toggle",
+                                                                                "id": 117,
+                                                                                "properties": {
+                                                                                    "title": "Signed with Developer ID",
+                                                                                    "style": "checkbox",
+                                                                                    "disabled": true
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "type": "Toggle",
+                                                                                "id": 118,
+                                                                                "properties": {
+                                                                                    "title": "Hardened runtime",
+                                                                                    "style": "checkbox",
+                                                                                    "disabled": true
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "type": "Toggle",
+                                                                                "id": 119,
+                                                                                "properties": {
+                                                                                    "title": "Secure timestamp",
+                                                                                    "style": "checkbox",
+                                                                                    "disabled": true
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "type": "HStack",
+                                                                                "properties": {
+                                                                                    "spacing": 8
+                                                                                },
+                                                                                "children": [
+                                                                                    {
+                                                                                        "type": "Text",
+                                                                                        "properties": {
+                                                                                            "text": "Version flag"
+                                                                                        }
+                                                                                    },
+                                                                                    {
+                                                                                        "type": "TextField",
+                                                                                        "id": 120,
+                                                                                        "properties": {
+                                                                                            "prompt": "--version (blank = skip)",
+                                                                                            "disabled": true
+                                                                                        }
+                                                                                    }
+                                                                                ]
+                                                                            }
+                                                                        ]
+                                                                    }
+                                                                ]
+                                                            }
+                                                        ]
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                }
+                            },
+                            {
+                                "type": "Tab",
+                                "properties": {
+                                    "title": "Package",
+                                    "systemImage": "shippingbox"
+                                },
+                                "content": {
+                                    "type": "ScrollView",
+                                    "properties": {
+                                        "axis": "vertical",
+                                        "frame": {
+                                            "maxWidth": "infinity",
+                                            "maxHeight": "infinity"
+                                        }
+                                    },
+                                    "content": {
+                                        "type": "VStack",
+                                        "properties": {
+                                            "spacing": 10,
+                                            "alignment": "leading",
+                                            "padding": "default"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Name",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 129,
+                                                        "properties": {
+                                                            "prompt": "MyApp",
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "help": "Used as ${NAME} in the package file name"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Identifier",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 130,
+                                                        "properties": {
+                                                            "prompt": "com.example.pkg.myapp",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Version",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 131,
+                                                        "properties": {
+                                                            "prompt": "1.0",
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "frame": {
+                                                                "width": 140
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 132,
+                                                        "properties": {
+                                                            "title": "Read from artifact",
+                                                            "disabled": true,
+                                                            "help": "Read the version from the selected payload item"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Install location",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 133,
+                                                        "properties": {
+                                                            "prompt": "/",
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "help": "Base handed to pkgbuild --install-location; every destination must start with it"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Authentication",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Picker",
+                                                        "id": 134,
+                                                        "properties": {
+                                                            "pickerStyle": "menu",
+                                                            "labelsHidden": true,
+                                                            "options": [
+                                                                {
+                                                                    "title": "Root (asks for an administrator password)",
+                                                                    "tag": "Root"
+                                                                },
+                                                                {
+                                                                    "title": "User (no authentication)",
+                                                                    "tag": "User"
+                                                                }
+                                                            ],
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "frame": {
+                                                                "width": 320
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "",
+                                                            "frame": {
+                                                                "width": 130
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "VStack",
+                                                        "properties": {
+                                                            "spacing": 4,
+                                                            "alignment": "leading"
+                                                        },
+                                                        "children": [
+                                                            {
+                                                                "type": "Toggle",
+                                                                "id": 135,
+                                                                "properties": {
+                                                                    "title": "Overwrite existing permissions",
+                                                                    "style": "checkbox",
+                                                                    "actionID": "PackageBuilder.field.changed",
+                                                                    "help": "Off means Installer never re-owns directories that already exist"
+                                                                }
+                                                            },
+                                                            {
+                                                                "type": "Toggle",
+                                                                "id": 136,
+                                                                "properties": {
+                                                                    "title": "Relocatable bundles",
+                                                                    "style": "checkbox",
+                                                                    "actionID": "PackageBuilder.field.changed",
+                                                                    "help": "Off means Installer always installs at the declared location"
+                                                                }
+                                                            }
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Preinstall script",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 137,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 138,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Postinstall script",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 139,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 140,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "Tab",
+                                "properties": {
+                                    "title": "Distribution",
+                                    "systemImage": "list.bullet.rectangle"
+                                },
+                                "content": {
+                                    "type": "ScrollView",
+                                    "properties": {
+                                        "axis": "vertical",
+                                        "frame": {
+                                            "maxWidth": "infinity",
+                                            "maxHeight": "infinity"
+                                        }
+                                    },
+                                    "content": {
+                                        "type": "VStack",
+                                        "properties": {
+                                            "spacing": 10,
+                                            "alignment": "leading",
+                                            "padding": "default"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Title",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 150,
+                                                        "properties": {
+                                                            "prompt": "Shown in the Installer window",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Minimum macOS",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 151,
+                                                        "properties": {
+                                                            "prompt": "10.15",
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "frame": {
+                                                                "width": 140
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 152,
+                                                        "properties": {
+                                                            "title": "Read from artifact",
+                                                            "disabled": true,
+                                                            "help": "Read the deployment target from the selected payload item"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Host architectures",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Toggle",
+                                                        "id": 153,
+                                                        "properties": {
+                                                            "title": "arm64",
+                                                            "style": "checkbox",
+                                                            "isOn": true,
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Toggle",
+                                                        "id": 154,
+                                                        "properties": {
+                                                            "title": "x86_64",
+                                                            "style": "checkbox",
+                                                            "isOn": true,
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Customize",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Picker",
+                                                        "id": 155,
+                                                        "properties": {
+                                                            "pickerStyle": "menu",
+                                                            "labelsHidden": true,
+                                                            "options": [
+                                                                {
+                                                                    "title": "never",
+                                                                    "tag": "never"
+                                                                },
+                                                                {
+                                                                    "title": "allow",
+                                                                    "tag": "allow"
+                                                                },
+                                                                {
+                                                                    "title": "always",
+                                                                    "tag": "always"
+                                                                }
+                                                            ],
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "frame": {
+                                                                "width": 140
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "Divider"
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Read Me",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 156,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 157,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "License",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 158,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 159,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Welcome",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 160,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 161,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Conclusion",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 162,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 163,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Background",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 164,
+                                                        "properties": {
+                                                            "prompt": "optional",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 165,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                }
+                            },
+                            {
+                                "type": "Tab",
+                                "properties": {
+                                    "title": "Output",
+                                    "systemImage": "square.and.arrow.down"
+                                },
+                                "content": {
+                                    "type": "ScrollView",
+                                    "properties": {
+                                        "axis": "vertical",
+                                        "frame": {
+                                            "maxWidth": "infinity",
+                                            "maxHeight": "infinity"
+                                        }
+                                    },
+                                    "content": {
+                                        "type": "VStack",
+                                        "properties": {
+                                            "spacing": 10,
+                                            "alignment": "leading",
+                                            "padding": "default"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Output folder",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 170,
+                                                        "properties": {
+                                                            "prompt": "Where the signed package is written",
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 171,
+                                                        "properties": {
+                                                            "title": "Browse...",
+                                                            "disabled": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Package name",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "TextField",
+                                                        "id": 172,
+                                                        "properties": {
+                                                            "prompt": "${NAME}_${VERSION}.pkg",
+                                                            "actionID": "PackageBuilder.field.changed",
+                                                            "help": "${NAME}, ${VERSION} and ${DATE} are expanded at build time"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "Divider"
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "",
+                                                            "frame": {
+                                                                "width": 130
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Toggle",
+                                                        "id": 173,
+                                                        "properties": {
+                                                            "title": "Sign the installer package",
+                                                            "style": "checkbox",
+                                                            "isOn": true,
+                                                            "actionID": "PackageBuilder.field.changed"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "properties": {
+                                                            "text": "Installer identity",
+                                                            "frame": {
+                                                                "width": 130,
+                                                                "alignment": "trailing"
+                                                            }
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Picker",
+                                                        "id": 174,
+                                                        "properties": {
+                                                            "pickerStyle": "menu",
+                                                            "labelsHidden": true,
+                                                            "options": [
+                                                                "(no Developer ID Installer certificate found)"
+                                                            ],
+                                                            "disabled": true,
+                                                            "frame": {
+                                                                "maxWidth": "infinity"
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "Text",
+                                                "id": 175,
+                                                "properties": {
+                                                    "text": "PackageBuilder ends at a signed package. Notarization is done by Notarize.app: build here, then hand the package over with the Notarize button in the toolbar.",
+                                                    "font": "footnote",
+                                                    "foregroundStyle": "secondary",
+                                                    "padding": {
+                                                        "top": 6
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "type": "GroupBox",
+                        "id": 200,
+                        "properties": {
+                            "title": "Progress",
+                            "padding": {
+                                "leading": 10,
+                                "trailing": 10,
+                                "bottom": 10
+                            },
+                            "frame": {
+                                "minHeight": 170,
+                                "idealHeight": 210,
+                                "maxWidth": "infinity",
+                                "maxHeight": "infinity"
+                            }
+                        },
+                        "children": [
+                            {
+                                "type": "HStack",
+                                "properties": {
+                                    "spacing": 16,
+                                    "alignment": "top"
+                                },
+                                "children": [
+                                    {
+                                        "type": "VStack",
+                                        "properties": {
+                                            "spacing": 6,
+                                            "alignment": "leading",
+                                            "frame": {
+                                                "width": 130
+                                            }
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 6
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Image",
+                                                        "id": 210,
+                                                        "properties": {
+                                                            "systemName": "circle",
+                                                            "foregroundStyle": "gray"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Text",
+                                                        "id": 230,
+                                                        "properties": {
+                                                            "text": "Verify"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 6
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Image",
+                                                        "id": 211,
+                                                        "properties": {
+                                                            "systemName": "circle",
+                                                            "foregroundStyle": "gray"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Text",
+                                                        "id": 231,
+                                                        "properties": {
+                                                            "text": "Component"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 6
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Image",
+                                                        "id": 212,
+                                                        "properties": {
+                                                            "systemName": "circle",
+                                                            "foregroundStyle": "gray"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Text",
+                                                        "id": 232,
+                                                        "properties": {
+                                                            "text": "Distribution"
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 6
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Image",
+                                                        "id": 213,
+                                                        "properties": {
+                                                            "systemName": "circle",
+                                                            "foregroundStyle": "gray"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Text",
+                                                        "id": 233,
+                                                        "properties": {
+                                                            "text": "Sign"
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "type": "VStack",
+                                        "properties": {
+                                            "spacing": 6,
+                                            "alignment": "leading",
+                                            "frame": {
+                                                "maxWidth": "infinity",
+                                                "maxHeight": "infinity"
+                                            }
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "HStack",
+                                                "properties": {
+                                                    "spacing": 8
+                                                },
+                                                "children": [
+                                                    {
+                                                        "type": "Text",
+                                                        "id": 220,
+                                                        "properties": {
+                                                            "text": "",
+                                                            "font": "callout"
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "ProgressView",
+                                                        "id": 221,
+                                                        "properties": {
+                                                            "controlSize": "small",
+                                                            "hidden": true
+                                                        }
+                                                    },
+                                                    {
+                                                        "type": "Spacer"
+                                                    },
+                                                    {
+                                                        "type": "Button",
+                                                        "id": 223,
+                                                        "properties": {
+                                                            "title": "Reveal Package",
+                                                            "controlSize": "small",
+                                                            "hidden": true
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "type": "TextEditor",
+                                                "id": 222,
+                                                "properties": {
+                                                    "readOnly": true,
+                                                    "font": {
+                                                        "size": 11,
+                                                        "design": "monospaced"
+                                                    },
+                                                    "background": "background.secondary",
+                                                    "scrollContentBackground": "hidden",
+                                                    "frame": {
+                                                        "minHeight": 90,
+                                                        "maxWidth": "infinity",
+                                                        "maxHeight": "infinity"
+                                                    }
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

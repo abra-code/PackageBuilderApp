@@ -1,0 +1,54 @@
+[
+  {
+    "type": "CommandGroup",
+    "properties": {
+      "placement": "replacing",
+      "placementTarget": "open"
+    },
+    "children": [
+      {
+        "type": "Button",
+        "properties": {
+          "title": "Open…",
+          "actionID": "PackageBuilder.open",
+          "keyboardShortcut": {
+            "key": "o"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "type": "CommandGroup",
+    "properties": {
+      "placement": "after",
+      "placementTarget": "saveItem"
+    },
+    "children": [
+      {
+        "type": "Button",
+        "properties": {
+          "title": "Save",
+          "actionID": "PackageBuilder.save",
+          "keyboardShortcut": {
+            "key": "s"
+          }
+        }
+      },
+      {
+        "type": "Button",
+        "properties": {
+          "title": "Save As…",
+          "actionID": "PackageBuilder.save.as",
+          "keyboardShortcut": {
+            "key": "S",
+            "modifiers": [
+              "command",
+              "shift"
+            ]
+          }
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,5 @@
+PackageBuilder.app/Contents/Frameworks
+PackageBuilder.app/Contents/MacOS
+PackageBuilder.app/Contents/_CodeSignature
+.DS_Store
+Private

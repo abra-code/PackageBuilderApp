@@ -1,0 +1,92 @@
+{
+  "COMMAND_LIST": [
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.main",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "ACTIONUI_WINDOW": {
+        "JSON_NAME": "PackageBuilder",
+        "INIT_SUBCOMMAND_ID": "PackageBuilder.main.init",
+        "END_CANCEL_SUBCOMMAND_ID": "PackageBuilder.window.close",
+        "WINDOW_DID_ACTIVATE_SUBCOMMAND_ID": "PackageBuilder.window.activated",
+        "IS_BLOCKING": false
+      },
+      "REQUIRED_OMC_VERSION": "5.1",
+      "REQUIRED_MAC_OS_MIN_VERSION": "14.6"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.main.init",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.open",
+      "ACTIVATION_MODE": "act_file",
+      "EXECUTION_MODE": "exe_script_file",
+      "NEXT_COMMAND_ID": "PackageBuilder.main",
+      "OPEN_OBJECT_DIALOG": {
+        "MESSAGE": "Select a PackageBuilder project",
+        "BUTTON_PROMPT": "Open",
+        "ALLOWED_CONTENT_TYPES": [
+          "com.abracode.packagebuilder.project"
+        ],
+        "DEFAULT_LOCATION": [
+          "~/Documents"
+        ]
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.save",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.save.as",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true,
+      "SAVE_AS_DIALOG": {
+        "MESSAGE": "Save PackageBuilder Project As",
+        "BUTTON_PROMPT": "Save",
+        "DEFAULT_FILE_NAME": [
+          "Untitled.pkgbuilderproj"
+        ],
+        "DEFAULT_LOCATION": [
+          "~/Documents"
+        ],
+        "USE_PATH_CACHING": true
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.window.close",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.window.activated",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.field.changed",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "app.will.terminate",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    }
+  ],
+  "VERSION": 2
+}
