@@ -52,32 +52,42 @@
                         "children": [
                             {
                                 "type": "Button",
+                                "id": 321,
                                 "properties": {
-                                    "title": "Verify Payload"
+                                    "title": "Verify Payload",
+                                    "disabled": true
                                 }
                             },
                             {
                                 "type": "Button",
+                                "id": 322,
                                 "properties": {
-                                    "title": "Build Component Only"
+                                    "title": "Build Component Only",
+                                    "actionID": "PackageBuilder.step.component"
                                 }
                             },
                             {
                                 "type": "Button",
+                                "id": 323,
                                 "properties": {
-                                    "title": "Build Distribution Only"
+                                    "title": "Build Distribution Only",
+                                    "disabled": true
                                 }
                             },
                             {
                                 "type": "Button",
+                                "id": 324,
                                 "properties": {
-                                    "title": "Sign Only"
+                                    "title": "Sign Only",
+                                    "disabled": true
                                 }
                             },
                             {
                                 "type": "Button",
+                                "id": 325,
                                 "properties": {
-                                    "title": "Inspect Built Package"
+                                    "title": "Inspect Built Package",
+                                    "disabled": true
                                 }
                             },
                             {
@@ -85,14 +95,18 @@
                             },
                             {
                                 "type": "Button",
+                                "id": 326,
                                 "properties": {
-                                    "title": "Export Packaging Script..."
+                                    "title": "Export Packaging Script...",
+                                    "disabled": true
                                 }
                             },
                             {
                                 "type": "Button",
+                                "id": 327,
                                 "properties": {
-                                    "title": "Import Packages.app Project..."
+                                    "title": "Import Packages.app Project...",
+                                    "disabled": true
                                 }
                             }
                         ]

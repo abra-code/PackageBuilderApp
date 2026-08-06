@@ -699,6 +699,9 @@ push_model_to_window() {
         repopulate_payload ""
     fi
     enable_view "$PAYLOAD_ADD_ID" 1
+    # The Actions menu is enabled as a whole once there is a document; the items
+    # belonging to later phases carry their own "disabled" in the window JSON.
+    enable_view "$ACTIONS_MENU_ID" 1
 
     pb_set pb_loading ""
     return 0
