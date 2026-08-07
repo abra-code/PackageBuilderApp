@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.payload.remove.sh - [-] removes the selected payload entry
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.remove.sh"
 

@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.payload.select.sh - a payload row was selected in the table
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.select.sh"
 

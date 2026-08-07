@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.choose.artifacts.sh - pick PROJECT.ARTIFACTS_DIR from a panel
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.choose.artifacts.sh"
 

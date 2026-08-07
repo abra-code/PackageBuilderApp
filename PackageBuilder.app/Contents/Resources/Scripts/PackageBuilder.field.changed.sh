@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.field.changed.sh - generic writer for the simple scalar controls
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.field.changed.sh"
 

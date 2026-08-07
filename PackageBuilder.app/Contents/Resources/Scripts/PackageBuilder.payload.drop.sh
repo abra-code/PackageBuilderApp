@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.payload.drop.sh - files or folders dropped on the payload table
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.drop.sh"
 

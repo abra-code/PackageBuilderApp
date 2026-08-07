@@ -4,6 +4,7 @@
 # Every item of the preset menu is a Button with its own view id, so the id of
 # the one that fired says which directory was chosen (see destination_preset).
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.destination.preset.sh"
 

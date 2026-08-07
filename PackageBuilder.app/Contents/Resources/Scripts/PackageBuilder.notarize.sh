@@ -6,6 +6,7 @@
 # .pkg as a first-class target, so duplicating any of it here would mean two
 # credential wizards to keep in step for a step run once per release.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
 
 dbg_context "PackageBuilder.notarize.sh"

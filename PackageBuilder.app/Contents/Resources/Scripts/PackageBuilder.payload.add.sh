@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.payload.add.sh - [+] picked an artifact through the Choose panel
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.add.sh"
 

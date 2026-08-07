@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.payload.browse.sh - repoint the selected payload entry's source
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.browse.sh"
 

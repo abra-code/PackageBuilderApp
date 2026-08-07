@@ -4,6 +4,7 @@
 # Design 4.5: this overwrites whatever is in the field, unlike the fill-on-add
 # path, because the user asked for it explicitly.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.read.version.sh"
 

@@ -8,6 +8,7 @@
 # id survives the engine's dialog presentation is unverified - every handler
 # already logs it through dbg_context, so the next real run answers it.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.choose.welcome.sh"
 

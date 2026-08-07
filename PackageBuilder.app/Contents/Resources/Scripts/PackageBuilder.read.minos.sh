@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.read.minos.sh - read PROJECT.MIN_OS_VERSION from the selected artifact
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.read.minos.sh"
 

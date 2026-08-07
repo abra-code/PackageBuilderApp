@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.window.activated.sh - notice that the document changed on disk
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.window.activated.sh"
 

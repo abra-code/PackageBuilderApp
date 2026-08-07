@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.main.init.sh - load the document into a window that is opening
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.main.init.sh"
 

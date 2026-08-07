@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.reveal.sh - show the signed package in the Finder
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
 
 dbg_context "PackageBuilder.reveal.sh"

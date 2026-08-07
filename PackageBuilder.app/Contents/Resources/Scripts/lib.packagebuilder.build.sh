@@ -18,49 +18,15 @@ pkgutil_tool="/usr/sbin/pkgutil"
 ditto_tool="/usr/bin/ditto"
 
 # --- Step rail ----------------------------------------------------------------
-# Icon and color per state, copied from rail_set in lib.notarize.sh.
+# Which view id belongs to which stage. The drawing itself - rail_set and
+# rail_reset - is presentation and lives in lib.packagebuilder.window.sh and
+# lib.packagebuilder.console.sh; what stays here is the part that is about the
+# pipeline rather than about how it looks.
 RAIL_VERIFY_ID=210
 RAIL_COMPONENT_ID=211
 RAIL_DISTRIBUTION_ID=212
 RAIL_SIGN_ID=213
 RAIL_ICON_IDS="$RAIL_VERIFY_ID $RAIL_COMPONENT_ID $RAIL_DISTRIBUTION_ID $RAIL_SIGN_ID"
-
-# Arguments: rail icon view id, state (pending|running|done|failed|skipped)
-rail_set() {
-    local view_id="$1" stage_state="$2"
-    # Set on every branch of the case below.
-    local symbol color
-    case "$stage_state" in
-        running) symbol="arrow.clockwise.circle.fill"; color="blue" ;;
-        done)    symbol="checkmark.circle.fill"; color="green" ;;
-        failed)  symbol="xmark.circle.fill"; color="red" ;;
-        skipped) symbol="minus.circle"; color="gray" ;;
-        *)       symbol="circle"; color="gray" ;;
-    esac
-    set_property "$view_id" systemName "$symbol"
-    set_property "$view_id" foregroundStyle "$color"
-}
-
-rail_reset() {
-    # Set by the "for" below.
-    local view_id
-    for view_id in $RAIL_ICON_IDS; do
-        rail_set "$view_id" pending
-    done
-}
-
-# --- Log ----------------------------------------------------------------------
-# Append a whole file to the run log in one go. append_log rewrites the entire
-# log view on every call, which is fine for a status line and quadratic for a
-# tool that printed two hundred of them.
-append_log_file() {
-    local source_file="$1"
-    local log_file="$(state_dir)/run.log"
-    [ -f "$source_file" ] || return 0
-    /bin/cat "$source_file" >> "$log_file"
-    set_value "$LOG_ID" "$(/bin/cat "$log_file")"
-    return 0
-}
 
 # Run an external tool with both its streams captured to a named file, and
 # return the tool's own exit status.
@@ -1560,5 +1526,189 @@ stop_here() {
     local rail_id="$1"
     stop_was_requested || return 1
     report_stop "$rail_id"
+    return 0
+}
+
+# ==============================================================================
+# The whole pipeline (design section 7)
+# ==============================================================================
+# All four stages in one run, driven by the toolbar's Build Package and by the
+# agent CLI's "build". It lives here rather than in the handler so that the two
+# frontends run the same pipeline rather than two copies of it that drift: the
+# only thing either of them decides is which presentation layer was sourced,
+# and everything below reports through that.
+#
+# Every stage's preconditions are checked up front, before anything is written.
+# Discovering a missing output folder after pkgbuild and productbuild have
+# already run would mean waiting through the whole build to be told something
+# that was knowable at the start.
+#
+# Calls build_end on every exit path, including the successful one, so a caller
+# does not have to unwind. Returns 0 when the run produced what the document
+# asked for - including a stop, which is not a failure - and 1 otherwise. The
+# artifacts it produced are on record in the state directory
+# (built_component.txt, built_distribution.txt, built_package.txt).
+run_pipeline() {
+    # Set by the stages below.
+    local component unsigned signed
+
+    # Fixed once for the whole run, so a build that crosses midnight cannot
+    # name two files two different things (design 4.4).
+    PB_BUILD_DATE="$(/bin/date '+%Y-%m-%d')"
+    export PB_BUILD_DATE
+
+    local signing_on="$(model_get_bool /SIGNING/ENABLED)"
+
+    build_begin
+    clear_log
+    rail_reset
+    /bin/rm -f "$(state_dir)/built_component.txt" \
+               "$(state_dir)/built_distribution.txt" \
+               "$(state_dir)/built_package.txt"
+    show_view "$REVEAL_BTN_ID" 0
+    # Turned off with Reveal: a failed rebuild deletes built_package.txt, and an
+    # enabled Notarize button would still be offering the package it just removed.
+    enable_view "$NOTARIZE_BTN_ID" 0
+
+    set_status "Checking the project..."
+    append_log "Building $(document_name)"
+    append_log ""
+    append_log "Preconditions:"
+
+    # The count comes from the shared global after each call, not from the
+    # return value: a shell return carries only the low eight bits, so a count
+    # of exactly 256 would arrive here as zero and wave the build through. Each
+    # function resets the global on entry, so it is read immediately after each.
+    local total_failures=0
+    check_preconditions
+    total_failures=$((total_failures + precondition_failures))
+    check_distribution_preconditions
+    total_failures=$((total_failures + precondition_failures))
+    if [ "$signing_on" = "1" ]; then
+        check_signing_preconditions
+        total_failures=$((total_failures + precondition_failures))
+    fi
+
+    if [ "$total_failures" != "0" ]; then
+        append_log ""
+        append_log "Stopped: $total_failures problem(s) to fix before anything can be built."
+        rail_set "$RAIL_COMPONENT_ID" failed
+        set_status "$total_failures problem(s) - nothing was written"
+        build_end
+        return 1
+    fi
+    append_log "  all clear"
+    append_log ""
+
+    # --- Stage 1: verify ------------------------------------------------------
+    # Before anything is staged, because this is the stage that decides whether
+    # the artifacts on disk are the artifacts the document describes. A package
+    # built from a stale or wrongly-signed binary is worse than no package: it
+    # is signed, it installs, and nothing about it looks wrong until it reaches
+    # a user.
+    rail_set "$RAIL_VERIFY_ID" running
+    set_status "Verifying the payload..."
+    append_log "Verifying the payload:"
+    if ! verify_payload; then
+        stop_here "$RAIL_VERIFY_ID" && return 0
+        append_log ""
+        append_log "Stopped. An artifact is not what the document says it is, and nothing"
+        append_log "was staged or built."
+        rail_set "$RAIL_VERIFY_ID" failed
+        set_status "The payload did not verify"
+        build_end
+        return 1
+    fi
+    stop_here "$RAIL_VERIFY_ID" && return 0
+    rail_set "$RAIL_VERIFY_ID" done
+    append_log ""
+
+    # --- Stage 2: component ---------------------------------------------------
+    rail_set "$RAIL_COMPONENT_ID" running
+    set_status "Staging the payload..."
+    append_log "Staging the payload root:"
+    if ! stage_payload_root; then
+        stop_here "$RAIL_COMPONENT_ID" && return 0
+        append_log ""
+        append_log "Stopped while staging. Nothing outside the scratch directory was touched."
+        rail_set "$RAIL_COMPONENT_ID" failed
+        set_status "Could not stage the payload"
+        build_end
+        return 1
+    fi
+
+    append_log ""
+    set_status "Running pkgbuild..."
+    append_log "Building the component package:"
+    component="$(build_component_package)"
+    if [ -z "$component" ] || [ ! -f "$component" ]; then
+        stop_here "$RAIL_COMPONENT_ID" && return 0
+        append_log ""
+        append_log "Stopped. pkgbuild did not produce a component package."
+        rail_set "$RAIL_COMPONENT_ID" failed
+        set_status "The component package was not built"
+        build_end
+        return 1
+    fi
+    printf '%s' "$component" > "$(state_dir)/built_component.txt"
+    rail_set "$RAIL_COMPONENT_ID" done
+    stop_here "$RAIL_DISTRIBUTION_ID" && return 0
+
+    # --- Stage 3: distribution ------------------------------------------------
+    append_log ""
+    rail_set "$RAIL_DISTRIBUTION_ID" running
+    set_status "Running productbuild..."
+    append_log "Building the distribution package:"
+    unsigned="$(build_distribution_package)"
+    if [ -z "$unsigned" ] || [ ! -f "$unsigned" ]; then
+        stop_here "$RAIL_DISTRIBUTION_ID" && return 0
+        append_log ""
+        append_log "Stopped. productbuild did not produce a distribution package."
+        rail_set "$RAIL_DISTRIBUTION_ID" failed
+        set_status "The distribution package was not built"
+        build_end
+        return 1
+    fi
+    printf '%s' "$unsigned" > "$(state_dir)/built_distribution.txt"
+    rail_set "$RAIL_DISTRIBUTION_ID" done
+    stop_here "$RAIL_SIGN_ID" && return 0
+
+    # --- Stage 4: sign --------------------------------------------------------
+    if [ "$signing_on" != "1" ]; then
+        # Design 8.3: the output folder only ever receives a signed package, so
+        # an unsigned build ends in the scratch directory and says so.
+        rail_set "$RAIL_SIGN_ID" skipped
+        append_log ""
+        append_log "Signing is turned off, so nothing was written to the output folder."
+        append_log "The unsigned package is an intermediate and stays here:"
+        append_log "  $unsigned"
+        set_status "Built $(/usr/bin/basename "$unsigned") (unsigned)"
+        build_end
+        return 0
+    fi
+
+    append_log ""
+    rail_set "$RAIL_SIGN_ID" running
+    set_status "Running productsign..."
+    append_log "Signing the installer package:"
+    signed="$(sign_package "$unsigned")"
+    if [ -z "$signed" ] || [ ! -f "$signed" ]; then
+        stop_here "$RAIL_SIGN_ID" && return 0
+        append_log ""
+        append_log "Stopped. The package was not signed, and nothing was left in the output folder."
+        rail_set "$RAIL_SIGN_ID" failed
+        set_status "The package was not signed"
+        build_end
+        return 1
+    fi
+    printf '%s' "$signed" > "$(state_dir)/built_package.txt"
+    rail_set "$RAIL_SIGN_ID" done
+
+    # The one thing the two frontends say differently, because what comes after
+    # a signed package is a button in the app and a command in a terminal.
+    report_next_step "$signed"
+
+    set_status "Built $(/usr/bin/basename "$signed")"
+    build_end
     return 0
 }

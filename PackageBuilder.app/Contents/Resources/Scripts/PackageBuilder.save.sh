@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.save.sh - save to the document's path, or chain to Save As
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.save.sh"
 

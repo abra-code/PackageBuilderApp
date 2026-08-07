@@ -11,6 +11,7 @@
 # two racing to describe the same event, and it means a stopped run reports
 # which stage it stopped in rather than freezing wherever the kill landed.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
 
 dbg_context "PackageBuilder.stop.sh"

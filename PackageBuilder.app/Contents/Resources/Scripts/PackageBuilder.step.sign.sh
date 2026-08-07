@@ -4,6 +4,7 @@
 # Pipeline stage 4 of design section 7, run on its own from Actions > Sign Only.
 # It consumes the unsigned distribution package stage 3 produced.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
 
 dbg_context "PackageBuilder.step.sign.sh"

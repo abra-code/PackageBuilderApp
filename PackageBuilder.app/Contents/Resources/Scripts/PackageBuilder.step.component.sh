@@ -7,6 +7,7 @@
 # rail says what did and did not run rather than leaving three gray circles that
 # could be read as pending.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
 
 dbg_context "PackageBuilder.step.component.sh"

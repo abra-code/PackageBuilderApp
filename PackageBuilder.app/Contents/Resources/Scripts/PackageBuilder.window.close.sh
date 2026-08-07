@@ -1,6 +1,7 @@
 #!/bin/sh
 # PackageBuilder.window.close.sh - offer to save unsaved changes, then clean up
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.window.close.sh"
 

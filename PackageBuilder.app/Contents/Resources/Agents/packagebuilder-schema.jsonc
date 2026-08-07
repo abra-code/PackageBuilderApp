@@ -1,0 +1,182 @@
+// PackageBuilder project document - the format of a .pkgbuilderproj file.
+//
+// This file is documentation, not a parseable document: the comments make it
+// pseudo-JSON. A real document is plain JSON with the same keys. Every key
+// below is one the app reads; anything else in a document is ignored, which is
+// why a misspelled key silently does nothing and why "pkgbuilder validate"
+// reports unknown keys.
+//
+// Print it with:  pkgbuilder schema
+// Check a document against it with:  pkgbuilder validate <doc.pkgbuilderproj>
+// Write to it with:  pkgbuilder set <doc> <keypath> <value>   (validates types)
+
+{
+  "FORMAT_VERSION": 1,                     // integer, required. The app refuses
+                                           // to open a document without it.
+
+  "PROJECT": {
+    "NAME": "widget",                      // string, required. Letters, digits,
+                                           // dot, underscore, hyphen only - it
+                                           // becomes part of a filename.
+    "VERSION": "2.0",                      // string, required. Starts with a
+                                           // digit, then letters, digits and
+                                           // . + _ - only.
+    "MIN_OS_VERSION": "10.15",             // string. Digits and dots only.
+                                           // Empty means no minimum is declared.
+    "ARTIFACTS_DIR": "build",              // string. Where the payload artifacts
+                                           // are. Relative to the document, or
+                                           // absolute. A payload path under it
+                                           // is stored as ${ARTIFACTS_DIR}/...
+                                           // which is what makes the document
+                                           // portable to the build machine.
+    "OUTPUT_DIR": "dist",                  // string. Where the signed package is
+                                           // written. Relative or absolute.
+    "PACKAGE_NAME": "${NAME}_${VERSION}.pkg" // string. The output file name.
+                                           // Tokens allowed. Must not contain a
+                                           // path separator. ".pkg" is appended
+                                           // when absent.
+  },
+
+  "COMPONENTS": [                          // array. Only the first element is
+                                           // read; a second one is reported and
+                                           // ignored (design section 14).
+    {
+      "IDENTIFIER": "com.example.pkg.widget", // string, required. Reverse-DNS.
+      "INSTALL_LOCATION": "/",             // string. Absolute. Every payload
+                                           // DESTINATION must be under it.
+      "OVERWRITE_PERMISSIONS": false,      // bool. Keep false. True tells
+                                           // Installer to apply the payload's
+                                           // owner and mode to directories that
+                                           // ALREADY EXIST - with a payload
+                                           // under /usr/local that resets a
+                                           // Homebrew user's directories.
+                                           // pkgbuild always writes true; the
+                                           // app patches PackageInfo back to
+                                           // this value (design 8.1).
+      "RELOCATABLE": false,                // bool. Keep false for bundles. True
+                                           // lets Installer follow Spotlight to
+                                           // any existing copy of the bundle
+                                           // identifier and install THERE - a
+                                           // stale copy in ~/Downloads becomes
+                                           // the target (design 8.2).
+      "AUTH": "Root",                      // string. "Root" or "User". Root
+                                           // means the install asks for an
+                                           // administrator password.
+      "PREINSTALL": "",                    // string. Path to a script, or "".
+      "POSTINSTALL": "",                   // string. Path to a script, or "".
+
+      "PAYLOAD": [                         // array. One entry per artifact.
+        {
+          "SOURCE": "${ARTIFACTS_DIR}/widget", // string, required. A token path,
+                                           // a path relative to the document,
+                                           // or absolute.
+          "DESTINATION": "/usr/local/bin/widget", // string, required. Absolute,
+                                           // and under INSTALL_LOCATION. Two
+                                           // entries may not share one, and one
+                                           // may not nest inside another: both
+                                           // stage with ditto and would race.
+          "OWNER": "root",                 // string. Recorded, not applied:
+                                           // pkgbuild runs with --ownership
+                                           // recommended, which writes
+                                           // root:wheel into the BOM whoever
+                                           // runs the build.
+          "GROUP": "wheel",                // string. Same.
+          "MODE": "0755",                  // string of three or four OCTAL
+                                           // digits. A STRING, not a number:
+                                           // 755 unquoted is a different thing
+                                           // and the verifier refuses it.
+
+          "VERIFY": {                      // what stage 1 asserts about this
+                                           // artifact before anything is staged.
+                                           // Every check is opt-in per entry; an
+                                           // entry that asserts nothing is
+                                           // logged as such.
+            "ARCHITECTURES": ["arm64", "x86_64"], // array of strings. Every one
+                                           // listed must be present or the build
+                                           // refuses. arm64e is a SEPARATE
+                                           // architecture, not a superset of
+                                           // arm64. Catches half a build being
+                                           // made with the wrong settings.
+            "SIGNED_BY": "Developer ID Application", // string. Matched as a
+                                           // PREFIX of the leaf certificate, so
+                                           // this value accepts any Developer ID
+                                           // and a full identity string accepts
+                                           // only that one. Empty means the
+                                           // authority is not checked. Catches
+                                           // an ad-hoc or wrong-team signature.
+            "HARDENED_RUNTIME": true,      // bool. Notarization requires it.
+                                           // "xcodebuild build" does not set it;
+                                           // "xcodebuild archive" does.
+            "SECURE_TIMESTAMP": true,      // bool. Notarization requires it.
+                                           // Same cause, same fix. A signature
+                                           // made with --timestamp=none prints
+                                           // "Signed Time=" where a real one
+                                           // prints "Timestamp=".
+            "VERSION_FLAG": "--version"    // string. When set, the version the
+                                           // artifact reports must equal
+                                           // PROJECT.VERSION. A bundle answers
+                                           // from its Info.plist; a bare
+                                           // executable is run with this flag.
+                                           // Empty means the version is not
+                                           // checked. THIS IS THE ONLY CHECK
+                                           // that catches a stale artifacts
+                                           // folder, which has no other symptom.
+          }
+        }
+      ]
+    }
+  ],
+
+  "DISTRIBUTION": {
+    "TITLE": "Widget",                     // string. Shown by the installer.
+                                           // Defaults to PROJECT.NAME when empty.
+    "HOST_ARCHITECTURES": ["arm64", "x86_64"], // array of strings. "arm64" and
+                                           // "x86_64" only. NEVER EMPTY:
+                                           // productbuild refuses a document
+                                           // whose hostArchitectures is empty,
+                                           // so the installer would run nowhere.
+    "CUSTOMIZE": "never",                  // string. "never", "allow" or
+                                           // "always". never hides the choice
+                                           // list entirely.
+    "REQUIRE_SCRIPTS": false,              // bool.
+    "RESOURCES": {                         // each a path to a file, or "".
+                                           // Staged flat under their basenames,
+                                           // so two of them may not share one.
+      "README": "Resources/readme.rtf",    // string. .rtf or .rtfd.
+      "LICENSE": "",                       // string. Shown with Agree/Disagree.
+      "WELCOME": "",                       // string.
+      "CONCLUSION": "",                    // string.
+      "BACKGROUND": ""                     // string. An image.
+    }
+  },
+
+  "SIGNING": {
+    "ENABLED": true,                       // bool. When true an identity is
+                                           // required and the build refuses
+                                           // without one. When false the build
+                                           // produces an unsigned package and
+                                           // never writes it to OUTPUT_DIR
+                                           // (design 8.3).
+    "INSTALLER_IDENTITY": "Developer ID Installer: Example Inc (T9NM2ZLDTY)"
+                                           // string. An INSTALLER identity, not
+                                           // an Application one - productsign
+                                           // needs "Developer ID Installer".
+                                           // Must be in this machine's keychain.
+  }
+}
+
+// Tokens
+// ------
+// Usable in PAYLOAD SOURCE and DESTINATION, PROJECT.PACKAGE_NAME, the
+// DISTRIBUTION.RESOURCES paths, PREINSTALL and POSTINSTALL:
+//
+//   ${NAME}           PROJECT.NAME
+//   ${VERSION}        PROJECT.VERSION
+//   ${DATE}           the build date, YYYY-MM-DD
+//   ${PROJECT_DIR}    the folder holding the document
+//   ${ARTIFACTS_DIR}  PROJECT.ARTIFACTS_DIR, resolved to an absolute path
+//
+// ${ARTIFACTS_DIR} used in a document that has no artifacts folder set is a
+// hard error rather than an empty string: "${ARTIFACTS_DIR}/usr/local/bin/tool"
+// would otherwise collapse to "/usr/local/bin/tool", which very likely exists
+// and is the PREVIOUSLY INSTALLED COPY.

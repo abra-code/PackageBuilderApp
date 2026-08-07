@@ -1,0 +1,828 @@
+#!/bin/sh
+# pkgbuilder - agent-facing CLI for PackageBuilder operations.
+#
+# Exposes what PackageBuilder.app does through its window - construct a project
+# document, verify the payload against what the document asserts, and run the
+# pipeline - by driving the *same* shared library code the GUI uses
+# (Contents/Resources/Scripts/lib.packagebuilder*.sh), so a package built here
+# and a package built by pressing Build Package are the same package. It exists
+# because an agent assembling a .pkgbuilderproj has no window to press buttons
+# in, and because "did I get this document right" deserves an answer that costs
+# nothing to ask.
+#
+# Progress and diagnostics go to stderr; results worth capturing - a created
+# document's path, a value read out of one, a built package's path - go to
+# stdout. Exit codes follow the verifiers: 0 ok, 2 warnings (and usage errors),
+# 1 errors.
+#
+# POSIX sh, like everything else in this app: design section 12 keeps the whole
+# thing free of an interpreter dependency, and running the CLI under the same
+# /bin/sh that OMC gives the handlers is also the cheapest proof the shared
+# libraries stay portable. Validate with "sh -n", never "bash -n".
+#
+# See README.md in this folder for the full guide.
+
+# --- Locate the enclosing app and load the shared libraries -------------------
+
+resolve_self() {
+    # Print the real directory holding this script, following symlinks, so the
+    # tool can be linked onto a PATH and still find its own bundle.
+    local source_path="$1" containing_dir
+    while [ -h "$source_path" ]; do
+        containing_dir="$(cd -P "$(/usr/bin/dirname "$source_path")" >/dev/null 2>&1 && pwd)"
+        source_path="$(/usr/bin/readlink "$source_path")"
+        case "$source_path" in
+            /*) ;;
+            *) source_path="$containing_dir/$source_path" ;;
+        esac
+    done
+    cd -P "$(/usr/bin/dirname "$source_path")" >/dev/null 2>&1 && pwd
+}
+
+AGENTS_DIR="$(resolve_self "$0")"
+# Agents -> Resources -> Contents -> <App>.app
+APP_BUNDLE="$(cd "$AGENTS_DIR/../../.." >/dev/null 2>&1 && pwd)"
+
+SCRIPTS_DIR="$APP_BUNDLE/Contents/Resources/Scripts"
+SUPPORT_DIR="$APP_BUNDLE/Contents/Frameworks/Abracode.framework/Versions/A/Support"
+
+if [ ! -f "$SCRIPTS_DIR/lib.packagebuilder.sh" ]; then
+    printf 'pkgbuilder: cannot find the PackageBuilder libraries under %s\n' "$SCRIPTS_DIR" >&2
+    exit 1
+fi
+if [ ! -x "$SUPPORT_DIR/plister" ]; then
+    printf 'pkgbuilder: cannot find plister under %s\n' "$SUPPORT_DIR" >&2
+    exit 1
+fi
+
+# The environment OMC would have given a handler. The window UUID is synthetic
+# and unique per run: state_dir is named from it, so two concurrent CLI runs
+# cannot share a model file, and nothing here can collide with a real window's
+# state either.
+export OMC_APP_BUNDLE_PATH="$APP_BUNDLE"
+export OMC_OMC_SUPPORT_PATH="$SUPPORT_DIR"
+export OMC_ACTIONUI_WINDOW_UUID="CLI-$$"
+export OMC_PARENT_DIALOG_GUID=""
+export OMC_CURRENT_COMMAND_GUID="PKGBUILDER-CLI"
+
+# The console presentation layer where a handler would source the window one.
+# That is the only difference between this tool and the app: everything below -
+# the document model, the preconditions, the verify stage, the whole build
+# pipeline - is the same code the window drives.
+. "$SCRIPTS_DIR/lib.packagebuilder.sh"
+. "$SCRIPTS_DIR/lib.packagebuilder.console.sh"
+. "$SCRIPTS_DIR/lib.packagebuilder.build.sh"
+. "$SCRIPTS_DIR/lib.packagebuilder.schema.sh"
+
+# The state directory is this run's scratch space and holds the working copy of
+# the document, so it goes when the run does - including on an interrupt, which
+# is when a half-staged payload root would otherwise be left behind.
+cleanup_run() {
+    /bin/rm -rf "${TMPDIR:-/tmp}/packagebuilder-state-$OMC_ACTIONUI_WINDOW_UUID"
+}
+trap 'cleanup_run' EXIT
+trap 'cleanup_run; exit 130' INT
+trap 'cleanup_run; exit 143' TERM
+
+# --- Small helpers ------------------------------------------------------------
+
+fail_usage() {
+    printf 'pkgbuilder: %s\n' "$1" >&2
+    return 2
+}
+
+# Load a document into this run's model, or explain why it could not be.
+require_document() {
+    local document_path="$1"
+    if [ -z "$document_path" ]; then
+        fail_usage "a .pkgbuilderproj path is required"
+        return 2
+    fi
+    if [ ! -f "$document_path" ]; then
+        printf 'pkgbuilder: no such document: %s\n' "$document_path" >&2
+        return 1
+    fi
+    if ! load_document "$document_path"; then
+        printf 'pkgbuilder: %s is not a readable PackageBuilder project.\n' "$document_path" >&2
+        printf '  Run "pkgbuilder validate %s" to find out what is wrong with it.\n' "$document_path" >&2
+        return 1
+    fi
+    return 0
+}
+
+# Copy this run's model back out to a path, through a temp file and a rename so
+# an interrupted write cannot truncate the caller's document.
+write_document() {
+    local destination="$1"
+    local landing="$destination.pkgbuilder.$$"
+    /bin/rm -f "$landing"
+    if ! /bin/cp "$(model_file)" "$landing"; then
+        printf 'pkgbuilder: could not write %s\n' "$destination" >&2
+        /bin/rm -f "$landing"
+        return 1
+    fi
+    if ! /bin/mv -f "$landing" "$destination"; then
+        printf 'pkgbuilder: could not put %s in place\n' "$destination" >&2
+        /bin/rm -f "$landing"
+        return 1
+    fi
+    return 0
+}
+
+# The type a known scalar key holds, so "set" does not need the caller to say.
+# An unknown key prints nothing and "set" refuses rather than guessing: writing
+# a string where the app reads a bool produces a document that loads, displays
+# correctly, and behaves as though the flag were off.
+key_type_of() {
+    local key_path="$1"
+    case "$key_path" in
+        /PROJECT/NAME|/PROJECT/VERSION|/PROJECT/MIN_OS_VERSION|/PROJECT/ARTIFACTS_DIR|\
+/PROJECT/OUTPUT_DIR|/PROJECT/PACKAGE_NAME) printf 'string' ;;
+        /COMPONENTS/0/IDENTIFIER|/COMPONENTS/0/INSTALL_LOCATION|/COMPONENTS/0/AUTH|\
+/COMPONENTS/0/PREINSTALL|/COMPONENTS/0/POSTINSTALL) printf 'string' ;;
+        /COMPONENTS/0/OVERWRITE_PERMISSIONS|/COMPONENTS/0/RELOCATABLE) printf 'bool' ;;
+        /DISTRIBUTION/TITLE|/DISTRIBUTION/CUSTOMIZE) printf 'string' ;;
+        /DISTRIBUTION/REQUIRE_SCRIPTS) printf 'bool' ;;
+        /DISTRIBUTION/RESOURCES/README|/DISTRIBUTION/RESOURCES/LICENSE|\
+/DISTRIBUTION/RESOURCES/WELCOME|/DISTRIBUTION/RESOURCES/CONCLUSION|\
+/DISTRIBUTION/RESOURCES/BACKGROUND) printf 'string' ;;
+        /SIGNING/ENABLED) printf 'bool' ;;
+        /SIGNING/INSTALLER_IDENTITY) printf 'string' ;;
+        # Payload scalars, whatever the index.
+        /COMPONENTS/0/PAYLOAD/*/SOURCE|/COMPONENTS/0/PAYLOAD/*/DESTINATION|\
+/COMPONENTS/0/PAYLOAD/*/OWNER|/COMPONENTS/0/PAYLOAD/*/GROUP|\
+/COMPONENTS/0/PAYLOAD/*/MODE|/COMPONENTS/0/PAYLOAD/*/VERIFY/SIGNED_BY|\
+/COMPONENTS/0/PAYLOAD/*/VERIFY/VERSION_FLAG) printf 'string' ;;
+        /COMPONENTS/0/PAYLOAD/*/VERIFY/HARDENED_RUNTIME|\
+/COMPONENTS/0/PAYLOAD/*/VERIFY/SECURE_TIMESTAMP) printf 'bool' ;;
+        # The two architecture lists, written from a comma-separated value.
+        # They are the only arrays worth setting from a command line, and both
+        # have a library function that rewrites the array wholesale rather than
+        # editing it, so a removed name cannot survive as a stale element.
+        /COMPONENTS/0/PAYLOAD/*/VERIFY/ARCHITECTURES|\
+/DISTRIBUTION/HOST_ARCHITECTURES) printf 'archlist' ;;
+        *) printf '' ;;
+    esac
+}
+
+# Print a comma or space separated architecture list one name per line, which
+# is the form payload_archs_set takes.
+arch_lines() {
+    printf '%s' "$1" | /usr/bin/tr ', ' '\n\n' | /usr/bin/grep -v '^$'
+}
+
+usage() {
+    /bin/cat >&2 <<'USAGE'
+pkgbuilder - construct, check and build PackageBuilder projects (agent CLI)
+
+Usage:
+  pkgbuilder new <doc.pkgbuilderproj> --name <N> --identifier <ID>
+                 [--version <V>] [--min-os <V>] [--artifacts-dir <D>]
+                 [--output-dir <D>] [--install-location <L>] [--title <T>]
+                 [--identity <I>] [--no-signing] [--force]
+  pkgbuilder add-payload <doc> <artifact> [--destination <P>] [--mode <M>]
+                 [--owner <O>] [--group <G>] [--no-verify]
+  pkgbuilder set <doc> <keypath> <value>
+  pkgbuilder get <doc> [<keypath>]
+  pkgbuilder validate <doc> [--strict]
+  pkgbuilder verify <doc>
+  pkgbuilder build <doc> [--dry-run] [--version <V>] [--artifacts-dir <D>]
+                 [--output-dir <D>] [--identity <I>] [--unsigned]
+  pkgbuilder inspect <package.pkg>
+  pkgbuilder export-script <doc> <out.sh>
+  pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbuilderproj> [--force]
+  pkgbuilder schema
+
+Diagnostics go to stderr; capturable results go to stdout.
+Exit: 0 ok, 2 warnings or usage error, 1 errors. See README.md for details.
+USAGE
+}
+
+# --- new ----------------------------------------------------------------------
+
+cmd_new() {
+    local destination="$1"; shift 2>/dev/null
+    case "$destination" in
+        ''|-*) fail_usage "new: a destination path is required"; return 2 ;;
+    esac
+    local name="" identifier="" version="" min_os="" artifacts="" output="" \
+          install_location="" title="" identity="" signing="1" force="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name)             name="$2"; shift 2 ;;
+            --identifier)       identifier="$2"; shift 2 ;;
+            --version)          version="$2"; shift 2 ;;
+            --min-os)           min_os="$2"; shift 2 ;;
+            --artifacts-dir)    artifacts="$2"; shift 2 ;;
+            --output-dir)       output="$2"; shift 2 ;;
+            --install-location) install_location="$2"; shift 2 ;;
+            --title)            title="$2"; shift 2 ;;
+            --identity)         identity="$2"; shift 2 ;;
+            --no-signing)       signing="0"; shift ;;
+            --force)            force="1"; shift ;;
+            -h|--help)          usage; return 2 ;;
+            *) fail_usage "new: unknown option: $1"; return 2 ;;
+        esac
+    done
+    [ -n "$name" ] || { fail_usage "new: --name is required"; return 2; }
+    [ -n "$identifier" ] || { fail_usage "new: --identifier is required"; return 2; }
+    if [ -e "$destination" ] && [ "$force" != "1" ]; then
+        printf 'pkgbuilder: %s already exists; pass --force to replace it\n' "$destination" >&2
+        return 1
+    fi
+
+    new_document || { printf 'pkgbuilder: could not start a document\n' >&2; return 1; }
+    model_normalize
+
+    model_set /PROJECT/NAME "$name"
+    model_set /COMPONENTS/0/IDENTIFIER "$identifier"
+    [ -z "$version" ] || model_set /PROJECT/VERSION "$version"
+    [ -z "$min_os" ] || model_set /PROJECT/MIN_OS_VERSION "$min_os"
+    [ -z "$install_location" ] || model_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
+    [ -z "$identity" ] || model_set /SIGNING/INSTALLER_IDENTITY "$identity"
+    model_set_bool /SIGNING/ENABLED "$signing"
+    # The title defaults to the project name rather than being left empty: an
+    # empty <title> is what the installer window shows in its title bar.
+    if [ -n "$title" ]; then
+        model_set /DISTRIBUTION/TITLE "$title"
+    else
+        model_set /DISTRIBUTION/TITLE "$name"
+    fi
+
+    # The two folders are stored the way the window stores them - relative to
+    # the document when they sit below it (design 4.2) - so the document that
+    # comes out of this is the same document the app would have written. That
+    # needs the document's own location on record first, which is why the path
+    # is set before either folder is.
+    set_doc_path "$destination"
+    if [ -n "$artifacts" ]; then
+        model_set /PROJECT/ARTIFACTS_DIR "$(store_path "$(canonical_path "$artifacts")")"
+    fi
+    if [ -n "$output" ]; then
+        model_set /PROJECT/OUTPUT_DIR "$(store_path "$(canonical_path "$output")")"
+    fi
+
+    write_document "$destination" || return 1
+    printf 'Created: %s\n' "$destination" >&2
+    printf '%s\n' "$destination"
+    return 0
+}
+
+# --- add-payload --------------------------------------------------------------
+
+cmd_add_payload() {
+    local document_path="$1" artifact="$2"
+    shift 2 2>/dev/null
+    case "$artifact" in
+        ''|-*) fail_usage "add-payload: <doc> and <artifact> are required"; return 2 ;;
+    esac
+    local destination="" mode="" owner="" group="" no_verify="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --destination) destination="$2"; shift 2 ;;
+            --mode)        mode="$2"; shift 2 ;;
+            --owner)       owner="$2"; shift 2 ;;
+            --group)       group="$2"; shift 2 ;;
+            --no-verify)   no_verify="1"; shift ;;
+            -h|--help)     usage; return 2 ;;
+            *) fail_usage "add-payload: unknown option: $1"; return 2 ;;
+        esac
+    done
+
+    require_document "$document_path" || return $?
+
+    # An absolute path, so store_path can decide whether it sits under the
+    # artifacts folder or the document's own. canonical_path resolves what is
+    # there; a path that is not on this disk yet - which is ordinary when a
+    # document is being written before the build machine has run - keeps what
+    # the caller gave, made absolute against the working directory.
+    local absolute="$(canonical_path "$artifact")"
+    if [ -z "$absolute" ]; then
+        case "$artifact" in
+            /*) absolute="$artifact" ;;
+            *) absolute="$(pwd)/$artifact" ;;
+        esac
+    fi
+    if [ ! -e "$absolute" ]; then
+        printf 'pkgbuilder: note: %s is not on this disk; the entry is added and asserts nothing about it\n' "$absolute" >&2
+    fi
+
+    local entry_index="$(payload_append_from_path "$absolute")"
+    if [ -z "$entry_index" ]; then
+        printf 'pkgbuilder: could not add %s to the payload\n' "$artifact" >&2
+        return 1
+    fi
+
+    [ -z "$destination" ] || payload_set "$entry_index" DESTINATION "$destination"
+    [ -z "$mode" ] || payload_set "$entry_index" MODE "$mode"
+    [ -z "$owner" ] || payload_set "$entry_index" OWNER "$owner"
+    [ -z "$group" ] || payload_set "$entry_index" GROUP "$group"
+    if [ "$no_verify" = "1" ]; then
+        payload_archs_set "$entry_index" ""
+        payload_set "$entry_index" VERIFY/SIGNED_BY ""
+        payload_bool_set "$entry_index" VERIFY/HARDENED_RUNTIME 0
+        payload_bool_set "$entry_index" VERIFY/SECURE_TIMESTAMP 0
+        payload_set "$entry_index" VERIFY/VERSION_FLAG ""
+    fi
+
+    write_document "$document_path" || return 1
+
+    local stored_destination="$(payload_get "$entry_index" DESTINATION)"
+    if [ -z "$stored_destination" ]; then
+        printf 'pkgbuilder: added entry %s with no destination - set one with:\n' "$((entry_index + 1))" >&2
+        printf '  pkgbuilder set %s /COMPONENTS/0/PAYLOAD/%s/DESTINATION /usr/local/bin/name\n' "$document_path" "$entry_index" >&2
+    else
+        printf 'Added entry %s: %s -> %s\n' "$((entry_index + 1))" \
+            "$(payload_get "$entry_index" SOURCE)" "$stored_destination" >&2
+    fi
+    printf '%s\n' "$entry_index"
+    return 0
+}
+
+# --- set / get ----------------------------------------------------------------
+
+cmd_set() {
+    local document_path="$1" key_path="$2" new_value="$3"
+    if [ -z "$key_path" ] || [ $# -lt 3 ]; then
+        fail_usage "set: <doc> <keypath> <value> are all required"
+        return 2
+    fi
+    require_document "$document_path" || return $?
+
+    local wanted_type="$(key_type_of "$key_path")"
+    if [ -z "$wanted_type" ]; then
+        printf 'pkgbuilder: %s is not a key this app reads.\n' "$key_path" >&2
+        printf '  Run "pkgbuilder schema" for the keys and their types.\n' >&2
+        return 1
+    fi
+
+    case "$wanted_type" in
+        archlist)
+            # Set by the loop below.
+            local arch
+            for arch in $(arch_lines "$new_value"); do
+                case "$arch" in
+                    arm64|arm64e|x86_64|i386|arm64_32|armv7|armv7k) ;;
+                    *)
+                        printf 'pkgbuilder: "%s" is not an architecture lipo reports.\n' "$arch" >&2
+                        return 1
+                        ;;
+                esac
+            done
+            case "$key_path" in
+                /DISTRIBUTION/HOST_ARCHITECTURES)
+                    for arch in $(arch_lines "$new_value"); do
+                        case "$arch" in
+                            arm64|x86_64) ;;
+                            *)
+                                printf 'pkgbuilder: HOST_ARCHITECTURES understands arm64 and x86_64 only; got "%s".\n' "$arch" >&2
+                                return 1
+                                ;;
+                        esac
+                    done
+                    "$plister" remove "$(model_file)" /DISTRIBUTION/HOST_ARCHITECTURES 2>/dev/null
+                    "$plister" set array "$(model_file)" /DISTRIBUTION/HOST_ARCHITECTURES || return 1
+                    for arch in $(arch_lines "$new_value"); do
+                        "$plister" append string "$arch" "$(model_file)" /DISTRIBUTION/HOST_ARCHITECTURES || return 1
+                    done
+                    ;;
+                *)
+                    # /COMPONENTS/0/PAYLOAD/<n>/VERIFY/ARCHITECTURES
+                    local entry_index="${key_path#/COMPONENTS/0/PAYLOAD/}"
+                    entry_index="${entry_index%%/*}"
+                    case "$entry_index" in
+                        ''|*[!0-9]*)
+                            printf 'pkgbuilder: %s does not name a payload entry index\n' "$key_path" >&2
+                            return 1
+                            ;;
+                    esac
+                    if [ "$entry_index" -ge "$(payload_count)" ]; then
+                        printf 'pkgbuilder: there is no payload entry %s in this document\n' "$((entry_index + 1))" >&2
+                        return 1
+                    fi
+                    payload_archs_set "$entry_index" "$(arch_lines "$new_value")" || return 1
+                    ;;
+            esac
+            ;;
+        bool)
+            case "$new_value" in
+                true|false|1|0|yes|no) ;;
+                *)
+                    printf 'pkgbuilder: %s holds a boolean; got "%s". Use true or false.\n' "$key_path" "$new_value" >&2
+                    return 1
+                    ;;
+            esac
+            case "$new_value" in
+                true|1|yes) model_set_bool "$key_path" 1 ;;
+                *) model_set_bool "$key_path" 0 ;;
+            esac
+            ;;
+        *)
+            # An enum is caught here rather than at build time, where "Rooot"
+            # becomes a Distribution XML the installer rejects.
+            case "$key_path" in
+                /COMPONENTS/0/AUTH)
+                    case "$new_value" in
+                        Root|User) ;;
+                        *) printf 'pkgbuilder: AUTH is "%s"; it must be Root or User.\n' "$new_value" >&2; return 1 ;;
+                    esac
+                    ;;
+                /DISTRIBUTION/CUSTOMIZE)
+                    case "$new_value" in
+                        never|allow|always) ;;
+                        *) printf 'pkgbuilder: CUSTOMIZE is "%s"; it must be never, allow or always.\n' "$new_value" >&2; return 1 ;;
+                    esac
+                    ;;
+            esac
+            model_set "$key_path" "$new_value"
+            ;;
+    esac
+
+    write_document "$document_path" || return 1
+    printf 'Set %s = %s\n' "$key_path" "$new_value" >&2
+    return 0
+}
+
+cmd_get() {
+    local document_path="$1" key_path="$2"
+    require_document "$document_path" || return $?
+    if [ -z "$key_path" ]; then
+        /bin/cat "$(model_file)"
+        return 0
+    fi
+    local value_type="$("$plister" get type "$(model_file)" "$key_path" 2>/dev/null)"
+    if [ -z "$value_type" ]; then
+        printf 'pkgbuilder: %s is not set in this document\n' "$key_path" >&2
+        return 1
+    fi
+    case "$value_type" in
+        dict|array) "$plister" get keys "$(model_file)" "$key_path" 2>/dev/null || \
+                    "$plister" get count "$(model_file)" "$key_path" ;;
+        *) "$plister" get value "$(model_file)" "$key_path" ;;
+    esac
+    return 0
+}
+
+# --- validate -----------------------------------------------------------------
+
+cmd_validate() {
+    local document_path="" strict="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --strict)  strict="1"; shift ;;
+            -h|--help) usage; return 2 ;;
+            -*) fail_usage "validate: unknown option: $1"; return 2 ;;
+            *) document_path="$1"; shift ;;
+        esac
+    done
+    [ -n "$document_path" ] || { fail_usage "validate: a document path is required"; return 2; }
+
+    # The format check reads the file as written, before model_normalize can
+    # fill in what is missing - which is the whole point of running it.
+    schema_check_document "$document_path"
+    local schema_status=$?
+
+    if [ "$schema_status" = "1" ]; then
+        printf '%s: %s error(s), %s warning(s)\n' \
+            "$(/usr/bin/basename "$document_path")" "$schema_errors" "$schema_warnings" >&2
+        return 1
+    fi
+
+    # The buildability half, which needs the document loaded and normalized.
+    # Reported separately because a document can be well-formed and not yet
+    # buildable - artifacts on another machine is the normal case while a
+    # project is being written - and only --strict makes that an error.
+    require_document "$document_path" || return $?
+    printf 'Build preconditions:\n' >&2
+    check_preconditions
+    local component_failures="$precondition_failures"
+    check_distribution_preconditions
+    local distribution_failures="$precondition_failures"
+    check_signing_preconditions
+    local signing_failures="$precondition_failures"
+    local total_failures=$((component_failures + distribution_failures + signing_failures))
+    if [ "$total_failures" = "0" ]; then
+        printf '  all clear - this document can be built on this machine\n' >&2
+    fi
+
+    printf '%s: %s error(s), %s warning(s), %s precondition(s) unmet\n' \
+        "$(/usr/bin/basename "$document_path")" \
+        "$schema_errors" "$schema_warnings" "$total_failures" >&2
+
+    if [ "$strict" = "1" ] && [ "$total_failures" != "0" ]; then
+        return 1
+    fi
+    if [ "$total_failures" != "0" ] || [ "$schema_warnings" != "0" ]; then
+        return 2
+    fi
+    return 0
+}
+
+# --- verify -------------------------------------------------------------------
+
+cmd_verify() {
+    local document_path="$1"
+    require_document "$document_path" || return $?
+    printf 'Verifying the payload of %s\n' "$(/usr/bin/basename "$document_path")" >&2
+    check_preconditions
+    if [ "$precondition_failures" != "0" ]; then
+        printf 'pkgbuilder: %s problem(s) to fix before the payload can be verified\n' "$precondition_failures" >&2
+        return 1
+    fi
+    if ! verify_payload; then
+        printf 'pkgbuilder: an artifact is not what the document says it is\n' >&2
+        return 1
+    fi
+    printf 'Every artifact matches what the document asserts about it.\n' >&2
+    return 0
+}
+
+# --- build --------------------------------------------------------------------
+
+# Print what a build would produce, writing nothing outside this run's state
+# directory. Everything up to the first tool that writes a package is real: the
+# preconditions run, the payload is verified against the artifacts on disk, and
+# the Distribution XML is generated from the document, so a dry run that passes
+# has exercised every judgement the build makes about the document.
+build_dry_run() {
+    local document_path="$1"
+
+    printf 'Preconditions:\n' >&2
+    check_preconditions
+    local failures="$precondition_failures"
+    check_distribution_preconditions
+    failures=$((failures + precondition_failures))
+    if [ "$(model_get_bool /SIGNING/ENABLED)" = "1" ]; then
+        check_signing_preconditions
+        failures=$((failures + precondition_failures))
+    fi
+    if [ "$failures" != "0" ]; then
+        printf 'Stopped: %s problem(s) to fix before this would build.\n' "$failures" >&2
+        return 1
+    fi
+    printf '  all clear\n' >&2
+
+    printf 'Verifying the payload:\n' >&2
+    if ! verify_payload; then
+        printf 'Stopped: an artifact is not what the document says it is.\n' >&2
+        return 1
+    fi
+
+    # The staging plan, from the same two functions the component stage uses to
+    # place files, so what is printed is what would be staged.
+    printf 'Would stage into the payload root:\n' >&2
+    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
+    [ -n "$install_location" ] || install_location="/"
+    local entry_count="$(payload_count)"
+    local index=0
+    # Set by the loop below.
+    local source destination relative
+    while [ "$index" -lt "$entry_count" ]; do
+        source="$(resolve_stored_path "$(payload_get "$index" SOURCE)")"
+        destination="$(expand_tokens "$(payload_get "$index" DESTINATION)")"
+        relative="$(staged_relative_path "$destination" "$install_location")"
+        printf '  %s -> %s (%s)\n' "$source" "$relative" "$(payload_get "$index" MODE)" >&2
+        index=$((index + 1))
+    done
+
+    local xml_path
+    xml_path="$(generate_distribution_xml)" || {
+        printf 'Stopped: the Distribution XML could not be generated.\n' >&2
+        return 1
+    }
+    printf 'Would generate this Distribution XML:\n' >&2
+    /usr/bin/sed 's/^/  /' "$xml_path" >&2
+
+    local package_name="$(package_file_name)"
+    local output_dir="$(output_dir_abs)"
+    if [ "$(model_get_bool /SIGNING/ENABLED)" = "1" ]; then
+        printf 'Would sign with: %s\n' "$(model_get /SIGNING/INSTALLER_IDENTITY)" >&2
+        printf 'Would write: %s/%s\n' "$output_dir" "$package_name" >&2
+    else
+        printf 'Signing is off, so the output folder would be left untouched.\n' >&2
+        printf 'Would build an unsigned package in the scratch directory only.\n' >&2
+    fi
+    printf 'Nothing was written: this was a dry run.\n' >&2
+    # The one line on stdout is the path a real run would produce, so a caller
+    # can compare it against what it expected without parsing the report.
+    if [ "$(model_get_bool /SIGNING/ENABLED)" = "1" ]; then
+        printf '%s/%s\n' "$output_dir" "$package_name"
+    fi
+    return 0
+}
+
+cmd_build() {
+    local document_path="" dry_run="0" version="" artifacts="" output="" identity="" unsigned="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --dry-run)       dry_run="1"; shift ;;
+            --version)       version="$2"; shift 2 ;;
+            --artifacts-dir) artifacts="$2"; shift 2 ;;
+            --output-dir)    output="$2"; shift 2 ;;
+            --identity)      identity="$2"; shift 2 ;;
+            --unsigned)      unsigned="1"; shift ;;
+            -h|--help)       usage; return 2 ;;
+            -*) fail_usage "build: unknown option: $1"; return 2 ;;
+            *) document_path="$1"; shift ;;
+        esac
+    done
+    [ -n "$document_path" ] || { fail_usage "build: a document path is required"; return 2; }
+    require_document "$document_path" || return $?
+
+    # Overrides are applied to this run's working copy of the document, never
+    # to the file on disk: a CI run that passes --version must not silently
+    # rewrite the project it was handed.
+    [ -z "$version" ] || model_set /PROJECT/VERSION "$version"
+    [ -z "$artifacts" ] || model_set /PROJECT/ARTIFACTS_DIR "$(canonical_path "$artifacts")"
+    [ -z "$output" ] || model_set /PROJECT/OUTPUT_DIR "$(canonical_path "$output")"
+    if [ -n "$identity" ]; then
+        model_set /SIGNING/INSTALLER_IDENTITY "$identity"
+        model_set_bool /SIGNING/ENABLED 1
+    fi
+    [ "$unsigned" != "1" ] || model_set_bool /SIGNING/ENABLED 0
+
+    if [ "$dry_run" = "1" ]; then
+        clear_log
+        build_dry_run "$document_path"
+        return $?
+    fi
+
+    # The same pipeline the Build Package button runs, reporting through the
+    # console presentation layer instead of the window one. It handles its own
+    # logging, stage sequencing and unwinding, and records what it produced in
+    # the state directory.
+    run_pipeline || return 1
+
+    # The one line on stdout: what the run produced, so a caller can capture it
+    # without parsing the log. A signed run lands in the output folder; an
+    # unsigned one is an intermediate in a scratch directory that goes away
+    # when this command exits (design 8.3), so it is copied out when the
+    # document names an output folder to copy it to.
+    local produced="$(built_package_path)"
+    if [ -n "$produced" ]; then
+        printf '%s\n' "$produced"
+        return 0
+    fi
+
+    produced="$(built_distribution_path)"
+    [ -n "$produced" ] || return 1
+    local keep_dir="$(output_dir_abs)"
+    if [ -n "$keep_dir" ] && [ -d "$keep_dir" ]; then
+        local kept="$keep_dir/$(/usr/bin/basename "$produced")"
+        if /bin/cp "$produced" "$kept"; then
+            append_log "Copied to: $kept"
+            printf '%s\n' "$kept"
+            return 0
+        fi
+    fi
+    printf '%s\n' "$produced"
+    return 0
+}
+
+# --- inspect ------------------------------------------------------------------
+
+cmd_inspect() {
+    local package_path="$1"
+    [ -n "$package_path" ] || { fail_usage "inspect: a .pkg path is required"; return 2; }
+    if [ ! -f "$package_path" ]; then
+        printf 'pkgbuilder: no such package: %s\n' "$package_path" >&2
+        return 1
+    fi
+    local expand_dir="$(state_dir)/inspect"
+    /bin/rm -rf "$expand_dir"
+    if ! /usr/sbin/pkgutil --expand "$package_path" "$expand_dir" >/dev/null 2>&1; then
+        printf 'pkgbuilder: %s is not a package pkgutil can expand\n' "$package_path" >&2
+        return 1
+    fi
+
+    printf 'Package: %s\n' "$package_path"
+    if [ -f "$expand_dir/Distribution" ]; then
+        printf 'Kind: distribution package\n'
+        printf 'Distribution:\n'
+        # The trailing newline is added rather than assumed: productbuild
+        # writes the document without one, so the next heading would otherwise
+        # start on the same line as the closing tag.
+        /usr/bin/sed 's/^/  /' "$expand_dir/Distribution"
+        printf '\n'
+    fi
+    # Set by the loop below.
+    local component_dir component_name
+    for component_dir in "$expand_dir"/*.pkg; do
+        [ -d "$component_dir" ] || continue
+        component_name="$(/usr/bin/basename "$component_dir")"
+        printf 'Component %s:\n' "$component_name"
+        if [ -f "$component_dir/PackageInfo" ]; then
+            /usr/bin/sed 's/^/  /' "$component_dir/PackageInfo"
+            printf '\n'
+        fi
+    done
+    if [ -f "$expand_dir/PackageInfo" ]; then
+        printf 'Kind: component package\n'
+        printf 'PackageInfo:\n'
+        /usr/bin/sed 's/^/  /' "$expand_dir/PackageInfo"
+    fi
+    printf 'Payload:\n'
+    /usr/sbin/pkgutil --payload-files "$package_path" 2>/dev/null | /usr/bin/sed 's/^/  /'
+    printf 'Signature:\n'
+    /usr/sbin/pkgutil --check-signature "$package_path" 2>&1 | /usr/bin/sed 's/^/  /'
+    /bin/rm -rf "$expand_dir"
+    return 0
+}
+
+# --- export-script / import-pkgproj -------------------------------------------
+
+cmd_export_script() {
+    local document_path="$1" script_path="$2"
+    [ -n "$script_path" ] || { fail_usage "export-script: <doc> and <out.sh> are required"; return 2; }
+    require_document "$document_path" || return $?
+    . "$SCRIPTS_DIR/lib.packagebuilder.export.sh"
+    if ! write_packaging_script "$script_path"; then
+        printf 'pkgbuilder: the packaging script could not be written\n' >&2
+        /bin/rm -f "$script_path"
+        return 1
+    fi
+    if ! /bin/sh -n "$script_path" 2>/dev/null; then
+        printf 'pkgbuilder: the generated script did not validate and was not kept\n' >&2
+        /bin/rm -f "$script_path"
+        return 1
+    fi
+    /bin/chmod 755 "$script_path"
+    printf 'Exported: %s\n' "$script_path" >&2
+    printf '%s\n' "$script_path"
+    return 0
+}
+
+cmd_import_pkgproj() {
+    local source_path="$1" destination="$2"
+    shift 2 2>/dev/null
+    local force="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) force="1"; shift ;;
+            *) fail_usage "import-pkgproj: unknown option: $1"; return 2 ;;
+        esac
+    done
+    [ -n "$destination" ] || { fail_usage "import-pkgproj: <in.pkgproj> and <out.pkgbuilderproj> are required"; return 2; }
+    if [ ! -f "$source_path" ]; then
+        printf 'pkgbuilder: no such project: %s\n' "$source_path" >&2
+        return 1
+    fi
+    if [ -e "$destination" ] && [ "$force" != "1" ]; then
+        printf 'pkgbuilder: %s already exists; pass --force to replace it\n' "$destination" >&2
+        return 1
+    fi
+    . "$SCRIPTS_DIR/lib.packagebuilder.import.sh"
+    new_document || return 1
+    model_normalize
+    # The destination on record before the import, so the paths it stores are
+    # relative to where the document will live (design 4.2).
+    set_doc_path "$destination"
+    if ! import_pkgproj "$(canonical_path "$source_path")"; then
+        printf 'pkgbuilder: nothing usable in %s\n' "$source_path" >&2
+        return 1
+    fi
+    write_document "$destination" || return 1
+    printf 'Imported: %s\n' "$destination" >&2
+    printf '%s\n' "$destination"
+    return 0
+}
+
+# --- schema -------------------------------------------------------------------
+
+# The schema lives beside this tool as a file rather than inside it, so an
+# agent can read it directly - the SKILL points at that path - and so the one
+# description of the format is not duplicated in a heredoc that would drift.
+# It is pseudo-JSON: the comments are what make it worth reading, and they are
+# what stop it being parseable.
+cmd_schema() {
+    if [ ! -f "$AGENTS_DIR/packagebuilder-schema.jsonc" ]; then
+        printf 'pkgbuilder: the schema file is missing from %s\n' "$AGENTS_DIR" >&2
+        return 1
+    fi
+    /bin/cat "$AGENTS_DIR/packagebuilder-schema.jsonc"
+    return 0
+}
+
+
+# --- Dispatch -----------------------------------------------------------------
+
+subcommand="$1"
+[ $# -eq 0 ] || shift
+
+case "$subcommand" in
+    new)            cmd_new "$@" ;;
+    add-payload)    cmd_add_payload "$@" ;;
+    set)            cmd_set "$@" ;;
+    get)            cmd_get "$@" ;;
+    validate)       cmd_validate "$@" ;;
+    verify)         cmd_verify "$@" ;;
+    build)          cmd_build "$@" ;;
+    inspect)        cmd_inspect "$@" ;;
+    export-script)  cmd_export_script "$@" ;;
+    import-pkgproj) cmd_import_pkgproj "$@" ;;
+    schema)         cmd_schema ;;
+    -h|--help|help) usage; exit 2 ;;
+    '')             usage; exit 2 ;;
+    *)              printf 'pkgbuilder: unknown command: %s\n' "$subcommand" >&2; usage; exit 2 ;;
+esac
+exit $?

@@ -159,45 +159,20 @@ pb_set() {
     printf '%s' "$flag_value" | "$pasteboard_tool" "${flag_name}_${document_uuid}" set
 }
 
-# --- Window control (thin wrappers over omc_dialog_control) ------------------
-# All target document_uuid so a child sheet updates the parent document window.
-set_value() {
-    local view_id="$1" new_value="$2"
-    "$dialog_tool" "$document_uuid" "$view_id" "$new_value"
-}
-
-set_property() {
-    local view_id="$1" property_name="$2" property_value="$3"
-    "$dialog_tool" "$document_uuid" "$view_id" omc_set_property "$property_name" "$property_value"
-}
-
-enable_view() {
-    local view_id="$1" enabled="$2"
-    if [ "$enabled" = "1" ]; then
-        "$dialog_tool" "$document_uuid" "$view_id" omc_enable
-    else
-        "$dialog_tool" "$document_uuid" "$view_id" omc_disable
-    fi
-}
-
-show_view() {
-    local view_id="$1" visible="$2"
-    if [ "$visible" = "1" ]; then
-        "$dialog_tool" "$document_uuid" "$view_id" omc_show
-    else
-        "$dialog_tool" "$document_uuid" "$view_id" omc_hide
-    fi
-}
-
-set_status() {
-    local message="$1"
-    set_value "$STATUS_ID" "$message"
-}
-
-show_progress() {
-    local visible="$1"
-    show_view "$PROGRESS_ID" "$visible"
-}
+# --- Window control -----------------------------------------------------------
+# set_value, set_property, enable_view, show_view, set_status and show_progress
+# are NOT defined here. They are the presentation layer, and there are two
+# implementations of it: lib.packagebuilder.window.sh draws in the window,
+# lib.packagebuilder.console.sh writes to a terminal for the agent CLI. Every
+# frontend sources exactly one of them after this file.
+#
+# They were defined here until 2026-08-07, and the CLI had to redefine all six
+# after sourcing to stop them talking to a window that does not exist. Splitting
+# them out is what lets the CLI and the app share the pipeline itself rather
+# than the CLI carrying a second copy of it.
+#
+# The readers below stay here: they take their values from the environment OMC
+# set up, so they answer the same way with or without a window.
 
 # Read a view's current value out of the environment. Arguments: view id.
 # The caller must have established that the id is numeric - it is interpolated
@@ -240,20 +215,12 @@ bool_str() {
     if [ "$flag" = "1" ]; then printf 'true'; else printf 'false'; fi
 }
 
-# --- Log view -----------------------------------------------------------------
-# From lib.notarize.sh: append to the file, then mirror the whole file into the
-# view, because the TextEditor has no incremental append.
-clear_log() {
-    : > "$(state_dir)/run.log"
-    set_value "$LOG_ID" ""
-}
-
-append_log() {
-    local message="$1"
-    local log_file="$(state_dir)/run.log"
-    printf '%s\n' "$message" >> "$log_file"
-    set_value "$LOG_ID" "$(/bin/cat "$log_file")"
-}
+# --- Log ----------------------------------------------------------------------
+# clear_log, append_log and append_log_file are part of the presentation layer
+# too - what "the log" is differs between a TextEditor and a terminal - so they
+# live in lib.packagebuilder.window.sh and lib.packagebuilder.console.sh beside
+# the view wrappers. Both write $(state_dir)/run.log, which is the part the
+# pipeline reads back.
 
 # --- Preferences (read/written with plister; from lib.notarize.sh) -----------
 prefs_dir="$HOME/Library/Application Support/PackageBuilder"

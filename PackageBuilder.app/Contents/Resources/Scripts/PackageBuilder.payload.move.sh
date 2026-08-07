@@ -5,6 +5,7 @@
 # step, and the trigger view id already says which was pressed. Same reasoning
 # as the single field.changed writer in design section 9.2.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
+source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 
 dbg_context "PackageBuilder.payload.move.sh"
 
