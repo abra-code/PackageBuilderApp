@@ -208,6 +208,19 @@ view_value() {
     eval "printf '%s' \"\$OMC_ACTIONUI_VIEW_${view_id}_VALUE\""
 }
 
+# Escape a value for a JSON string literal. Backslash first, or the backslashes
+# the quote escape introduces would be escaped a second time. Used to build the
+# options fragment omc_set_property parses - an identity name is user data as
+# far as this app is concerned, and one containing a quote would otherwise
+# produce a fragment the parser rejects and a picker that silently keeps its
+# placeholder.
+json_escape() {
+    local text="$1"
+    text="$(str_replace "$text" '\' '\\')"
+    text="$(str_replace "$text" '"' '\"')"
+    printf '%s' "$text"
+}
+
 # Read one column of a table's selected row out of the environment. Columns are
 # 1-based here and 0 means "the whole row, tab-joined" - the opposite base to
 # omc_select_row's 0-based row index. Both arguments are interpolated into the
@@ -702,6 +715,17 @@ push_model_to_window() {
     # The Actions menu is enabled as a whole once there is a document; the items
     # belonging to later phases carry their own "disabled" in the window JSON.
     enable_view "$ACTIONS_MENU_ID" 1
+    enable_view "$BUILD_BTN_ID" 1
+
+    # The picker's options come from the keychain, so they are filled in here
+    # rather than declared in the window JSON. This also selects the identity
+    # the document names, which is why it runs inside the loading guard.
+    refresh_identity_picker
+
+    # Both start off: Reveal has nothing to reveal until a build succeeds, and
+    # Notarize has nothing to hand over.
+    show_view "$REVEAL_BTN_ID" 0
+    enable_view "$NOTARIZE_BTN_ID" 0
 
     pb_set pb_loading ""
     return 0
@@ -1768,6 +1792,103 @@ url_to_path() {
     printf '%b' "$(printf '%s' "$path" | /usr/bin/sed 's/\\/\\\\/g; s/%/\\x/g')"
 }
 
+# --- Installer identity picker -----------------------------------------------
+# Print the Developer ID Installer identities in the keychain, one per line.
+#
+# Copied from list_signing_identities in lib.notarize.sh, restricted to its pkg
+# branch. The policy matters: an installer certificate is not valid for the
+# codesigning policy and does not appear under "-p codesigning" at all, so it
+# has to be looked up under "-p basic".
+list_installer_identities() {
+    /usr/bin/security find-identity -v -p basic 2>/dev/null \
+        | /usr/bin/grep "Developer ID Installer" \
+        | /usr/bin/sed 's/.*"\(.*\)".*/\1/'
+}
+
+NO_IDENTITY_LABEL="(no Developer ID Installer certificate found)"
+CHOOSE_IDENTITY_LABEL="(choose an identity)"
+
+# Fill the installer identity picker from the keychain and select the one the
+# document names.
+#
+# The ordered list is also written to identities.txt. The options carry explicit
+# tags, so the picker should deliver the identity name directly the way the Auth
+# and Customize pickers already do - but a Picker's value channel is the 1-based
+# option index when options are plain strings (design 5.2), and which of the two
+# a runtime-populated picker uses is not something this app has established.
+# Keeping the map costs one file and lets the reader below accept either.
+refresh_identity_picker() {
+    local map_file="$(state_dir)/identities.txt"
+    local stored="$(model_get /SIGNING/INSTALLER_IDENTITY)"
+    # Set once per iteration below.
+    local identity
+
+    list_installer_identities > "$map_file"
+
+    local options="" selected="" found=0
+    while IFS= read -r identity; do
+        [ -n "$identity" ] || continue
+        if [ -n "$options" ]; then options="$options,"; fi
+        options="$options{\"title\":\"$(json_escape "$identity")\",\"tag\":\"$(json_escape "$identity")\"}"
+        if [ "$identity" = "$stored" ]; then
+            selected="$identity"
+            found=1
+        fi
+    done < "$map_file"
+
+    if [ -z "$options" ]; then
+        set_property "$IDENTITY_PICKER_ID" options \
+            "[{\"title\":\"$(json_escape "$NO_IDENTITY_LABEL")\",\"tag\":\"\"}]"
+        enable_view "$IDENTITY_PICKER_ID" 0
+        return 0
+    fi
+
+    # An explicit empty first row, so a document that names no identity shows
+    # one rather than appearing to have chosen the first certificate.
+    #
+    # Without it the picker sits on its first option while the model holds "",
+    # which is every fresh document, and the build then refuses with "no
+    # installer identity is chosen" while the window plainly shows one. The
+    # picker's own value channel is what makes this unavoidable: a value with no
+    # matching tag leaves it on its previous selection and fires no action
+    # (design 5.2), so there is no way to say "nothing" except to offer it.
+    options="{\"title\":\"$(json_escape "$CHOOSE_IDENTITY_LABEL")\",\"tag\":\"\"},$options"
+
+    set_property "$IDENTITY_PICKER_ID" options "[$options]"
+    enable_view "$IDENTITY_PICKER_ID" 1
+
+    # A document naming an identity this machine does not have keeps its stored
+    # value - the project is not wrong just because it was opened elsewhere -
+    # and the build's preconditions are what refuse it.
+    if [ "$found" = "1" ]; then
+        local previous_flag="$(pb_get pb_loading)"
+        pb_set pb_loading "$(/bin/date '+%s')"
+        set_value "$IDENTITY_PICKER_ID" "$selected"
+        pb_set pb_loading "$previous_flag"
+    fi
+    return 0
+}
+
+# Turn whatever the identity picker delivered into an identity name: the name
+# itself when the picker used its tags, or the nth line of the map when it
+# delivered a 1-based index.
+resolve_identity_value() {
+    local delivered="$1"
+    [ -n "$delivered" ] || return 0
+    case "$delivered" in
+        ''|*[!0-9]*) printf '%s' "$delivered"; return 0 ;;
+    esac
+    # The picker carries a "(choose an identity)" row ahead of the certificates,
+    # so a 1-based option index is one further along than the matching line of
+    # identities.txt, which lists only real identities. Index 1 is that row and
+    # means "none chosen".
+    if [ "$delivered" -le 1 ]; then
+        return 0
+    fi
+    local line="$(/usr/bin/sed -n "$((delivered - 1))p" "$(state_dir)/identities.txt" 2>/dev/null)"
+    if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$delivered"; fi
+}
+
 # --- Field map (design section 9.2) ------------------------------------------
 # The single place where the window's view ids and the document schema meet.
 # Print the model key path a scalar control writes to. Arguments: view id
@@ -1795,6 +1916,7 @@ field_key_path() {
         "$OUTPUT_DIR_ID")        printf '/PROJECT/OUTPUT_DIR' ;;
         "$PACKAGE_NAME_ID")      printf '/PROJECT/PACKAGE_NAME' ;;
         "$SIGN_ID")              printf '/SIGNING/ENABLED' ;;
+        "$IDENTITY_PICKER_ID")   printf '/SIGNING/INSTALLER_IDENTITY' ;;
         *) printf '' ;;
     esac
 }

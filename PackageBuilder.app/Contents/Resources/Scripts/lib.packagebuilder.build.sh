@@ -829,6 +829,185 @@ build_distribution_package() {
     return 0
 }
 
+# ==============================================================================
+# Signing and the output folder (design section 7 step 4, 8.3)
+# ==============================================================================
+
+# Succeed when an identity is in this machine's keychain. Whole-line, fixed
+# string: an identity contains "(" and ")" and must not be read as a pattern,
+# and a prefix match would accept a different team's certificate.
+identity_is_present() {
+    local wanted="$1"
+    [ -n "$wanted" ] || return 1
+    list_installer_identities | /usr/bin/grep -qxF "$wanted"
+}
+
+# Absolute output folder, or nothing when the document does not name one.
+output_dir_abs() {
+    local stored="$(model_get /PROJECT/OUTPUT_DIR)"
+    [ -n "$stored" ] || return 0
+    resolve_stored_path "$stored"
+}
+
+# The package's file name, with its tokens expanded and a .pkg extension.
+package_file_name() {
+    local pattern="$(model_get /PROJECT/PACKAGE_NAME)"
+    [ -n "$pattern" ] || pattern='${NAME}_${VERSION}.pkg'
+    local expanded="$(expand_tokens "$pattern")"
+    [ -n "$expanded" ] || return 0
+    # Case-insensitive, so a name already ending in .PKG does not become
+    # Foo.PKG.pkg.
+    case "$expanded" in
+        *.pkg|*.PKG|*.Pkg) ;;
+        *) expanded="${expanded}.pkg" ;;
+    esac
+    printf '%s' "$expanded"
+}
+
+check_signing_preconditions() {
+    precondition_failures=0
+
+    # Sign Only can run long after the fields it depends on were last valid, so
+    # the two that feed the package name are checked here as well as in the
+    # component stage. Without this, clearing the project name and running Sign
+    # Only produces a signed "_.pkg".
+    local name="$(model_get /PROJECT/NAME)"
+    local version="$(model_get /PROJECT/VERSION)"
+    valid_name "$name" || fail_precondition \
+        "Project name \"$name\" is not usable in a filename - use letters, digits, dot, underscore or hyphen"
+    valid_version "$version" || fail_precondition \
+        "Version \"$version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
+
+    local name_pattern="$(package_file_name)"
+    if [ -z "$name_pattern" ]; then
+        fail_precondition "The package file name is empty"
+    else
+        case "$name_pattern" in
+            */*) fail_precondition "The package file name \"$name_pattern\" must not contain a path separator" ;;
+        esac
+    fi
+
+    local output_dir="$(output_dir_abs)"
+    if [ -z "$output_dir" ]; then
+        fail_precondition "No output folder is set - choose where the signed package should go"
+    elif [ -e "$output_dir" ] && [ ! -d "$output_dir" ]; then
+        fail_precondition "The output folder \"$output_dir\" is not a folder"
+    elif [ -d "$output_dir" ] && [ ! -w "$output_dir" ]; then
+        fail_precondition "The output folder \"$output_dir\" is not writable"
+    fi
+
+    if [ "$(model_get_bool /SIGNING/ENABLED)" = "1" ]; then
+        local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
+        if [ -z "$identity" ]; then
+            fail_precondition "Signing is on but no installer identity is chosen"
+        elif ! identity_is_present "$identity"; then
+            fail_precondition "The installer identity \"$identity\" is not in this machine's keychain"
+        fi
+    fi
+
+    [ "$precondition_failures" -eq 0 ]
+}
+
+# Sign the unsigned distribution package into the output folder and print the
+# path of the result.
+#
+# This is the only step that writes outside the state directory, and it writes
+# only a signed package (design 8.3). The output folder is created if missing
+# and never cleaned (design 8.4).
+sign_package() {
+    local unsigned="$1"
+    local output_dir="$(output_dir_abs)"
+    local file_name="$(package_file_name)"
+    local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
+
+    # Re-checked here and not only in the preconditions. Every stage re-reads
+    # the live model, and the fields stay editable while a build runs, so a
+    # package name edited to "../elsewhere/x.pkg" between the check and this
+    # point would put the writes below outside the output folder entirely.
+    case "$file_name" in
+        ''|*/*)
+            append_log "  ! The package file name \"$file_name\" is not usable"
+            return 1
+            ;;
+    esac
+
+    local final_package="$output_dir/$file_name"
+
+    if [ ! -d "$output_dir" ]; then
+        if ! /bin/mkdir -p "$output_dir"; then
+            append_log "  ! Could not create the output folder $output_dir"
+            return 1
+        fi
+        append_log "  created $output_dir"
+    fi
+
+    # Sign into the state directory and verify there, then put the finished file
+    # into the output folder as the very last act.
+    #
+    # The obvious shape - rm the destination, productsign straight onto it - is
+    # wrong twice over. It destroys the previous release's package *before*
+    # knowing the new signature will succeed, so a productsign that fails (the
+    # keychain prompt declined, a full disk) leaves the output folder empty
+    # where a good package used to be; rebuilding the same version is the normal
+    # retry case, so this is reachable in ordinary use. And it writes into the
+    # output folder for the whole duration of productsign, so a build killed
+    # mid-run - app quit, which kills the recorded process group - strands a
+    # partial, unsigned file named exactly like a real package. That is the one
+    # outcome design 8.3 exists to prevent. Found in review, 2026-08-06.
+    local staged_signed="$(state_dir)/signed.pkg"
+    /bin/rm -f "$staged_signed"
+
+    if ! run_tool /usr/bin/productsign --sign "$identity" "$unsigned" "$staged_signed"; then
+        append_log "  ! productsign failed; the output folder was not touched"
+        /bin/rm -f "$staged_signed"
+        return 1
+    fi
+    if [ ! -f "$staged_signed" ]; then
+        append_log "  ! productsign reported success but wrote no package"
+        return 1
+    fi
+    if ! run_tool /usr/sbin/pkgutil --check-signature "$staged_signed"; then
+        append_log "  ! The signed package did not verify; the output folder was not touched"
+        /bin/rm -f "$staged_signed"
+        return 1
+    fi
+
+    # Land it through a temp file in the output folder itself and rename, so the
+    # replacement is a rename rather than a window during which the destination
+    # is absent or half-written. The temp is a sibling, so the rename stays
+    # within one filesystem even when the output folder is on another volume.
+    local landing="$output_dir/.${file_name}.$$.pbsigning"
+    /bin/rm -f "$landing"
+    if ! /bin/cp "$staged_signed" "$landing"; then
+        append_log "  ! Could not write into the output folder $output_dir"
+        /bin/rm -f "$landing"
+        return 1
+    fi
+    if ! /bin/mv -f "$landing" "$final_package"; then
+        append_log "  ! Could not put the signed package in place"
+        /bin/rm -f "$landing"
+        return 1
+    fi
+    /bin/rm -f "$staged_signed"
+
+    if [ ! -f "$final_package" ]; then
+        append_log "  ! The signed package is not where it should be"
+        return 1
+    fi
+
+    printf '%s' "$final_package"
+    return 0
+}
+
+built_package_path() {
+    local record="$(state_dir)/built_package.txt"
+    [ -f "$record" ] || return 0
+    local package_path="$(/bin/cat "$record")"
+    [ -n "$package_path" ] || return 0
+    [ -f "$package_path" ] || return 0
+    printf '%s' "$package_path"
+}
+
 # --- Run bookkeeping ----------------------------------------------------------
 # A build records its own process group id so app.will.terminate can stop a
 # survivor, and holds a busy flag so a second one cannot start on top of it.

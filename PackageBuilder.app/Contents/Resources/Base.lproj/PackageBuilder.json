@@ -27,7 +27,7 @@
                         "properties": {
                             "title": "Build Package",
                             "systemImage": "shippingbox",
-                            "disabled": true,
+                            "actionID": "PackageBuilder.build",
                             "help": "Verify the payload, build the component and distribution packages, and sign the result"
                         }
                     },
@@ -79,7 +79,7 @@
                                 "id": 324,
                                 "properties": {
                                     "title": "Sign Only",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.step.sign"
                                 }
                             },
                             {
@@ -118,6 +118,7 @@
                             "title": "Notarize...",
                             "systemImage": "checkmark.seal",
                             "disabled": true,
+                            "actionID": "PackageBuilder.notarize",
                             "help": "Hand the signed package to Notarize.app"
                         }
                     }
@@ -1346,7 +1347,7 @@
                                                         "id": 171,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.output"
                                                         }
                                                     }
                                                 ]
@@ -1437,6 +1438,7 @@
                                                                 "(no Developer ID Installer certificate found)"
                                                             ],
                                                             "disabled": true,
+                                                            "actionID": "PackageBuilder.field.changed",
                                                             "frame": {
                                                                 "maxWidth": "infinity"
                                                             }
@@ -1633,7 +1635,8 @@
                                                         "properties": {
                                                             "title": "Reveal Package",
                                                             "controlSize": "small",
-                                                            "hidden": true
+                                                            "hidden": true,
+                                                            "actionID": "PackageBuilder.reveal"
                                                         }
                                                     }
                                                 ]

@@ -130,6 +130,15 @@ if [ "$vid" = "$ARCH_ARM64_ID" ] || [ "$vid" = "$ARCH_X86_64_ID" ]; then
     exit 0
 fi
 
+# The installer identity picker carries the identity in its option tags, but a
+# Picker's value channel is the 1-based option index when its options are plain
+# strings (design 5.2). Which of the two a runtime-populated picker delivers is
+# not something this app has established, so the value is resolved through the
+# ordered list either way before it reaches the model.
+if [ "$vid" = "$IDENTITY_PICKER_ID" ]; then
+    value="$(resolve_identity_value "$value")"
+fi
+
 keypath="$(field_key_path "$vid")"
 if [ -z "$keypath" ]; then
     dbg "field.changed: view $vid is not in the field map"
