@@ -65,6 +65,7 @@ append_log "Signing the installer package:"
 
 signed="$(sign_package "$unsigned")"
 if [ -z "$signed" ] || [ ! -f "$signed" ]; then
+    stop_here "$RAIL_SIGN_ID" && exit 0
     append_log ""
     append_log "Stopped. The package was not signed, and nothing was left in the output folder."
     rail_set "$RAIL_SIGN_ID" failed

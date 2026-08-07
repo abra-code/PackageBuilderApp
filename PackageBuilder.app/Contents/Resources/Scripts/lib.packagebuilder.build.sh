@@ -76,8 +76,35 @@ append_log_file() {
 run_capture() {
     local output_file="$1"
     shift
+    # Asked for before starting anything. Without this, a stop that lands in the
+    # gap between two tools signals a pid that has already been reaped, and the
+    # next tool then runs to completion before any boundary notices - a full
+    # pkgbuild the user has already asked not to happen. 143 is what a tool
+    # killed by SIGTERM returns, so the caller cannot tell the two apart and
+    # does not have to.
+    if stop_was_requested; then
+        /bin/rm -f "$output_file"
+        return 143
+    fi
     /bin/rm -f "$output_file"
-    "$@" > "$output_file" 2>&1
+    # Started in the background and waited for, rather than run in the
+    # foreground, so that the Stop button has something to signal. A foreground
+    # tool is unreachable: this shell is blocked inside it, and the pid that
+    # would have to be killed exists nowhere but in the kernel.
+    "$@" > "$output_file" 2>&1 &
+    local tool_pid=$!
+    printf '%s' "$tool_pid" > "$(state_dir)/tool.pid"
+    # Reaping a job that died on a signal makes the shell print "Terminated: 15"
+    # to the stderr it started with - not to whatever is redirected here, which
+    # is why there is no redirection here to try. OMC discards a handler's
+    # stderr, so this is invisible in the app; the harness sends it to a file so
+    # its own output stays readable.
+    wait "$tool_pid"
+    # "$?" is expanded before "local" runs, so this is the tool's own status -
+    # 128 + the signal number when Stop got to it first.
+    local status=$?
+    /bin/rm -f "$(state_dir)/tool.pid"
+    return $status
 }
 
 # Run an external tool, mirror everything it printed into the log, and return
@@ -402,13 +429,117 @@ verify_note() {
     return 0
 }
 
+# Check one architecture's signature against the assertions the entry makes.
+# An empty architecture means "the one codesign picks", which is right for a
+# single-slice binary and for a bundle with no Mach-O in it.
+# Arguments: artifact path, architecture (may be empty), label for messages,
+#            expected authority prefix, want hardened runtime, want timestamp
+verify_signature() {
+    local artifact="$1" arch="$2" label="$3"
+    local signed_by="$4" want_hardened="$5" want_timestamp="$6"
+    # Set only where a failure has to name what was found instead.
+    local found_authority
+    local codesign_log="$(state_dir)/codesign.txt"
+    local where="$label"
+    [ -z "$arch" ] || where="$label [$arch]"
+
+    # --verify first: what --display prints about a signature that does not
+    # validate is not evidence of anything.
+    if [ -z "$arch" ]; then
+        run_capture "$codesign_log" /usr/bin/codesign --verify --strict --verbose=2 "$artifact"
+    else
+        run_capture "$codesign_log" /usr/bin/codesign --verify --strict --verbose=2 --arch "$arch" "$artifact"
+    fi
+    if [ "$?" != "0" ]; then
+        # A tool killed by Stop also returns non-zero, and saying "the code
+        # signature does not verify" about an artifact nobody finished checking
+        # would leave a false accusation in the log after the run is over.
+        stop_was_requested && return 1
+        verify_fail "$where: the code signature does not verify"
+        append_log_file "$codesign_log"
+        return 1
+    fi
+    # codesign writes its report to stderr, which run_capture keeps along with
+    # stdout. It stays in a file rather than a variable because the checks below
+    # match against whole lines, and a command substitution would strip the
+    # newline off the last of them.
+    if [ -z "$arch" ]; then
+        run_capture "$codesign_log" /usr/bin/codesign --display --verbose=4 "$artifact"
+    else
+        run_capture "$codesign_log" /usr/bin/codesign --display --verbose=4 --arch "$arch" "$artifact"
+    fi
+    if [ "$?" != "0" ]; then
+        stop_was_requested && return 1
+        verify_fail "$where: codesign could not read the signature"
+        append_log_file "$codesign_log"
+        return 1
+    fi
+
+    if [ -n "$signed_by" ]; then
+        # The leaf certificate only, and compared as a prefix of it.
+        #
+        # A prefix because the value the inspector fills in by default is
+        # "Developer ID Application" - the leading part of every Developer ID
+        # certificate name rather than any one of them, so a whole-line match
+        # would refuse every artifact the app itself set up. Someone who cares
+        # which team signed it pastes the whole identity in, and that still
+        # matches only that identity.
+        #
+        # The leaf only because "Authority=" appears once per certificate in the
+        # chain, so matching anywhere in the list accepts "Apple Root CA" as
+        # though it had signed the binary. And anchored to the start of a line
+        # because the report opens with "Executable=<path>": an unanchored
+        # search let an ad-hoc binary sitting in a directory named
+        # "Authority=Developer ID Application" pass. Both found in review,
+        # 2026-08-06, the second one proven with a working artifact.
+        #
+        # The comparison is a case glob with the pattern quoted, so every
+        # character in the expected value stays literal - no regex, and no
+        # multi-line pattern to turn a stray newline into "matches anything".
+        found_authority="$(/usr/bin/sed -n 's/^Authority=//p' "$codesign_log" | /usr/bin/head -n 1)"
+        case "$found_authority" in
+            "$signed_by"*) ;;
+            *)
+                [ -n "$found_authority" ] || found_authority="nothing - the signature is ad-hoc, with no certificate chain at all"
+                verify_fail "$where: expected a signature from \"$signed_by\", found $found_authority"
+                verify_note "an ad-hoc or wrong-team signature usually means the distribution signing settings were not applied on the machine that built this"
+                return 1
+                ;;
+        esac
+    fi
+
+    if [ "$want_timestamp" = "1" ] && ! /usr/bin/grep -q '^Timestamp=' "$codesign_log"; then
+        verify_fail "$where: signed without a secure timestamp - notarization will reject it"
+        verify_note "a signature made with --timestamp=none prints \"Signed Time=\" where a real one prints \"Timestamp=\", and that is how a binary built with \"xcodebuild build\" is signed. Rebuild with \"xcodebuild archive\"."
+        return 1
+    fi
+
+    if [ "$want_hardened" = "1" ]; then
+        # Matched by flag name, not by the 0x10000 hex, which shifts the moment
+        # any unrelated CodeDirectory flag is added. The list renders as
+        # "flags=0x10000(runtime)" on its own and "flags=0x10002(adhoc,runtime)"
+        # with company, so all four positions a name can occupy in a
+        # comma-separated list are spelled out.
+        case "$(/usr/bin/grep '^CodeDirectory ' "$codesign_log" | /usr/bin/head -n 1)" in
+            *"(runtime)"*|*"(runtime,"*|*",runtime)"*|*",runtime,"*) ;;
+            *)
+                verify_fail "$where: not signed with the hardened runtime - notarization will reject it"
+                verify_note "\"xcodebuild build\" does not turn it on; rebuild with \"xcodebuild archive\", or sign with codesign --options runtime"
+                return 1
+                ;;
+        esac
+    fi
+
+    return 0
+}
+
 # Verify one payload entry against the assertions the document makes about it.
 # Succeeds when every check the entry turned on passes.
 # Arguments: entry index (0-based)
 verify_payload_entry() {
     local entry_index="$1"
     # Set only on the branches that need them.
-    local executable found_archs arch found_authority reported_version
+    local executable found_archs arch reported_version
     local item_number=$((entry_index + 1))
 
     local stored_source="$(payload_get "$entry_index" SOURCE)"
@@ -449,13 +580,17 @@ verify_payload_entry() {
         fi
         found_archs="$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)"
         # Architecture names are bare tokens, so splitting on IFS is safe here in
-        # a way it would not be for a path. A hand-edited project could put a
-        # glob character in the list, and that can only ever produce a refusal:
-        # nothing it expands to is an architecture lipo reports.
+        # a way it would not be for a path. Pathname expansion is turned off
+        # around the loop all the same: a glob character in a hand-edited list
+        # can only ever produce a refusal, since nothing it expands to is an
+        # architecture lipo reports, but with an unlucky working directory it
+        # would produce one refusal per matching filename.
+        set -f
         for arch in $wanted_archs; do
             case " $found_archs " in
                 *" $arch "*) ;;
                 *)
+                    set +f
                     verify_fail "$label: not built for $arch - lipo reports [$found_archs]"
                     if [ "$arch" = "arm64" ]; then
                         case "$found_archs" in
@@ -466,69 +601,61 @@ verify_payload_entry() {
                     ;;
             esac
         done
+        set +f
         append_log "  $label: built for $found_archs"
     fi
 
     if [ -n "$signed_by" ] || [ "$want_hardened" = "1" ] || [ "$want_timestamp" = "1" ]; then
-        local codesign_log="$(state_dir)/codesign.txt"
-
-        # --verify first: what --display prints about a signature that does not
-        # validate is not evidence of anything.
-        if ! run_capture "$codesign_log" /usr/bin/codesign --verify --strict --verbose=2 "$source"; then
-            verify_fail "$label: the code signature does not verify"
-            append_log_file "$codesign_log"
-            return 1
+        # Every slice, not just the one this Mac happens to run.
+        #
+        # codesign --verify and --display report the *native* architecture alone
+        # unless told otherwise, so a universal artifact whose x86_64 slice was
+        # signed without --options runtime passes every check here on an Apple
+        # Silicon machine while the notary service, which looks at all of them,
+        # rejects it. That is exactly the "half the build used the wrong
+        # settings" mistake this stage exists to catch, and it was passing.
+        # Found in review, 2026-08-06.
+        #
+        # The slice list comes from the executable when there is one. A bundle
+        # with no Mach-O inside gets a single pass with no --arch, which is what
+        # codesign does anyway.
+        local slice_list=""
+        if [ -z "$executable" ]; then
+            executable="$(artifact_executable "$source")"
         fi
-        # codesign writes its report to stderr, which run_capture keeps along
-        # with stdout. It stays in a file rather than a variable because every
-        # check below matches against whole lines, and a command substitution
-        # would strip the newline off the last of them.
-        if ! run_capture "$codesign_log" /usr/bin/codesign --display --verbose=4 "$source"; then
-            verify_fail "$label: codesign could not read the signature"
-            append_log_file "$codesign_log"
-            return 1
+        if [ -n "$executable" ]; then
+            slice_list="$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)"
         fi
+        # One pass with an empty architecture means "whatever codesign picks",
+        # which is right for a single-slice binary and for a non-Mach-O bundle.
+        case "$slice_list" in
+            *' '*) ;;
+            *) slice_list="" ;;
+        esac
 
-        if [ -n "$signed_by" ]; then
-            # A prefix match on the Authority line rather than a whole-line one,
-            # because the value the inspector fills in by default is "Developer
-            # ID Application" - the leading part of every Developer ID
-            # certificate name rather than any one of them. A user who cares
-            # which team signed it pastes the whole identity in, and that still
-            # matches only that identity.
-            #
-            # grep -F, so the parentheses in "... (T9NM2ZLDTY)" stay literal and
-            # a dot in a team name cannot quietly match a different character.
-            if ! /usr/bin/grep -qF "Authority=$signed_by" "$codesign_log"; then
-                found_authority="$(/usr/bin/grep '^Authority=' "$codesign_log" | /usr/bin/head -n 1)"
-                found_authority="${found_authority#Authority=}"
-                [ -n "$found_authority" ] || found_authority="nothing - the signature is ad-hoc, with no certificate chain at all"
-                verify_fail "$label: expected a signature from \"$signed_by\", found $found_authority"
-                verify_note "an ad-hoc or wrong-team signature usually means the distribution signing settings were not applied on the machine that built this"
+        if [ -z "$slice_list" ]; then
+            verify_signature "$source" "" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
+        else
+            # The whole file first, then every slice. An --arch pass validates
+            # the slice it was aimed at and nothing else, so data appended after
+            # the signed region - which is how a signed binary gets a payload
+            # smuggled into it - passes every per-slice check and is refused
+            # only by the whole-file strict validation.
+            local whole_file_log="$(state_dir)/codesign.txt"
+            run_capture "$whole_file_log" /usr/bin/codesign --verify --strict --verbose=2 "$source"
+            if [ "$?" != "0" ]; then
+                stop_was_requested && return 1
+                verify_fail "$label: the code signature does not verify"
+                append_log_file "$whole_file_log"
                 return 1
             fi
-        fi
-
-        if [ "$want_timestamp" = "1" ] && ! /usr/bin/grep -q '^Timestamp=' "$codesign_log"; then
-            verify_fail "$label: signed without a secure timestamp - notarization will reject it"
-            verify_note "a signature made with --timestamp=none prints \"Signed Time=\" where a real one prints \"Timestamp=\", and that is how a binary built with \"xcodebuild build\" is signed. Rebuild with \"xcodebuild archive\"."
-            return 1
-        fi
-
-        if [ "$want_hardened" = "1" ]; then
-            # Matched by flag name, not by the 0x10000 hex, which shifts the
-            # moment any unrelated CodeDirectory flag is added. The list renders
-            # as "flags=0x10000(runtime)" on its own and "flags=0x10002(adhoc,
-            # runtime)" with company, so all four positions a name can occupy in
-            # a comma-separated list are spelled out.
-            case "$(/usr/bin/grep '^CodeDirectory ' "$codesign_log" | /usr/bin/head -n 1)" in
-                *"(runtime)"*|*"(runtime,"*|*",runtime)"*|*",runtime,"*) ;;
-                *)
-                    verify_fail "$label: not signed with the hardened runtime - notarization will reject it"
-                    verify_note "\"xcodebuild build\" does not turn it on; rebuild with \"xcodebuild archive\", or sign with codesign --options runtime"
-                    return 1
-                    ;;
-            esac
+            set -f
+            for arch in $slice_list; do
+                set +f
+                verify_signature "$source" "$arch" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
+                set -f
+            done
+            set +f
         fi
 
         append_log "  $label: signature ok"
@@ -543,7 +670,15 @@ verify_payload_entry() {
         # without the helper's version being read as the release's.
         reported_version="$(artifact_version "$source" "$version_flag")"
         if [ -z "$reported_version" ]; then
-            verify_fail "$label: $version_flag printed no version to compare against $project_version"
+            # Which of the two was consulted decides what to say. Telling the
+            # user that "--version printed no version" when the value was looked
+            # for in an Info.plist points them at a flag that never ran.
+            if [ -n "$(bundle_info_plist "$source")" ]; then
+                verify_fail "$label: no CFBundleShortVersionString to compare against $project_version"
+                verify_note "a bundle answers from its Info.plist; the version flag only runs for a bare executable"
+            else
+                verify_fail "$label: $version_flag printed no version to compare against $project_version"
+            fi
             return 1
         fi
         if [ "$reported_version" != "$project_version" ]; then
@@ -568,6 +703,10 @@ verify_payload() {
     fi
     index=0
     while [ "$index" -lt "$entry_count" ]; do
+        # Between two entries there is no tool running for Stop to signal, so
+        # the flag is the only thing that can end the stage. On a large payload
+        # the alternative is a click that is ignored for the rest of it.
+        stop_was_requested && return 1
         verify_payload_entry "$index" || return 1
         index=$((index + 1))
     done
@@ -616,6 +755,10 @@ stage_payload_root() {
             return 1
         fi
         if ! run_tool "$ditto_tool" "$source" "$target"; then
+            # A copy killed by Stop also returns non-zero, and "Could not copy"
+            # about a copy nobody let finish would be a false accusation in the
+            # log after the run is over. The boundary reports the stop.
+            stop_was_requested && return 1
             append_log "  ! Could not copy $source"
             return 1
         fi
@@ -628,7 +771,7 @@ stage_payload_root() {
         # with --ownership recommended, which records root:wheel in the BOM
         # whoever runs the build, so no sudo is involved anywhere (design 7
         # step 2). An entry asking for something else is saying something the
-        # build cannot honour, so it is said out loud rather than ignored.
+        # build cannot honor, so it is said out loud rather than ignored.
         owner="$(payload_get "$index" OWNER)"
         group="$(payload_get "$index" GROUP)"
         if [ "$warned_ownership" = "0" ]; then
@@ -818,6 +961,8 @@ build_component_package() {
             --install-location "$install_location" --ownership recommended "$package_path"
     fi
     if [ "$?" != "0" ]; then
+        # Killed by Stop is not a pkgbuild failure; the boundary reports it.
+        stop_was_requested && return 1
         append_log "  ! pkgbuild failed"
         return 1
     fi
@@ -911,7 +1056,10 @@ stage_distribution_resources() {
         base="$(/usr/bin/basename "$source")"
         # ditto rather than cp: an .rtfd resource is a directory bundle, and cp
         # without -R would refuse it.
-        "$ditto_tool" "$source" "$resources_dir/$base" || return 1
+        # Through run_tool like every other external call (design 8.4), which
+        # also makes this copy reachable by Stop rather than the one tool a
+        # stop request could not interrupt.
+        run_tool "$ditto_tool" "$source" "$resources_dir/$base" || return 1
         staged=$((staged + 1))
     done
 
@@ -1037,6 +1185,8 @@ build_distribution_package() {
             --package-path "$component_dir" "$unsigned_package"
     fi
     if [ "$?" != "0" ]; then
+        # Killed by Stop is not a productbuild failure; the boundary reports it.
+        stop_was_requested && return 1
         append_log "  ! productbuild failed"
         return 1
     fi
@@ -1178,8 +1328,12 @@ sign_package() {
     /bin/rm -f "$staged_signed"
 
     if ! run_tool /usr/bin/productsign --sign "$identity" "$unsigned" "$staged_signed"; then
-        append_log "  ! productsign failed; the output folder was not touched"
+        # Killed by Stop is not a productsign failure; the boundary reports it.
+        # The partial file still goes: it is in the state dir, but a half-signed
+        # package is not something to leave lying around under any name.
         /bin/rm -f "$staged_signed"
+        stop_was_requested && return 1
+        append_log "  ! productsign failed; the output folder was not touched"
         return 1
     fi
     if [ ! -f "$staged_signed" ]; then
@@ -1187,8 +1341,12 @@ sign_package() {
         return 1
     fi
     if ! run_tool /usr/sbin/pkgutil --check-signature "$staged_signed"; then
-        append_log "  ! The signed package did not verify; the output folder was not touched"
+        # A check killed by Stop has not found anything wrong with the package,
+        # and saying it did not verify would be the worst of the five false
+        # verdicts: an accusation against a correctly-signed artifact.
         /bin/rm -f "$staged_signed"
+        stop_was_requested && return 1
+        append_log "  ! The signed package did not verify; the output folder was not touched"
         return 1
     fi
 
@@ -1288,17 +1446,119 @@ built_distribution_path() {
 }
 
 build_begin() {
+    clear_stop_request
+    /bin/rm -f "$(state_dir)/tool.pid"
     pb_set pb_busy 1
     printf '%s' "$$" > "$(state_dir)/run.pid"
+    # The process group as well as the pid. A group kill is the only way to
+    # reach a tool's own children, and it is also the way to kill the
+    # application by accident: a process group id is the pid of its leader, so
+    # "kill -TERM -<pid>" against a handler that inherited the app's group would
+    # take the app down with it. Whether OMC starts handlers as group leaders is
+    # not something this app has established, so the group is recorded and the
+    # one caller that negates it compares the two first.
+    /bin/ps -o pgid= -p $$ 2>/dev/null | /usr/bin/tr -d ' ' > "$(state_dir)/run.pgid"
     enable_view "$ACTIONS_MENU_ID" 0
+    enable_view "$BUILD_BTN_ID" 0
+    enable_view "$STOP_BTN_ID" 1
     show_progress 1
     return 0
 }
 
 build_end() {
     show_progress 0
+    enable_view "$STOP_BTN_ID" 0
+    enable_view "$BUILD_BTN_ID" 1
     enable_view "$ACTIONS_MENU_ID" 1
     pb_set pb_busy ""
-    /bin/rm -f "$(state_dir)/run.pid"
+    /bin/rm -f "$(state_dir)/run.pid" "$(state_dir)/run.pgid" "$(state_dir)/tool.pid"
+    clear_stop_request
+    return 0
+}
+
+# --- Stopping a run -----------------------------------------------------------
+# Stop is a request, not a kill. The handler raises a flag and terminates the
+# tool the build is currently inside; the build script's own error handling
+# notices, unwinds through the exit path it already has, and leaves the window
+# saying what happened.
+#
+# Killing the build script itself would be simpler and is what the process-group
+# kill in app.will.terminate does - but that is a script running while the app
+# goes away, with no window left to put back. Here there is: a build script
+# killed mid-stage leaves the rail frozen part-way, the Actions menu disabled
+# and the busy flag set, which is precisely the wedged window the Phase 3 review
+# found and the liveness check in build_is_running had to paper over.
+
+stop_flag_file() {
+    printf '%s/stop-requested' "$(state_dir)"
+}
+
+# Succeed when the user has asked the running build to stop.
+stop_was_requested() {
+    [ -f "$(stop_flag_file)" ]
+}
+
+clear_stop_request() {
+    /bin/rm -f "$(stop_flag_file)"
+    return 0
+}
+
+# Raise the flag and signal the tool the build is inside. Nothing here touches
+# the window: the build script is still alive and owns it, and two writers to
+# the same views would race to describe the same event.
+request_stop() {
+    /usr/bin/touch "$(stop_flag_file)"
+    local tool_pid="$(/bin/cat "$(state_dir)/tool.pid" 2>/dev/null)"
+    case "$tool_pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    [ "$tool_pid" -gt 1 ] || return 0
+    # Only if it is still the build's own child. run_capture removes this file
+    # the moment the tool is reaped, but the gap between those two events is
+    # real, and a pid that has been recycled in it belongs to a stranger.
+    # Parentage is the check that settles it: the tool's command line is
+    # codesign or productsign against a path that need not be ours, but its
+    # parent is the build script and nothing else's child is.
+    local build_pid="$(/bin/cat "$(state_dir)/run.pid" 2>/dev/null)"
+    case "$build_pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    local tool_parent="$(/bin/ps -o ppid= -p "$tool_pid" 2>/dev/null | /usr/bin/tr -d ' ')"
+    if [ "$tool_parent" != "$build_pid" ]; then
+        dbg "request_stop: tool pid $tool_pid is no longer the build's child, flag only"
+        return 0
+    fi
+    dbg "request_stop: terminating tool pid $tool_pid"
+    /bin/kill -TERM "$tool_pid" 2>/dev/null
+    return 0
+}
+
+# Wind up a stopped run and put the window back.
+# Arguments: the rail icon of the stage that did not finish
+#
+# Marked skipped rather than failed. Nothing failed - the user asked for this -
+# and at a boundary between two stages the icon belongs to a stage that had not
+# started, where a red X would read as a defect in the project.
+report_stop() {
+    local rail_id="$1"
+    rail_set "$rail_id" skipped
+    append_log ""
+    append_log "Stopped at your request."
+    append_log ""
+    append_log "The output folder was not given a package: one only ever lands there"
+    append_log "after it has been signed and its signature checked."
+    set_status "Stopped"
+    build_end
+    return 0
+}
+
+# Succeed - having already put the window back - when the run should end here.
+# One call per stage boundary, so a stop between two tools is noticed as
+# promptly as one that interrupted a tool.
+# Arguments: the rail icon of the stage that was interrupted
+stop_here() {
+    local rail_id="$1"
+    stop_was_requested || return 1
+    report_stop "$rail_id"
     return 0
 }

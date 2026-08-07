@@ -60,6 +60,7 @@ append_log "Building the distribution package:"
 
 unsigned="$(build_distribution_package)"
 if [ -z "$unsigned" ] || [ ! -f "$unsigned" ]; then
+    stop_here "$RAIL_DISTRIBUTION_ID" && exit 0
     append_log ""
     append_log "Stopped. productbuild did not produce a distribution package."
     rail_set "$RAIL_DISTRIBUTION_ID" failed

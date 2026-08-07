@@ -76,6 +76,7 @@ rail_set "$RAIL_VERIFY_ID" running
 set_status "Verifying the payload..."
 append_log "Verifying the payload:"
 if ! verify_payload; then
+    stop_here "$RAIL_VERIFY_ID" && exit 0
     append_log ""
     append_log "Stopped. An artifact is not what the document says it is, and nothing"
     append_log "was staged or built."
@@ -84,6 +85,7 @@ if ! verify_payload; then
     build_end
     exit 0
 fi
+stop_here "$RAIL_VERIFY_ID" && exit 0
 rail_set "$RAIL_VERIFY_ID" done
 append_log ""
 
@@ -92,6 +94,7 @@ rail_set "$RAIL_COMPONENT_ID" running
 set_status "Staging the payload..."
 append_log "Staging the payload root:"
 if ! stage_payload_root; then
+    stop_here "$RAIL_COMPONENT_ID" && exit 0
     append_log ""
     append_log "Stopped while staging. Nothing outside the scratch directory was touched."
     rail_set "$RAIL_COMPONENT_ID" failed
@@ -105,6 +108,7 @@ set_status "Running pkgbuild..."
 append_log "Building the component package:"
 component="$(build_component_package)"
 if [ -z "$component" ] || [ ! -f "$component" ]; then
+    stop_here "$RAIL_COMPONENT_ID" && exit 0
     append_log ""
     append_log "Stopped. pkgbuild did not produce a component package."
     rail_set "$RAIL_COMPONENT_ID" failed
@@ -114,6 +118,7 @@ if [ -z "$component" ] || [ ! -f "$component" ]; then
 fi
 printf '%s' "$component" > "$(state_dir)/built_component.txt"
 rail_set "$RAIL_COMPONENT_ID" done
+stop_here "$RAIL_DISTRIBUTION_ID" && exit 0
 
 # --- Stage 3: distribution ----------------------------------------------------
 append_log ""
@@ -122,6 +127,7 @@ set_status "Running productbuild..."
 append_log "Building the distribution package:"
 unsigned="$(build_distribution_package)"
 if [ -z "$unsigned" ] || [ ! -f "$unsigned" ]; then
+    stop_here "$RAIL_DISTRIBUTION_ID" && exit 0
     append_log ""
     append_log "Stopped. productbuild did not produce a distribution package."
     rail_set "$RAIL_DISTRIBUTION_ID" failed
@@ -131,6 +137,7 @@ if [ -z "$unsigned" ] || [ ! -f "$unsigned" ]; then
 fi
 printf '%s' "$unsigned" > "$(state_dir)/built_distribution.txt"
 rail_set "$RAIL_DISTRIBUTION_ID" done
+stop_here "$RAIL_SIGN_ID" && exit 0
 
 # --- Stage 4: sign ------------------------------------------------------------
 if [ "$signing_on" != "1" ]; then
@@ -152,6 +159,7 @@ set_status "Running productsign..."
 append_log "Signing the installer package:"
 signed="$(sign_package "$unsigned")"
 if [ -z "$signed" ] || [ ! -f "$signed" ]; then
+    stop_here "$RAIL_SIGN_ID" && exit 0
     append_log ""
     append_log "Stopped. The package was not signed, and nothing was left in the output folder."
     rail_set "$RAIL_SIGN_ID" failed

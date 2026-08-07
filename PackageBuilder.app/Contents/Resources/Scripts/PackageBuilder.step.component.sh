@@ -54,6 +54,7 @@ set_status "Staging the payload..."
 append_log "Staging the payload root:"
 
 if ! stage_payload_root; then
+    stop_here "$RAIL_COMPONENT_ID" && exit 0
     append_log ""
     append_log "Stopped while staging. Nothing outside the scratch directory was touched."
     rail_set "$RAIL_COMPONENT_ID" failed
@@ -68,6 +69,7 @@ append_log "Building the component package:"
 
 pkg="$(build_component_package)"
 if [ -z "$pkg" ] || [ ! -f "$pkg" ]; then
+    stop_here "$RAIL_COMPONENT_ID" && exit 0
     append_log ""
     append_log "Stopped. pkgbuild did not produce a component package."
     rail_set "$RAIL_COMPONENT_ID" failed

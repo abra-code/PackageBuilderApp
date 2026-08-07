@@ -38,6 +38,7 @@
                             "title": "Stop",
                             "systemImage": "stop.circle",
                             "disabled": true,
+                            "actionID": "PackageBuilder.stop",
                             "help": "Stop the current operation"
                         }
                     },

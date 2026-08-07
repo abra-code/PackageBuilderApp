@@ -56,6 +56,7 @@ set_status "Verifying the payload..."
 append_log "Verifying the payload:"
 
 if ! verify_payload; then
+    stop_here "$RAIL_VERIFY_ID" && exit 0
     append_log ""
     append_log "Stopped. An artifact is not what the document says it is."
     rail_set "$RAIL_VERIFY_ID" failed
@@ -64,6 +65,7 @@ if ! verify_payload; then
     exit 0
 fi
 
+stop_here "$RAIL_VERIFY_ID" && exit 0
 rail_set "$RAIL_VERIFY_ID" done
 append_log ""
 append_log "Every artifact matches what the document asserts about it."
