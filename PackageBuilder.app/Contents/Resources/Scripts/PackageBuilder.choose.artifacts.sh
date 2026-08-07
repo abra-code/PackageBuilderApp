@@ -23,7 +23,7 @@ abs="$(canonical_path "$chosen")"
 # below it, so a project committed next to its sources stays portable. It is
 # never written through store_path, which would try ${ARTIFACTS_DIR} first and
 # define the field in terms of itself.
-stored="$(relative_to "$abs" "$(document_dir)")" || stored="$abs"
+stored="$(store_document_relative_path "$abs")"
 
 if [ "$stored" = "$(model_get /PROJECT/ARTIFACTS_DIR)" ]; then
     model_unlock

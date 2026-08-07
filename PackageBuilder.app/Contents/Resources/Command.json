@@ -155,7 +155,86 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.preinstall",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the preinstall script",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.postinstall",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the postinstall script",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.readme",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the readme shown by the installer",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.license",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the licence shown by the installer",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.welcome",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the welcome document shown by the installer",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.conclusion",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the conclusion document shown by the installer",
+        "BUTTON_PROMPT": "Choose"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.choose.background",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose the installer background image",
+        "BUTTON_PROMPT": "Choose",
+        "ALLOWED_CONTENT_TYPES": [
+          "public.image"
+        ]
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "PackageBuilder.step.component",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.step.distribution",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"
     },

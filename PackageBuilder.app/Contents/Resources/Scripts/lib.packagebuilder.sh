@@ -1042,6 +1042,65 @@ relative_to() {
     return 0
 }
 
+# Turn an absolute path into the form a non-payload field should store: relative
+# to the document's folder when it is below it, else absolute.
+#
+# ${ARTIFACTS_DIR} is deliberately not consulted. That folder holds build
+# products; a readme, a licence or an install script is part of the project and
+# lives with it, so writing one as ${ARTIFACTS_DIR}-relative would tie a file
+# that never moves to the one field that changes every release.
+store_document_relative_path() {
+    local absolute_path="$1"
+    local relative
+    [ -n "$absolute_path" ] || return 0
+    relative="$(relative_to "$absolute_path" "$(document_dir)")" && {
+        printf '%s' "$relative"
+        return 0
+    }
+    printf '%s' "$absolute_path"
+}
+
+# Record a browsed path into the document field a control edits, and echo it
+# back into that control. Shared by every Browse button on the Package,
+# Distribution and Output tabs, all of which do exactly this.
+# Arguments: text field view id, chosen path
+store_browsed_path() {
+    local view_id="$1" chosen="$2"
+    [ -n "$chosen" ] || return 0
+    has_model || return 0
+
+    local key_path="$(field_key_path "$view_id")"
+    if [ -z "$key_path" ]; then
+        dbg "store_browsed_path: view $view_id is not in the field map"
+        return 0
+    fi
+
+    if ! model_lock; then
+        set_status "Busy - that path was not recorded, please try again"
+        return 0
+    fi
+
+    local stored="$(store_document_relative_path "$(canonical_or_self "$chosen")")"
+    if [ "$stored" = "$(model_get "$key_path")" ]; then
+        model_unlock
+        return 0
+    fi
+    if ! model_set "$key_path" "$stored"; then
+        model_unlock
+        set_status "Could not record that path"
+        return 0
+    fi
+
+    mark_dirty
+    # The echo back into the control is a programmatic write like any other.
+    local previous_flag="$(pb_get pb_loading)"
+    pb_set pb_loading "$(/bin/date '+%s')"
+    set_value "$view_id" "$stored"
+    pb_set pb_loading "$previous_flag"
+    model_unlock
+    return 0
+}
+
 # Turn an absolute path into the form the document should store: relative to
 # ${ARTIFACTS_DIR} when it is below it, else relative to the document's folder
 # when it is below that, else absolute (design 4.2, 4.3).

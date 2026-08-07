@@ -37,7 +37,7 @@ append_log ""
 append_log "Preconditions:"
 
 check_preconditions
-failures="$?"
+failures="$precondition_failures"
 if [ "$failures" != "0" ]; then
     append_log ""
     append_log "Stopped: $failures problem(s) to fix before anything can be built."

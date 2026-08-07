@@ -140,8 +140,17 @@ valid_mode() {
 
 # --- Preconditions (design 7) -------------------------------------------------
 # Everything checked and reported before anything is written. Each failure is
-# appended to the log and the count returned, so one run tells the user
-# everything that is wrong rather than one thing per attempt.
+# appended to the log and counted in the shared precondition_failures global, so
+# one run tells the user everything that is wrong rather than one thing per
+# attempt.
+#
+# The count is read from that global, never from the return value. A shell
+# "return" carries only the low eight bits, so returning a count makes exactly
+# 256 failures indistinguishable from none - and the pairwise destination-clash
+# check is O(n^2), so 23 payload items sharing one destination reach 253 on
+# their own. The build gate would see zero and wave through a payload whose
+# entries silently overwrite each other. Each function therefore returns 0 or 1
+# and resets the global on entry. Found in review, 2026-08-06.
 #
 # The output directory and the installer identity are not checked here: nothing
 # in this stage writes to the former or needs the latter. They join this list
@@ -199,7 +208,7 @@ check_preconditions() {
     local entry_count="$(payload_count)"
     if [ "$entry_count" = "0" ]; then
         fail_precondition "The payload is empty - add at least one artifact"
-        return "$precondition_failures"
+        [ "$precondition_failures" -eq 0 ]
     fi
 
     local index=0
@@ -267,7 +276,82 @@ check_preconditions() {
         index=$((index + 1))
     done
 
-    return "$precondition_failures"
+    [ "$precondition_failures" -eq 0 ]
+}
+
+# Preconditions for the distribution stage. Separate from the component stage's
+# because the two partial actions can be run independently, and a distribution
+# run must not fail on a payload problem that has nothing to do with it.
+check_distribution_preconditions() {
+    # Set once per iteration below.
+    local pair model_key stored source
+
+    precondition_failures=0
+
+    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
+    local version="$(model_get /PROJECT/VERSION)"
+    local name="$(model_get /PROJECT/NAME)"
+
+    valid_name "$name" || fail_precondition \
+        "Project name \"$name\" is not usable in a filename - use letters, digits, dot, underscore or hyphen"
+    valid_version "$version" || fail_precondition \
+        "Version \"$version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
+    valid_identifier "$identifier" || fail_precondition \
+        "Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+
+    # An empty hostArchitectures attribute makes productbuild refuse the
+    # document, and both toggles off is the only way to reach it.
+    if [ -z "$(host_architectures_attr)" ]; then
+        fail_precondition "No host architecture is selected - the installer would refuse to run anywhere"
+    fi
+
+    case "$(model_get /DISTRIBUTION/CUSTOMIZE)" in
+        never|allow|always) ;;
+        *) fail_precondition "Customize must be never, allow or always" ;;
+    esac
+
+    # The minimum OS goes straight into an os-version attribute, so it has to
+    # look like a version rather than merely be escapable: "10.15 or later"
+    # produces well-formed XML that productbuild then rejects.
+    local min_os="$(model_get /PROJECT/MIN_OS_VERSION)"
+    if [ -n "$min_os" ]; then
+        case "$min_os" in
+            ''|[!0-9]*|*[!0-9.]*) fail_precondition "Minimum macOS \"$min_os\" must be a version number such as 10.15 or 14.6" ;;
+        esac
+    fi
+
+    # Resources are staged flat under their basenames, so two slots naming
+    # different files with the same basename would collide: the second copy
+    # overwrites the first and both XML elements point at the survivor. The
+    # installer would then show, say, the licence text as the readme - a wrong
+    # package that builds cleanly. Refused here rather than resolved by
+    # inventing names, so what the document says is what ships.
+    local seen_basenames="" base
+    for pair in $DISTRIBUTION_RESOURCE_KINDS; do
+        model_key="${pair%%:*}"
+        stored="$(model_get "/DISTRIBUTION/RESOURCES/$model_key")"
+        [ -n "$stored" ] || continue
+        if uses_unset_artifacts_dir "$stored"; then
+            fail_precondition "The $model_key resource uses \${ARTIFACTS_DIR} but no artifacts folder is set"
+            continue
+        fi
+        source="$(resolve_stored_path "$stored")"
+        # -e, not -f: an .rtfd readme is a directory bundle and a perfectly
+        # ordinary installer resource format.
+        if [ -z "$source" ] || [ ! -e "$source" ]; then
+            fail_precondition "The $model_key resource is not there: $stored"
+            continue
+        fi
+        base="$(/usr/bin/basename "$source")"
+        case "$seen_basenames" in
+            *"|$base|"*)
+                fail_precondition "Two presentation resources are both named \"$base\" - the installer can only show one of them"
+                ;;
+            *) seen_basenames="$seen_basenames|$base|" ;;
+        esac
+    done
+
+    [ "$precondition_failures" -eq 0 ]
 }
 
 # --- Staging (design 7 step 2, 8.5) -------------------------------------------
@@ -529,11 +613,279 @@ build_component_package() {
     return 0
 }
 
+# ==============================================================================
+# The distribution package (design section 7 step 3)
+# ==============================================================================
+
+# Escape a value for XML. "&" first, or the ampersands introduced by the later
+# substitutions would be escaped a second time.
+#
+# This is the Distribution XML's equivalent of design 4.4's sed hazard: a title
+# of "Rock & Roll" written raw produces a document productbuild rejects, and a
+# title containing "<" produces one it accepts and mis-renders. Built from
+# str_replace rather than sed for the same reason as everything else here.
+xml_escape() {
+    local text="$1"
+    text="$(str_replace "$text" '&' '&amp;')"
+    text="$(str_replace "$text" '<' '&lt;')"
+    text="$(str_replace "$text" '>' '&gt;')"
+    text="$(str_replace "$text" '"' '&quot;')"
+    printf '%s' "$text"
+}
+
+# Print a choice id derived from a component identifier. The identifier is a
+# reverse-DNS string and a choice id is referenced by <line choice="...">, so
+# the dots become underscores.
+distribution_choice_id() {
+    local identifier="$1"
+    printf '%s_choice' "$(printf '%s' "$identifier" | /usr/bin/tr -c 'A-Za-z0-9' '_')"
+}
+
+# Print DISTRIBUTION/HOST_ARCHITECTURES as productbuild wants it: one
+# comma-separated attribute value.
+host_architectures_attr() {
+    local arch_count="$(model_count /DISTRIBUTION/HOST_ARCHITECTURES)"
+    local index=0
+    local joined="" arch
+    while [ "$index" -lt "$arch_count" ]; do
+        arch="$(model_get "/DISTRIBUTION/HOST_ARCHITECTURES/$index")"
+        if [ -n "$arch" ]; then
+            if [ -z "$joined" ]; then joined="$arch"; else joined="$joined,$arch"; fi
+        fi
+        index=$((index + 1))
+    done
+    printf '%s' "$joined"
+}
+
+# The five presentation resources, as "MODEL_KEY:xml-element" pairs. One list so
+# staging and XML generation cannot drift apart.
+DISTRIBUTION_RESOURCE_KINDS="README:readme LICENSE:license WELCOME:welcome CONCLUSION:conclusion BACKGROUND:background"
+
+# Copy every declared presentation resource into a staging directory and print
+# it. Prints nothing when the document declares none.
+#
+# Files are staged flat, under their own basename, and the XML refers to them by
+# that basename. productbuild resolves a resource reference at the root of the
+# --resources directory, so this works whether the source sat in an en.lproj or
+# not. Localized resource sets are not modelled at all (design 4.6), so
+# flattening loses nothing the document could express.
+stage_distribution_resources() {
+    local resources_dir="$(state_dir)/resources"
+    # Set once per iteration below.
+    local pair model_key source base
+
+    /bin/rm -rf "$resources_dir"
+
+    local staged=0
+    for pair in $DISTRIBUTION_RESOURCE_KINDS; do
+        model_key="${pair%%:*}"
+        source="$(resolve_stored_path "$(model_get "/DISTRIBUTION/RESOURCES/$model_key")")"
+        [ -n "$source" ] || continue
+        if [ ! -e "$source" ]; then
+            append_log "  ! $model_key resource $source is not there"
+            return 1
+        fi
+        if [ "$staged" = "0" ]; then
+            /bin/mkdir -p "$resources_dir" || return 1
+        fi
+        base="$(/usr/bin/basename "$source")"
+        # ditto rather than cp: an .rtfd resource is a directory bundle, and cp
+        # without -R would refuse it.
+        "$ditto_tool" "$source" "$resources_dir/$base" || return 1
+        staged=$((staged + 1))
+    done
+
+    [ "$staged" -gt 0 ] || return 0
+    printf '%s' "$resources_dir"
+    return 0
+}
+
+# Write the Distribution XML for the document and print its path.
+#
+# The shape follows replay's hand-written Distribution.xml, which is the file
+# this generator replaces: spec version 2 declared honestly because
+# allowed-os-versions is a spec 2 feature and productbuild rewrites
+# minSpecVersion to 2 regardless.
+generate_distribution_xml() {
+    local xml_path="$(state_dir)/Distribution.xml"
+    local name="$(model_get /PROJECT/NAME)"
+    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
+    local version="$(model_get /PROJECT/VERSION)"
+    local title="$(model_get /DISTRIBUTION/TITLE)"
+    local min_os="$(model_get /PROJECT/MIN_OS_VERSION)"
+    local customize="$(model_get /DISTRIBUTION/CUSTOMIZE)"
+    local auth="$(model_get /COMPONENTS/0/AUTH)"
+    local architectures="$(host_architectures_attr)"
+    local choice_id="$(distribution_choice_id "$identifier")"
+    # Set once per iteration of the resource loop below.
+    local pair model_key element source base
+
+    [ -n "$title" ] || title="$name"
+    [ -n "$customize" ] || customize="never"
+    [ -n "$auth" ] || auth="Root"
+
+    local require_scripts=false
+    if [ "$(model_get_bool /DISTRIBUTION/REQUIRE_SCRIPTS)" = "1" ]; then
+        require_scripts=true
+    fi
+
+    {
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
+        printf '%s\n' '<installer-gui-script minSpecVersion="2">'
+
+        printf '    <options'
+        if [ -n "$architectures" ]; then
+            printf ' hostArchitectures="%s"' "$(xml_escape "$architectures")"
+        fi
+        printf ' customize="%s" require-scripts="%s"/>\n' \
+            "$(xml_escape "$customize")" "$require_scripts"
+
+        if [ -n "$min_os" ]; then
+            printf '%s\n' '    <volume-check>'
+            printf '%s\n' '        <allowed-os-versions>'
+            printf '            <os-version min="%s"/>\n' "$(xml_escape "$min_os")"
+            printf '%s\n' '        </allowed-os-versions>'
+            printf '%s\n' '    </volume-check>'
+        fi
+
+        printf '    <title>%s</title>\n' "$(xml_escape "$title")"
+
+        for pair in $DISTRIBUTION_RESOURCE_KINDS; do
+            model_key="${pair%%:*}"
+            element="${pair#*:}"
+            source="$(resolve_stored_path "$(model_get "/DISTRIBUTION/RESOURCES/$model_key")")"
+            [ -n "$source" ] || continue
+            base="$(/usr/bin/basename "$source")"
+            printf '    <%s file="%s"/>\n' "$element" "$(xml_escape "$base")"
+        done
+
+        printf '%s\n' '    <choices-outline>'
+        printf '        <line choice="%s"/>\n' "$(xml_escape "$choice_id")"
+        printf '%s\n' '    </choices-outline>'
+        printf '    <choice id="%s" title="%s" description="">\n' \
+            "$(xml_escape "$choice_id")" "$(xml_escape "$title")"
+        printf '        <pkg-ref id="%s"/>\n' "$(xml_escape "$identifier")"
+        printf '%s\n' '    </choice>'
+
+        # auth on the pkg-ref, not in PackageInfo: pkgbuild has no flag for it
+        # and always writes auth="root" into the component regardless, so the
+        # Distribution XML is the only place the document's value can land
+        # (design section 4).
+        printf '    <pkg-ref id="%s" version="%s" auth="%s">#%s.pkg</pkg-ref>\n' \
+            "$(xml_escape "$identifier")" "$(xml_escape "$version")" \
+            "$(xml_escape "$auth")" "$(xml_escape "$name")"
+
+        printf '%s\n' '</installer-gui-script>'
+    } > "$xml_path" || return 1
+
+    printf '%s' "$xml_path"
+    return 0
+}
+
+# Build the unsigned distribution package from the component package and print
+# its path.
+#
+# The output stays inside the state directory. Only a signed package is ever
+# copied to the output folder, so an unsigned artifact never sits one word away
+# in the filename from the one that gets uploaded (design 8.3) - which is
+# exactly what the old Packages.app flow left behind next to every release.
+build_distribution_package() {
+    local component_dir="$(state_dir)/component"
+    local name="$(model_get /PROJECT/NAME)"
+    local unsigned_package="$(state_dir)/${name}-unsigned.pkg"
+
+    local xml_path
+    xml_path="$(generate_distribution_xml)" || {
+        append_log "  ! Could not write the Distribution XML"
+        return 1
+    }
+    append_log "  wrote Distribution.xml"
+
+    local resources_dir
+    resources_dir="$(stage_distribution_resources)" || return 1
+    if [ -n "$resources_dir" ]; then
+        append_log "  staged presentation resources"
+    fi
+
+    /bin/rm -f "$unsigned_package"
+
+    if [ -n "$resources_dir" ]; then
+        run_tool /usr/bin/productbuild --distribution "$xml_path" \
+            --resources "$resources_dir" --package-path "$component_dir" "$unsigned_package"
+    else
+        run_tool /usr/bin/productbuild --distribution "$xml_path" \
+            --package-path "$component_dir" "$unsigned_package"
+    fi
+    if [ "$?" != "0" ]; then
+        append_log "  ! productbuild failed"
+        return 1
+    fi
+    if [ ! -f "$unsigned_package" ]; then
+        append_log "  ! productbuild reported success but wrote no package"
+        return 1
+    fi
+
+    printf '%s' "$unsigned_package"
+    return 0
+}
+
 # --- Run bookkeeping ----------------------------------------------------------
 # A build records its own process group id so app.will.terminate can stop a
 # survivor, and holds a busy flag so a second one cannot start on top of it.
+# Succeed while a build is actually running.
+#
+# The flag alone is not enough: a handler killed before it reaches build_end
+# leaves pb_busy set, and every later build would answer "A build is already
+# running" until the window was closed. So the recorded process group is checked
+# for life, the same treatment model_lock got after the Phase 2 review.
+#
+# This is a guard against a second build, not a lock: two clicks close enough
+# together can both pass before either calls build_begin. A real lock belongs
+# with the Stop button in Phase 4, which is also what gives a hung productsign
+# an escape.
 build_is_running() {
-    [ "$(pb_get pb_busy)" = "1" ]
+    [ "$(pb_get pb_busy)" = "1" ] || return 1
+    local pid_file="$(state_dir)/run.pid"
+    if [ ! -f "$pid_file" ]; then
+        pb_set pb_busy ""
+        return 1
+    fi
+    local holder_pid="$(/bin/cat "$pid_file" 2>/dev/null)"
+    case "$holder_pid" in
+        ''|*[!0-9]*)
+            pb_set pb_busy ""
+            /bin/rm -f "$pid_file"
+            return 1
+            ;;
+    esac
+    if /bin/kill -0 "$holder_pid" 2>/dev/null; then
+        return 0
+    fi
+    dbg "build_is_running: clearing a busy flag left by dead pid $holder_pid"
+    pb_set pb_busy ""
+    /bin/rm -f "$pid_file"
+    return 1
+}
+
+# Print the component package the last component build produced, or nothing when
+# there is none on disk any more.
+built_component_path() {
+    local record="$(state_dir)/built_component.txt"
+    [ -f "$record" ] || return 0
+    local package_path="$(/bin/cat "$record")"
+    [ -n "$package_path" ] || return 0
+    [ -f "$package_path" ] || return 0
+    printf '%s' "$package_path"
+}
+
+# Print the unsigned distribution package the last distribution build produced.
+built_distribution_path() {
+    local record="$(state_dir)/built_distribution.txt"
+    [ -f "$record" ] || return 0
+    local package_path="$(/bin/cat "$record")"
+    [ -n "$package_path" ] || return 0
+    [ -f "$package_path" ] || return 0
+    printf '%s' "$package_path"
 }
 
 build_begin() {

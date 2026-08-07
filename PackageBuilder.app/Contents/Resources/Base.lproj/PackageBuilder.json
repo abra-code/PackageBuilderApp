@@ -71,7 +71,7 @@
                                 "id": 323,
                                 "properties": {
                                     "title": "Build Distribution Only",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.step.distribution"
                                 }
                             },
                             {
@@ -896,7 +896,7 @@
                                                         "id": 138,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.preinstall"
                                                         }
                                                     }
                                                 ]
@@ -930,7 +930,7 @@
                                                         "id": 140,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.postinstall"
                                                         }
                                                     }
                                                 ]
@@ -1149,7 +1149,7 @@
                                                         "id": 157,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.readme"
                                                         }
                                                     }
                                                 ]
@@ -1183,7 +1183,7 @@
                                                         "id": 159,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.license"
                                                         }
                                                     }
                                                 ]
@@ -1217,7 +1217,7 @@
                                                         "id": 161,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.welcome"
                                                         }
                                                     }
                                                 ]
@@ -1251,7 +1251,7 @@
                                                         "id": 163,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.conclusion"
                                                         }
                                                     }
                                                 ]
@@ -1285,7 +1285,7 @@
                                                         "id": 165,
                                                         "properties": {
                                                             "title": "Browse...",
-                                                            "disabled": true
+                                                            "actionID": "PackageBuilder.choose.background"
                                                         }
                                                     }
                                                 ]
