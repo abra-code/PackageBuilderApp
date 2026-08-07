@@ -99,7 +99,7 @@
                                 "id": 326,
                                 "properties": {
                                     "title": "Export Packaging Script...",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.export.script"
                                 }
                             },
                             {
@@ -107,7 +107,7 @@
                                 "id": 327,
                                 "properties": {
                                     "title": "Import Packages.app Project...",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.import.pkgproj"
                                 }
                             }
                         ]

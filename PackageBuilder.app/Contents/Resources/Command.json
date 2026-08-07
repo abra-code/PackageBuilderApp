@@ -286,6 +286,32 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.import.pkgproj",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true,
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose a Packages.app project to import",
+        "BUTTON_PROMPT": "Import"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.export.script",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true,
+      "SAVE_AS_DIALOG": {
+        "MESSAGE": "Save the packaging script",
+        "BUTTON_PROMPT": "Export",
+        "DEFAULT_FILE_NAME": [
+          "makepkg.sh"
+        ],
+        "USE_PATH_CACHING": true
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "app.will.terminate",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"
