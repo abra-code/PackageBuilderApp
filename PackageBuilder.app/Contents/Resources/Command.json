@@ -189,7 +189,7 @@
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file",
       "CHOOSE_FILE_DIALOG": {
-        "MESSAGE": "Choose the licence shown by the installer",
+        "MESSAGE": "Choose the license shown by the installer",
         "BUTTON_PROMPT": "Choose"
       }
     },
@@ -225,6 +225,12 @@
           "public.image"
         ]
       }
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.step.verify",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
     },
     {
       "NAME": "PackageBuilder",

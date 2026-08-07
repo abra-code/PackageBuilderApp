@@ -1,9 +1,7 @@
 #!/bin/sh
 # PackageBuilder.build.sh - the whole pipeline, from the toolbar's Build Package
 #
-# Stages 2, 3 and 4 of design section 7 in one run. Stage 1, the payload verify,
-# is a later phase; its rail stage is marked skipped rather than left grey so
-# the rail says what did and did not run.
+# All four stages of design section 7 in one run.
 #
 # Every stage's preconditions are checked up front, before anything is written.
 # Discovering a missing output folder after pkgbuild and productbuild have
@@ -31,7 +29,6 @@ signing_on="$(model_get_bool /SIGNING/ENABLED)"
 build_begin
 clear_log
 rail_reset
-rail_set "$RAIL_VERIFY_ID" skipped
 /bin/rm -f "$(state_dir)/built_component.txt" \
            "$(state_dir)/built_distribution.txt" \
            "$(state_dir)/built_package.txt"
@@ -68,6 +65,26 @@ if [ "$total_failures" != "0" ]; then
     exit 0
 fi
 append_log "  all clear"
+append_log ""
+
+# --- Stage 1: verify ----------------------------------------------------------
+# Before anything is staged, because this is the stage that decides whether the
+# artifacts on disk are the artifacts the document describes. A package built
+# from a stale or wrongly-signed binary is worse than no package: it is signed,
+# it installs, and nothing about it looks wrong until it reaches a user.
+rail_set "$RAIL_VERIFY_ID" running
+set_status "Verifying the payload..."
+append_log "Verifying the payload:"
+if ! verify_payload; then
+    append_log ""
+    append_log "Stopped. An artifact is not what the document says it is, and nothing"
+    append_log "was staged or built."
+    rail_set "$RAIL_VERIFY_ID" failed
+    set_status "The payload did not verify"
+    build_end
+    exit 0
+fi
+rail_set "$RAIL_VERIFY_ID" done
 append_log ""
 
 # --- Stage 2: component -------------------------------------------------------

@@ -6,7 +6,7 @@ dbg_context "PackageBuilder.payload.add.sh"
 
 chosen="$OMC_DLG_CHOOSE_OBJECT_PATH"
 if [ -z "$chosen" ]; then
-    # Cancelled.
+    # Canceled.
     exit 0
 fi
 

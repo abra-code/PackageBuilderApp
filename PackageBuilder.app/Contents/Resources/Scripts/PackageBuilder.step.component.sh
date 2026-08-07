@@ -3,8 +3,8 @@
 #
 # Pipeline stage 2 of design section 7, run on its own from Actions > Build
 # Component Only. The verify stage before it and the distribution and signing
-# stages after it are later phases; their rail stages are marked skipped so the
-# rail says what did and did not run rather than leaving three grey circles that
+# stages after it are not run here; their rail stages are marked skipped so the
+# rail says what did and did not run rather than leaving three gray circles that
 # could be read as pending.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
@@ -84,7 +84,7 @@ append_log "Component package: $pkg"
 append_log ""
 append_log "This is an intermediate and stays in the scratch directory. It is not"
 append_log "a distributable installer: that needs the distribution and signing"
-append_log "stages, which are not implemented yet."
+append_log "stages, which Build Package runs for you."
 append_log ""
 append_log "Inspect it with:  pkgutil --expand \"$pkg\" /tmp/expanded"
 

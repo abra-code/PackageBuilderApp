@@ -1,5 +1,5 @@
 #!/bin/sh
-# PackageBuilder.choose.license.sh - pick the licence document through a Choose panel
+# PackageBuilder.choose.license.sh - pick the license document through a Choose panel
 #
 # One command per Browse button, following Notarize.app: the dialog is declared
 # per command, so the command already knows which field it serves and no handler

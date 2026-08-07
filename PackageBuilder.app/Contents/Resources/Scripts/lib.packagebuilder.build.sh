@@ -18,12 +18,12 @@ pkgutil_tool="/usr/sbin/pkgutil"
 ditto_tool="/usr/bin/ditto"
 
 # --- Step rail ----------------------------------------------------------------
-# Icon and colour per state, copied from rail_set in lib.notarize.sh.
+# Icon and color per state, copied from rail_set in lib.notarize.sh.
 RAIL_VERIFY_ID=210
 RAIL_COMPONENT_ID=211
 RAIL_DISTRIBUTION_ID=212
 RAIL_SIGN_ID=213
-RAIL_ICON_IDS="210 211 212 213"
+RAIL_ICON_IDS="$RAIL_VERIFY_ID $RAIL_COMPONENT_ID $RAIL_DISTRIBUTION_ID $RAIL_SIGN_ID"
 
 # Arguments: rail icon view id, state (pending|running|done|failed|skipped)
 rail_set() {
@@ -62,16 +62,31 @@ append_log_file() {
     return 0
 }
 
+# Run an external tool with both its streams captured to a named file, and
+# return the tool's own exit status.
+#
+# Separate from run_tool because the verify stage needs the output as evidence
+# to match against rather than as something to print: codesign writes its report
+# to stderr, and mirroring it into the log on the way past would fill the view
+# with the certificate chain of every artifact that passed.
+#
+# This and run_tool are the two functions here that keep "$@" rather than naming
+# their parameters: what follows the output file is the command line to run, so
+# naming them would mean fixing their number.
+run_capture() {
+    local output_file="$1"
+    shift
+    /bin/rm -f "$output_file"
+    "$@" > "$output_file" 2>&1
+}
+
 # Run an external tool, mirror everything it printed into the log, and return
 # its exit status. Design 8.4: every external call captures stdout and stderr
 # and has its status checked; a failure leaves the raw output in the log view
 # rather than a summary of it.
-# The one function here that keeps "$@": its parameters are the command line to
-# run, so naming them would mean fixing their number.
 run_tool() {
     local output_file="$(state_dir)/tool.log"
-    /bin/rm -f "$output_file"
-    "$@" > "$output_file" 2>&1
+    run_capture "$output_file" "$@"
     # "$?" is expanded before "local" runs, so this does capture the tool's
     # status and not local's own.
     local status=$?
@@ -208,7 +223,6 @@ check_preconditions() {
     local entry_count="$(payload_count)"
     if [ "$entry_count" = "0" ]; then
         fail_precondition "The payload is empty - add at least one artifact"
-        [ "$precondition_failures" -eq 0 ]
     fi
 
     local index=0
@@ -323,7 +337,7 @@ check_distribution_preconditions() {
     # Resources are staged flat under their basenames, so two slots naming
     # different files with the same basename would collide: the second copy
     # overwrites the first and both XML elements point at the survivor. The
-    # installer would then show, say, the licence text as the readme - a wrong
+    # installer would then show, say, the license text as the readme - a wrong
     # package that builds cleanly. Refused here rather than resolved by
     # inventing names, so what the document says is what ships.
     local seen_basenames="" base
@@ -352,6 +366,212 @@ check_distribution_preconditions() {
     done
 
     [ "$precondition_failures" -eq 0 ]
+}
+
+# ==============================================================================
+# Verify the payload (design section 7 step 1)
+# ==============================================================================
+# This stage carries the knowledge the removed build step used to embody, which
+# is why its messages name the cause rather than the symptom. A binary produced
+# by "xcodebuild build" rather than "xcodebuild archive" is signed with
+# --timestamp=none and no hardened runtime, and looks entirely plausible
+# otherwise; a binary from a machine missing its distribution xcconfig comes out
+# ad-hoc signed and equally plausible. The artifacts arrive already signed, by
+# whatever machine built them, so this app cannot prevent either any more. All
+# it can do is refuse them by name, and say which mistake it is looking at.
+#
+# Unlike the preconditions, which accumulate so that one run reports everything
+# wrong with the document, this stage stops at the first problem (design 7). A
+# precondition failure is a typo in a field and the others are worth collecting;
+# a verify failure means the artifact on disk is not the artifact the document
+# describes, and the rest of the answers are not worth the wait.
+
+# A verify failure. Distinct from fail_precondition, which counts: nothing counts
+# here, because the first one ends the stage.
+verify_fail() {
+    local message="$1"
+    append_log "  ! $message"
+    return 0
+}
+
+# The explanation under a failure, indented past the "!" so the two read as one
+# message rather than as two findings.
+verify_note() {
+    local message="$1"
+    append_log "    $message"
+    return 0
+}
+
+# Verify one payload entry against the assertions the document makes about it.
+# Succeeds when every check the entry turned on passes.
+# Arguments: entry index (0-based)
+verify_payload_entry() {
+    local entry_index="$1"
+    # Set only on the branches that need them.
+    local executable found_archs arch found_authority reported_version
+    local item_number=$((entry_index + 1))
+
+    local stored_source="$(payload_get "$entry_index" SOURCE)"
+    local source="$(resolve_stored_path "$stored_source")"
+    local label="item $item_number"
+    [ -z "$source" ] || label="item $item_number ($(/usr/bin/basename "$source"))"
+
+    if [ -z "$source" ] || [ ! -e "$source" ]; then
+        verify_fail "$label: \"$stored_source\" is not on disk"
+        return 1
+    fi
+    if [ ! -r "$source" ]; then
+        verify_fail "$label: $source cannot be read"
+        return 1
+    fi
+
+    local wanted_archs="$(payload_archs_get "$entry_index")"
+    local signed_by="$(payload_get "$entry_index" VERIFY/SIGNED_BY)"
+    local want_hardened="$(payload_bool_get "$entry_index" VERIFY/HARDENED_RUNTIME)"
+    local want_timestamp="$(payload_bool_get "$entry_index" VERIFY/SECURE_TIMESTAMP)"
+    local version_flag="$(payload_get "$entry_index" VERIFY/VERSION_FLAG)"
+
+    # A payload of ordinary resource files - a plist, an icon, a data folder -
+    # asserts nothing, and saying so is better than saying nothing, which would
+    # be indistinguishable from a stage that failed to run.
+    if [ -z "$wanted_archs" ] && [ -z "$signed_by" ] && [ "$want_hardened" != "1" ] &&
+       [ "$want_timestamp" != "1" ] && [ -z "$version_flag" ]; then
+        append_log "  $label: nothing asserted, nothing checked"
+        return 0
+    fi
+
+    if [ -n "$wanted_archs" ]; then
+        executable="$(artifact_executable "$source")"
+        if [ -z "$executable" ]; then
+            verify_fail "$label: there is no Mach-O executable here to read architectures from"
+            verify_note "a bundle answers through its CFBundleExecutable; anything else has to be Mach-O itself"
+            return 1
+        fi
+        found_archs="$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)"
+        # Architecture names are bare tokens, so splitting on IFS is safe here in
+        # a way it would not be for a path. A hand-edited project could put a
+        # glob character in the list, and that can only ever produce a refusal:
+        # nothing it expands to is an architecture lipo reports.
+        for arch in $wanted_archs; do
+            case " $found_archs " in
+                *" $arch "*) ;;
+                *)
+                    verify_fail "$label: not built for $arch - lipo reports [$found_archs]"
+                    if [ "$arch" = "arm64" ]; then
+                        case "$found_archs" in
+                            *arm64e*) verify_note "arm64e is a separate architecture, not a superset of arm64" ;;
+                        esac
+                    fi
+                    return 1
+                    ;;
+            esac
+        done
+        append_log "  $label: built for $found_archs"
+    fi
+
+    if [ -n "$signed_by" ] || [ "$want_hardened" = "1" ] || [ "$want_timestamp" = "1" ]; then
+        local codesign_log="$(state_dir)/codesign.txt"
+
+        # --verify first: what --display prints about a signature that does not
+        # validate is not evidence of anything.
+        if ! run_capture "$codesign_log" /usr/bin/codesign --verify --strict --verbose=2 "$source"; then
+            verify_fail "$label: the code signature does not verify"
+            append_log_file "$codesign_log"
+            return 1
+        fi
+        # codesign writes its report to stderr, which run_capture keeps along
+        # with stdout. It stays in a file rather than a variable because every
+        # check below matches against whole lines, and a command substitution
+        # would strip the newline off the last of them.
+        if ! run_capture "$codesign_log" /usr/bin/codesign --display --verbose=4 "$source"; then
+            verify_fail "$label: codesign could not read the signature"
+            append_log_file "$codesign_log"
+            return 1
+        fi
+
+        if [ -n "$signed_by" ]; then
+            # A prefix match on the Authority line rather than a whole-line one,
+            # because the value the inspector fills in by default is "Developer
+            # ID Application" - the leading part of every Developer ID
+            # certificate name rather than any one of them. A user who cares
+            # which team signed it pastes the whole identity in, and that still
+            # matches only that identity.
+            #
+            # grep -F, so the parentheses in "... (T9NM2ZLDTY)" stay literal and
+            # a dot in a team name cannot quietly match a different character.
+            if ! /usr/bin/grep -qF "Authority=$signed_by" "$codesign_log"; then
+                found_authority="$(/usr/bin/grep '^Authority=' "$codesign_log" | /usr/bin/head -n 1)"
+                found_authority="${found_authority#Authority=}"
+                [ -n "$found_authority" ] || found_authority="nothing - the signature is ad-hoc, with no certificate chain at all"
+                verify_fail "$label: expected a signature from \"$signed_by\", found $found_authority"
+                verify_note "an ad-hoc or wrong-team signature usually means the distribution signing settings were not applied on the machine that built this"
+                return 1
+            fi
+        fi
+
+        if [ "$want_timestamp" = "1" ] && ! /usr/bin/grep -q '^Timestamp=' "$codesign_log"; then
+            verify_fail "$label: signed without a secure timestamp - notarization will reject it"
+            verify_note "a signature made with --timestamp=none prints \"Signed Time=\" where a real one prints \"Timestamp=\", and that is how a binary built with \"xcodebuild build\" is signed. Rebuild with \"xcodebuild archive\"."
+            return 1
+        fi
+
+        if [ "$want_hardened" = "1" ]; then
+            # Matched by flag name, not by the 0x10000 hex, which shifts the
+            # moment any unrelated CodeDirectory flag is added. The list renders
+            # as "flags=0x10000(runtime)" on its own and "flags=0x10002(adhoc,
+            # runtime)" with company, so all four positions a name can occupy in
+            # a comma-separated list are spelled out.
+            case "$(/usr/bin/grep '^CodeDirectory ' "$codesign_log" | /usr/bin/head -n 1)" in
+                *"(runtime)"*|*"(runtime,"*|*",runtime)"*|*",runtime,"*) ;;
+                *)
+                    verify_fail "$label: not signed with the hardened runtime - notarization will reject it"
+                    verify_note "\"xcodebuild build\" does not turn it on; rebuild with \"xcodebuild archive\", or sign with codesign --options runtime"
+                    return 1
+                    ;;
+            esac
+        fi
+
+        append_log "  $label: signature ok"
+    fi
+
+    if [ -n "$version_flag" ]; then
+        local project_version="$(model_get /PROJECT/VERSION)"
+        # A bundle answers from its Info.plist rather than by being launched:
+        # running an .app's executable to ask what version it is starts the app.
+        # The flag is still what turns the check on, so this stays the per-entry
+        # opt-in of design 7 - a payload can carry a 1.0 helper beside a 2.2 app
+        # without the helper's version being read as the release's.
+        reported_version="$(artifact_version "$source" "$version_flag")"
+        if [ -z "$reported_version" ]; then
+            verify_fail "$label: $version_flag printed no version to compare against $project_version"
+            return 1
+        fi
+        if [ "$reported_version" != "$project_version" ]; then
+            verify_fail "$label: reports version $reported_version, but this is being built as $project_version"
+            verify_note "the artifacts folder may be stale - a six-month-old binary shipping under a new version number looks exactly like this"
+            return 1
+        fi
+        append_log "  $label: reports version $reported_version"
+    fi
+
+    return 0
+}
+
+# Verify every payload entry in order, stopping at the first one that fails.
+verify_payload() {
+    # Set by the loop below.
+    local index
+    local entry_count="$(payload_count)"
+    if [ "$entry_count" = "0" ]; then
+        verify_fail "the payload is empty - there is nothing to verify"
+        return 1
+    fi
+    index=0
+    while [ "$index" -lt "$entry_count" ]; do
+        verify_payload_entry "$index" || return 1
+        index=$((index + 1))
+    done
+    return 0
 }
 
 # --- Staging (design 7 step 2, 8.5) -------------------------------------------
@@ -517,7 +737,7 @@ patch_overwrite_permissions() {
     if ! /usr/bin/grep -q 'overwrite-permissions="' "$package_info"; then
         # Nothing to rewrite. Reported rather than worked around: the attribute
         # is what decides whether an install re-owns existing directories, and
-        # guessing at a PackageInfo this build did not recognise is how the
+        # guessing at a PackageInfo this build did not recognize is how the
         # harmful package ships.
         append_log "  ! PackageInfo carries no overwrite-permissions attribute; refusing to guess"
         /bin/rm -rf "$expand_dir"
@@ -667,7 +887,7 @@ DISTRIBUTION_RESOURCE_KINDS="README:readme LICENSE:license WELCOME:welcome CONCL
 # Files are staged flat, under their own basename, and the XML refers to them by
 # that basename. productbuild resolves a resource reference at the root of the
 # --resources directory, so this works whether the source sat in an en.lproj or
-# not. Localized resource sets are not modelled at all (design 4.6), so
+# not. Localized resource sets are not modeled at all (design 4.6), so
 # flattening loses nothing the document could express.
 stage_distribution_resources() {
     local resources_dir="$(state_dir)/resources"

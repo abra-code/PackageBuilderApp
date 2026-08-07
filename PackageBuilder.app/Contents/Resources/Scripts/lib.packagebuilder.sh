@@ -1070,7 +1070,7 @@ relative_to() {
 # to the document's folder when it is below it, else absolute.
 #
 # ${ARTIFACTS_DIR} is deliberately not consulted. That folder holds build
-# products; a readme, a licence or an install script is part of the project and
+# products; a readme, a license or an install script is part of the project and
 # lives with it, so writing one as ${ARTIFACTS_DIR}-relative would tie a file
 # that never moves to the one field that changes every release.
 store_document_relative_path() {
@@ -1533,10 +1533,10 @@ payload_remove_at() {
     "$plister" remove "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index"
 }
 
-# Move an entry one place towards the front or the back of the list.
+# Move an entry one place toward the front or the back of the list.
 #
 # plister has no move, and the array elements are dicts, so the swap is done by
-# writing the whole array out and reading it back with two neighbours exchanged
+# writing the whole array out and reading it back with two neighbors exchanged
 # would need a second file. Instead the two entries' scalar fields are exchanged
 # in place, which is equivalent for the flat shape a payload entry has and needs
 # no temporary document. Arguments: index a, index b
@@ -2043,7 +2043,7 @@ canonical_path() {
 # --- Cleanup ------------------------------------------------------------------
 # Remove this window's scratch directory and clear its pasteboard flags. Called
 # on every close path, dirty or clean - but never on a path where a save failed
-# or was cancelled, because the model file is the only copy of the user's work.
+# or was canceled, because the model file is the only copy of the user's work.
 cleanup_state() {
     local dir="${TMPDIR:-/tmp}/packagebuilder-state-${document_uuid}"
     # rm -rf runs only on a path that is one of ours (design section 8.4). In a

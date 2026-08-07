@@ -32,7 +32,7 @@ if ! is_dirty; then
 fi
 
 # There is no way to veto a close from this handler, so the alert offers only
-# the two outcomes that can actually be honoured. A Cancel button here would
+# the two outcomes that can actually be honored. A Cancel button here would
 # close the window regardless of which button was pressed.
 "$alert_tool" \
     --level caution \

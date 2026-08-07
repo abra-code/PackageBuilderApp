@@ -55,7 +55,7 @@
                                 "id": 321,
                                 "properties": {
                                     "title": "Verify Payload",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.step.verify"
                                 }
                             },
                             {

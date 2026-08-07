@@ -31,14 +31,14 @@ $(state_dir)/model.json"
 dest="$OMC_DLG_SAVE_AS_PATH"
 
 if [ -z "$dest" ]; then
-    dbg "save.as: cancelled"
+    dbg "save.as: canceled"
     if [ "$closing" = "1" ]; then
-        # The window is closing and the user cancelled the panel. Deleting the
+        # The window is closing and the user canceled the panel. Deleting the
         # state here would mean the last thing they did was press Cancel and the
         # whole document vanished.
-        strand_state "\"$(document_name)\" was not saved, because the Save panel was cancelled."
+        strand_state "\"$(document_name)\" was not saved, because the Save panel was canceled."
     else
-        set_status "Save cancelled"
+        set_status "Save canceled"
     fi
     exit 0
 fi
