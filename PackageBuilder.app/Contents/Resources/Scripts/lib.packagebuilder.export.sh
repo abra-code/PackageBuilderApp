@@ -297,6 +297,9 @@ trap cleanup EXIT
 
 payload_root="$staging_dir/root"
 component_dir="$staging_dir/component"
+# Every destination staged so far, normalized - read back by stage_entry's
+# nesting check. Inside the scratch, so it goes away with the trap.
+staged_destinations="$staging_dir/staged_destinations"
 /bin/mkdir -p "$payload_root" "$component_dir" || fail "Could not create the staging directories"
 
 # --- Verify -------------------------------------------------------------------
@@ -459,9 +462,70 @@ verify_entry() {
     return 0
 }
 
+# pb_normalize_path <path>
+#
+# Collapse runs of slashes, drop "." components, and drop any trailing slash.
+# Deliberately does NOT resolve "..", which is refused outright instead:
+# resolving it lexically is wrong wherever a symlink is involved.
+#
+# The trailing slash is not cosmetic. Without this, "dirname" on a destination
+# ending in "/" returns the symlink's PARENT rather than the symlink, so the
+# containment test below inspects the wrong node and passes; and "[ -L x/ ]" is
+# FALSE, because a trailing slash makes the kernel resolve the link - while
+# "ditto" still writes straight through it.
+pb_normalize_path() {
+    n_path="$1"; n_leading=""; n_rest="$n_path"; n_result=""
+    case "$n_path" in
+        /*) n_leading="/" ;;
+    esac
+    while [ -n "$n_rest" ]; do
+        n_part="${n_rest%%/*}"
+        case "$n_rest" in
+            */*) n_rest="${n_rest#*/}" ;;
+            *) n_rest="" ;;
+        esac
+        case "$n_part" in
+            ''|.) continue ;;
+        esac
+        n_result="$n_result/$n_part"
+    done
+    if [ -z "$n_result" ]; then
+        printf '%s' "${n_leading:-.}"
+    elif [ -n "$n_leading" ]; then
+        printf '%s' "$n_result"
+    else
+        printf '%s' "${n_result#/}"
+    fi
+}
+
+# pb_assert_inside <path-that-must-exist> <root> <destination-for-the-message>
+pb_assert_inside() {
+    a_real="$(cd -P "$1" 2>/dev/null && /bin/pwd -P)"
+    a_root="$(cd -P "$2" 2>/dev/null && /bin/pwd -P)"
+    if [ -z "$a_real" ] || [ -z "$a_root" ]; then
+        fail "Could not resolve the staging path for $3"
+    fi
+    case "$a_real" in
+        "$a_root"|"$a_root"/*) ;;
+        *) fail "Destination $3 resolves outside the payload root" ;;
+    esac
+}
+
 # stage_entry <source> <destination> <mode>
+#
+# This carries its own copy of the app's payload-root containment guard rather
+# than calling into a library, because it runs on a build machine where no
+# library exists. It must stay in step with stage_payload_root in
+# lib.packagebuilder.build.sh: a document the app refuses to build must not be
+# buildable by the script the app exported from it.
 stage_entry() {
     s_source="$1"; s_destination="$2"; s_mode="$3"
+    # Refused outright rather than resolved: resolving ".." lexically is wrong
+    # wherever a symlink is involved.
+    case "/$s_destination/" in
+        */../*) fail "Destination $s_destination must not contain \"..\"" ;;
+    esac
+    s_destination="$(pb_normalize_path "$s_destination")"
     case "$s_destination" in
         "$install_location"|"${install_location%/}/"*) ;;
         *) fail "Destination $s_destination is not under the install location $install_location" ;;
@@ -469,9 +533,61 @@ stage_entry() {
     s_relative="${s_destination#"${install_location%/}"}"
     s_relative="${s_relative#/}"
     [ -n "$s_relative" ] || fail "Destination $s_destination stages to nothing"
-    /bin/mkdir -p "$(/usr/bin/dirname "$payload_root/$s_relative")" || fail "Could not create the staging path for $s_relative"
-    /usr/bin/ditto "$s_source" "$payload_root/$s_relative" || fail "Could not copy $s_source"
-    /bin/chmod "$s_mode" "$payload_root/$s_relative" || fail "Could not set mode $s_mode on $s_relative"
+
+    # Two destinations may not nest, and neither may repeat - the same
+    # precondition the app applies before it stages anything. This was the last
+    # guard the app had and this copy did not, which made the comment above
+    # false: the app refused a nesting document and then handed you a script
+    # that built it. Compared against the destinations already staged in THIS
+    # run, read from a file so the loop does not run in a subshell.
+    if [ -f "$staged_destinations" ]; then
+        while IFS= read -r s_prev; do
+            [ -n "$s_prev" ] || continue
+            if [ "$s_prev" = "$s_destination" ]; then
+                fail "Destination $s_destination is installed to twice"
+            fi
+            case "$s_destination/" in
+                "$s_prev"/*) fail "Destination $s_destination installs inside $s_prev" ;;
+            esac
+            case "$s_prev/" in
+                "$s_destination"/*) fail "Destination $s_prev installs inside $s_destination" ;;
+            esac
+        done < "$staged_destinations"
+    fi
+    printf '%s\n' "$s_destination" >> "$staged_destinations"
+
+    s_target="$payload_root/$s_relative"
+    s_parent="$(/usr/bin/dirname "$s_target")"
+
+    # BEFORE mkdir, not after. "mkdir -p" follows symlink components, so by the
+    # time the parent exists the escape has already happened - the refusal would
+    # be accurate and too late, with directories already created outside. Climb
+    # to the deepest ancestor that exists and check that one; if it resolves
+    # outside, everything mkdir would create beneath it does too.
+    s_ancestor="$s_parent"
+    while [ ! -d "$s_ancestor" ]; do
+        s_next="$(/usr/bin/dirname "$s_ancestor")"
+        [ "$s_next" != "$s_ancestor" ] || break
+        s_ancestor="$s_next"
+    done
+    pb_assert_inside "$s_ancestor" "$payload_root" "$s_destination"
+
+    /bin/mkdir -p "$s_parent" || fail "Could not create the staging path for $s_relative"
+    # And again once it exists, as the backstop. This is the check that sees what
+    # the file system sees, and the reason the string comparisons above are not
+    # enough on their own: APFS folds case and folds NFD to NFC, so two
+    # destinations that compare unequal as strings can name one directory.
+    pb_assert_inside "$s_parent" "$payload_root" "$s_destination"
+
+    # And the leaf, which the parent check cannot cover: "ditto" of a directory
+    # onto an existing symlink writes through it, and "chmod" without -h follows
+    # it. The payload root is this script's own, so a symlink already sitting
+    # here was put there by an earlier entry.
+    if [ -L "$s_target" ]; then
+        fail "Destination $s_destination is a symlink staged by an earlier item"
+    fi
+    /usr/bin/ditto "$s_source" "$s_target" || fail "Could not copy $s_source"
+    /bin/chmod "$s_mode" "$s_target" || fail "Could not set mode $s_mode on $s_relative"
     printf '  staged %s\n' "$s_relative"
 }
 PB_HELPERS
@@ -510,12 +626,18 @@ PB_HELPERS
         if [ -n "$preinstall" ] || [ -n "$postinstall" ]; then
             printf 'scripts_dir="$staging_dir/scripts"\n'
             printf '/bin/mkdir -p "$scripts_dir" || fail "Could not create the scripts directory"\n'
+            # emit_runtime_path, not sh_quote: these are paths and may carry the
+            # same ${ARTIFACTS_DIR} and ${PROJECT_DIR} tokens every other path in
+            # the document may carry. sh_quote froze the token as literal text, so
+            # a document with a token-bearing component script exported a script
+            # that demanded --artifacts-dir and then ignored it, failing on the
+            # copy. Found in review, 2026-08-07.
             if [ -n "$preinstall" ]; then
-                printf '/bin/cp %s "$scripts_dir/preinstall" || fail "preinstall script is not there"\n' "$(sh_quote "$preinstall")"
+                printf '/bin/cp %s "$scripts_dir/preinstall" || fail "preinstall script is not there"\n' "$(emit_runtime_path "$preinstall")"
                 printf '/bin/chmod 755 "$scripts_dir/preinstall"\n'
             fi
             if [ -n "$postinstall" ]; then
-                printf '/bin/cp %s "$scripts_dir/postinstall" || fail "postinstall script is not there"\n' "$(sh_quote "$postinstall")"
+                printf '/bin/cp %s "$scripts_dir/postinstall" || fail "postinstall script is not there"\n' "$(emit_runtime_path "$postinstall")"
                 printf '/bin/chmod 755 "$scripts_dir/postinstall"\n'
             fi
             printf '\n'
@@ -669,6 +791,19 @@ PB_PATCH
             fi
             stored="$(model_get "/DISTRIBUTION/RESOURCES/$model_key")"
             base="$(/usr/bin/basename "$stored")"
+            # Same refusal the build applies, and for the same reason: basename
+            # of a path ending in "/.." is "..", which aims the copy at the
+            # staging directory itself and clobbers Distribution.xml and the
+            # component root mid-run. A resource is staged under its own file
+            # name, and "." and ".." are not file names. The "*/*" arm catches
+            # "/", whose basename is "/" rather than the empty string - that one
+            # emits "ditto / ..." and copies the whole boot volume.
+            case "$base" in
+                ''|.|..|*/*)
+                    printf 'export: %s resource %s does not name a file\n' "$model_key" "$stored" >&2
+                    return 1
+                    ;;
+            esac
             printf '/usr/bin/ditto %s "$resources_dir/"%s || fail "%s resource is not there"\n' \
                 "$(emit_runtime_path "$stored")" "$(sh_quote "$base")" "$model_key"
         done

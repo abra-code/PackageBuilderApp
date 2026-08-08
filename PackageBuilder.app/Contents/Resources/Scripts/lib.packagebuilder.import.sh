@@ -112,9 +112,17 @@ import_walk_node() {
         group="$(import_get "$node_path/GID")"
         case "$owner" in ''|0) owner="root" ;; esac
         case "$group" in ''|0) group="wheel" ;; esac
+        # basename disposes of any ".." in the directory part of a leaf's path,
+        # which is a source path and may legitimately hold one. What it does not
+        # dispose of is a path that IS "..", whose basename is "..".
+        local leaf_name="$(/usr/bin/basename "$raw_path")"
+        if path_has_dotdot "$leaf_name"; then
+            append_log "  ! Item path \"$raw_path\" contains \"..\" and was refused"
+            return 1
+        fi
         printf '%s%s%s%s%s%s%s%s%s\n' \
             "$source_abs" "$import_record_separator" \
-            "${dest_prefix%/}/$(/usr/bin/basename "$raw_path")" "$import_record_separator" \
+            "${dest_prefix%/}/$leaf_name" "$import_record_separator" \
             "$mode_octal" "$import_record_separator" \
             "$owner" "$import_record_separator" "$group" \
             >> "$(state_dir)/import.entries"
@@ -125,7 +133,16 @@ import_walk_node() {
     local next_prefix="$dest_prefix"
     case "$raw_path" in
         ''|/) ;;
-        *) next_prefix="${dest_prefix%/}/$raw_path" ;;
+        # A .pkgproj is somebody else's file, and this is where its strings
+        # first become destinations we would later write to. A ".." here walks
+        # the whole subtree out of the install location; the build refuses it,
+        # but a document that cannot be built is not worth writing, and naming
+        # it at the boundary beats naming it three commands later.
+        *) if path_has_dotdot "$raw_path"; then
+               append_log "  ! Node path \"$raw_path\" contains \"..\" and was refused"
+               return 1
+           fi
+           next_prefix="${dest_prefix%/}/$raw_path" ;;
     esac
     child_count="$(import_count "$node_path/CHILDREN")"
     child_index=0
@@ -146,6 +163,16 @@ import_common_prefix() {
     local source_path rest
     local prefix="" previous
     while IFS="$import_record_separator" read -r source_path rest; do
+        # A SOURCE path may legitimately carry ".." - it names a file on the
+        # machine doing the import, not a place anything is written to - but
+        # path_is_under now refuses such a child outright, which would make the
+        # loop below shrink the prefix to nothing and cost every OTHER entry its
+        # ${ARTIFACTS_DIR} tokenization. This is portability inference, not a
+        # write gate, so the honest answer is to leave this one entry out of the
+        # prefix rather than to give up on all of them.
+        if path_has_dotdot "$source_path"; then
+            continue
+        fi
         if [ -z "$prefix" ]; then
             prefix="$(/usr/bin/dirname "$source_path")"
             continue

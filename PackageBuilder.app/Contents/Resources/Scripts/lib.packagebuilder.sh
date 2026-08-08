@@ -976,12 +976,75 @@ resolve_stored_path() {
     absolutize "$expanded" "$(document_dir)"
 }
 
+# Succeed when a path contains a ".." component. Wrapping both ends in slashes
+# makes one pattern cover the bare, leading, interior and trailing cases at
+# once, and keeps a name that merely starts with dots - "..config" - out of it.
+path_has_dotdot() {
+    case "/$1/" in
+        */../*) return 0 ;;
+    esac
+    return 1
+}
+
+# Print a path with runs of slashes collapsed and "." components dropped, so
+# that two spellings of one path compare equal.
+#
+# This exists because every gate on a destination is a literal string
+# comparison, and a literal comparison is only as good as the spelling it is
+# given: "/opt/a/./b" and "/opt/a//b" both name a path under "/opt/a" while
+# matching no prefix test for it. Refusing those two spellings by name was the
+# first instinct and it is wrong - the next spelling reopens it. Normalizing
+# once, at the boundary, is what actually closes the class.
+#
+# ".." is deliberately NOT resolved here. Resolving it lexically is incorrect
+# wherever a symlink is involved, so path_has_dotdot refuses it outright rather
+# than this function pretending to fix it.
+normalize_path() {
+    local path="$1"
+    # Set by the loop below.
+    local component
+    local leading="" remainder="$path" result=""
+    case "$path" in
+        /*) leading="/" ;;
+    esac
+    while [ -n "$remainder" ]; do
+        component="${remainder%%/*}"
+        case "$remainder" in
+            */*) remainder="${remainder#*/}" ;;
+            *) remainder="" ;;
+        esac
+        # An empty component is a doubled slash; "." names where it already is.
+        case "$component" in
+            ''|.) continue ;;
+        esac
+        result="$result/$component"
+    done
+    if [ -z "$result" ]; then
+        # Nothing but slashes and dots: the root, or here.
+        printf '%s' "${leading:-.}"
+        return 0
+    fi
+    if [ -n "$leading" ]; then
+        printf '%s' "$result"
+    else
+        printf '%s' "${result#/}"
+    fi
+}
+
 # Succeed when child is at or below parent. Both are compared literally: the
 # case patterns interpolate parent, so a parent containing a glob character
 # would otherwise match more than itself.
+#
+# A child carrying ".." is refused outright rather than compared. A literal
+# prefix test says nothing true about an unnormalized path - "/usr/local/../.."
+# passes any prefix test for "/usr/local" while naming the root - so answering
+# it at all would be answering the wrong question. Callers that want a precise
+# complaint should test path_has_dotdot first; this is the backstop for the
+# ones that do not.
 path_is_under() {
     local child="$1" parent="$2"
     [ -n "$parent" ] || return 1
+    path_has_dotdot "$child" && return 1
     # The root is the parent of every absolute path, and it has to be handled
     # before the trailing slash is stripped - "/" would otherwise become the
     # empty string, which is the parent of nothing. The default install

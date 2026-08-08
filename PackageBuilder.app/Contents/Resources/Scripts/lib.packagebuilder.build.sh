@@ -253,8 +253,26 @@ check_preconditions() {
                 /*) ;;
                 *) fail_precondition "Item $item_number: destination \"$destination\" must be an absolute path" ;;
             esac
-            if ! path_is_under "$destination" "$install_location"; then
-                fail_precondition "Item $item_number: destination \"$destination\" is not under the install location \"$install_location\""
+            # A ".." component escapes the staging root, and the install-location
+            # test below cannot see it: that test is a literal prefix match, so
+            # "/usr/local/../.." passes it while naming the root. Staging is a
+            # ditto into "$staging_root/$destination", so what got through wrote
+            # wherever the dots led, under the user's own privileges and over
+            # anything already there. Refused here, where the message can name
+            # the real objection, and again in stage_payload_root.
+            if path_has_dotdot "$destination"; then
+                fail_precondition "Item $item_number: destination \"$destination\" must not contain \"..\""
+            else
+                # Every test below compares strings, so they are given the one
+                # spelling. "/opt/a/./b" and "/opt/a//b" name a path under
+                # "/opt/a" while matching no prefix test for it, which let an
+                # entry install inside another entry's directory unnoticed - and
+                # if that directory arrived carrying a symlink, ditto followed it
+                # straight out of the staging root.
+                destination="$(normalize_path "$destination")"
+                if ! path_is_under "$destination" "$install_location"; then
+                    fail_precondition "Item $item_number: destination \"$destination\" is not under the install location \"$install_location\""
+                fi
             fi
         fi
 
@@ -267,7 +285,10 @@ check_preconditions() {
         # reported once rather than from both ends.
         other_index=$((index + 1))
         while [ "$other_index" -lt "$entry_count" ]; do
-            other_destination="$(expand_tokens "$(payload_get "$other_index" DESTINATION)")"
+            # Normalized on both sides, for the reason given above: the nesting
+            # test is the gate that stops one entry writing into another's
+            # directory, and it is a literal prefix comparison.
+            other_destination="$(normalize_path "$(expand_tokens "$(payload_get "$other_index" DESTINATION)")")"
             if [ -n "$destination" ] && [ -n "$other_destination" ]; then
                 if [ "$destination" = "$other_destination" ]; then
                     fail_precondition "Items $item_number and $((other_index + 1)) install to the same path: $destination"
@@ -688,6 +709,7 @@ verify_payload() {
 stage_payload_root() {
     # Set once per iteration of the loop below.
     local source destination relative target owner group
+    local target_parent real_parent real_root ancestor ancestor_next
 
     local root="$(state_dir)/root"
     local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
@@ -709,6 +731,19 @@ stage_payload_root() {
             return 1
         fi
         destination="$(expand_tokens "$(payload_get "$index" DESTINATION)")"
+        # Second line of defense. The preconditions already refused this, but
+        # they read the model at the start of the run and this re-reads it, so
+        # the same reasoning that makes sign_package re-check applies: the one
+        # place that turns a destination into a path we write to should not
+        # trust that somebody else looked.
+        if path_has_dotdot "$destination"; then
+            append_log "  ! Item $((index + 1)): destination \"$destination\" must not contain \"..\""
+            return 1
+        fi
+        # The same normalization the preconditions compared against, so that the
+        # path actually written to is the path that was checked. Without this the
+        # gate and the write could disagree about what the destination even is.
+        destination="$(normalize_path "$destination")"
         relative="$(staged_relative_path "$destination" "$install_location")"
         if [ -z "$relative" ]; then
             append_log "  ! Item $((index + 1)) stages to nothing - its destination equals the install location"
@@ -716,10 +751,75 @@ stage_payload_root() {
         fi
         target="$root/$relative"
 
-        if ! /bin/mkdir -p "$(/usr/bin/dirname "$target")"; then
+        target_parent="$(/usr/bin/dirname "$target")"
+
+        # Checked BEFORE mkdir, not only after. "mkdir -p" follows symlink
+        # components, so by the time the parent exists the escape has already
+        # happened: the refusal below would be accurate and too late, with
+        # arbitrary directories already created outside the root and the run's
+        # closing line still claiming nothing outside the scratch was touched.
+        # Climb to the deepest ancestor that already exists and resolve that
+        # one - if it lands outside, so does everything mkdir would create
+        # beneath it.
+        ancestor="$target_parent"
+        while [ ! -d "$ancestor" ]; do
+            ancestor_next="$(/usr/bin/dirname "$ancestor")"
+            [ "$ancestor_next" != "$ancestor" ] || break
+            ancestor="$ancestor_next"
+        done
+        real_parent="$(canonical_path "$ancestor")"
+        real_root="$(canonical_path "$root")"
+        if [ -z "$real_parent" ] || [ -z "$real_root" ]; then
+            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$destination\""
+            return 1
+        fi
+        if ! path_is_under "$real_parent" "$real_root"; then
+            append_log "  ! Item $((index + 1)): destination \"$destination\" resolves outside the payload root"
+            return 1
+        fi
+
+        if ! /bin/mkdir -p "$target_parent"; then
             append_log "  ! Could not create $(/usr/bin/dirname "$relative") in the staging root"
             return 1
         fi
+
+        # The last gate, and the only one that can see what the file system
+        # sees. Every check above this line compares strings, and a string
+        # comparison cannot answer the question that decides whether this write
+        # stays inside the root:
+        #
+        #   - APFS folds case, so "/opt/demo/DIR" and "/opt/demo/dir" are two
+        #     spellings of one directory that compare unequal in the shell;
+        #   - APFS folds Unicode, so the NFC and NFD spellings of an accented
+        #     name are one directory that compares unequal, and prints
+        #     identically in the log, so the log is not a witness either;
+        #   - and a symlink staged by an EARLIER entry makes an
+        #     innocent-looking path name a directory outside the root, which
+        #     "mkdir -p" then happily follows.
+        #
+        # Canonicalizing after the mkdir asks the file system all three at once.
+        # No further lexical rewrite can do this, which is why the previous two
+        # rounds of spelling refusals were each got past.
+        real_parent="$(canonical_path "$target_parent")"
+        real_root="$(canonical_path "$root")"
+        if [ -z "$real_parent" ] || [ -z "$real_root" ]; then
+            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$destination\""
+            return 1
+        fi
+        if ! path_is_under "$real_parent" "$real_root"; then
+            append_log "  ! Item $((index + 1)): destination \"$destination\" resolves outside the payload root"
+            return 1
+        fi
+        # And the leaf itself, which the parent check cannot cover: "ditto" of a
+        # DIRECTORY onto an existing symlink writes through it, and "chmod"
+        # without -h follows it. The staging root is ours alone, so a symlink
+        # already sitting where this entry is about to write was put there by an
+        # earlier entry and is never legitimate.
+        if [ -L "$target" ]; then
+            append_log "  ! Item $((index + 1)): destination \"$destination\" is a symlink staged by an earlier item"
+            return 1
+        fi
+
         if ! run_tool "$ditto_tool" "$source" "$target"; then
             # A copy killed by Stop also returns non-zero, and "Could not copy"
             # about a copy nobody let finish would be a false accusation in the
@@ -1020,6 +1120,24 @@ stage_distribution_resources() {
             /bin/mkdir -p "$resources_dir" || return 1
         fi
         base="$(/usr/bin/basename "$source")"
+        # A source path ending in "/.." or "/." has a basename of ".." or ".",
+        # and resolve_stored_path does not canonicalize, so the dots survive to
+        # here - which would aim this copy at the state directory itself and
+        # clobber model.json and the staging root mid-run. There is no resource
+        # this could legitimately name: a resource is staged under its own file
+        # name, and "." and ".." are not file names.
+        #
+        # The "*/*" arm is what catches "/": basename "/" prints "/", not the
+        # empty string, so an enumeration of ''|.|.. misses it and the copy
+        # becomes "ditto / $resources_dir//" - the whole boot volume into the
+        # state directory. A basename can never legitimately contain a slash, so
+        # this arm is total rather than another list of spellings to keep up.
+        case "$base" in
+            ''|.|..|*/*)
+                append_log "  ! $model_key resource $source does not name a file"
+                return 1
+                ;;
+        esac
         # ditto rather than cp: an .rtfd resource is a directory bundle, and cp
         # without -R would refuse it.
         # Through run_tool like every other external call (design 8.4), which
@@ -1547,7 +1665,8 @@ stop_here() {
 # does not have to unwind. Returns 0 when the run produced what the document
 # asked for - including a stop, which is not a failure - and 1 otherwise. The
 # artifacts it produced are on record in the state directory
-# (built_component.txt, built_distribution.txt, built_package.txt).
+# (built_component.txt, built_distribution.txt, built_package.txt, and
+# kept_package.txt when a console frontend copied an unsigned build out).
 run_pipeline() {
     # Set by the stages below.
     local component unsigned signed
@@ -1562,9 +1681,15 @@ run_pipeline() {
     build_begin
     clear_log
     rail_reset
+    # Every record of what a previous run produced, cleared together. The CLI
+    # names its state directory after its pid and removes it from a trap, so a
+    # run that is killed outright leaves one behind for pid reuse to hand to a
+    # later run - and a stale record here is printed on stdout as this run's
+    # result, which is the one line a caller is meant to be able to trust.
     /bin/rm -f "$(state_dir)/built_component.txt" \
                "$(state_dir)/built_distribution.txt" \
-               "$(state_dir)/built_package.txt"
+               "$(state_dir)/built_package.txt" \
+               "$(state_dir)/kept_package.txt"
     show_view "$REVEAL_BTN_ID" 0
     # Turned off with Reveal: a failed rebuild deletes built_package.txt, and an
     # enabled Notarize button would still be offering the package it just removed.
@@ -1675,13 +1800,14 @@ run_pipeline() {
 
     # --- Stage 4: sign --------------------------------------------------------
     if [ "$signing_on" != "1" ]; then
-        # Design 8.3: the output folder only ever receives a signed package, so
-        # an unsigned build ends in the scratch directory and says so.
+        # What becomes of an unsigned package is the frontend's business, so it
+        # is asked rather than told. Design 8.3 keeps an unsigned artifact out of
+        # the window's output folder, but a terminal caller that passed
+        # --unsigned asked for the artifact and its scratch directory is about to
+        # go away. Stating either outcome here would make the log lie to one of
+        # the two frontends, which is exactly what the presentation seam is for.
         rail_set "$RAIL_SIGN_ID" skipped
-        append_log ""
-        append_log "Signing is turned off, so nothing was written to the output folder."
-        append_log "The unsigned package is an intermediate and stays here:"
-        append_log "  $unsigned"
+        report_unsigned_result "$unsigned"
         set_status "Built $(/usr/bin/basename "$unsigned") (unsigned)"
         build_end
         return 0

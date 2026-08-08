@@ -91,6 +91,30 @@ fail_usage() {
     return 2
 }
 
+# Guard every "shift 2" in an option loop. Under /bin/sh, "shift 2" with only
+# one argument left shifts nothing and returns non-zero - it is not a partial
+# shift and it does not abort - so an option that ends argv leaves the loop
+# with $# unchanged and spins it forever at full CPU, silently. A truncated
+# command line is an ordinary thing for an agent to produce, so the answer has
+# to be a diagnostic rather than a wedged process.
+#
+# Arguments: the flag, the remaining argument count, the would-be value.
+# A value that looks like an option is refused too, so "--name --force" says so
+# instead of quietly naming a document "--force". This mirrors the rule the
+# generated packaging script already applies in require_option_value.
+need_value() {
+    local flag="$1" remaining="$2" value="$3"
+    if [ "$remaining" -lt 2 ]; then
+        printf 'pkgbuilder: %s requires a value\n' "$flag" >&2
+        return 1
+    fi
+    case "$value" in
+        -*) printf 'pkgbuilder: %s requires a value, got the option: %s\n' "$flag" "$value" >&2
+            return 1 ;;
+    esac
+    return 0
+}
+
 # Load a document into this run's model, or explain why it could not be.
 require_document() {
     local document_path="$1"
@@ -209,15 +233,15 @@ cmd_new() {
           install_location="" title="" identity="" signing="1" force="0"
     while [ $# -gt 0 ]; do
         case "$1" in
-            --name)             name="$2"; shift 2 ;;
-            --identifier)       identifier="$2"; shift 2 ;;
-            --version)          version="$2"; shift 2 ;;
-            --min-os)           min_os="$2"; shift 2 ;;
-            --artifacts-dir)    artifacts="$2"; shift 2 ;;
-            --output-dir)       output="$2"; shift 2 ;;
-            --install-location) install_location="$2"; shift 2 ;;
-            --title)            title="$2"; shift 2 ;;
-            --identity)         identity="$2"; shift 2 ;;
+            --name)             need_value "$1" $# "$2" || return 2; name="$2"; shift 2 ;;
+            --identifier)       need_value "$1" $# "$2" || return 2; identifier="$2"; shift 2 ;;
+            --version)          need_value "$1" $# "$2" || return 2; version="$2"; shift 2 ;;
+            --min-os)           need_value "$1" $# "$2" || return 2; min_os="$2"; shift 2 ;;
+            --artifacts-dir)    need_value "$1" $# "$2" || return 2; artifacts="$2"; shift 2 ;;
+            --output-dir)       need_value "$1" $# "$2" || return 2; output="$2"; shift 2 ;;
+            --install-location) need_value "$1" $# "$2" || return 2; install_location="$2"; shift 2 ;;
+            --title)            need_value "$1" $# "$2" || return 2; title="$2"; shift 2 ;;
+            --identity)         need_value "$1" $# "$2" || return 2; identity="$2"; shift 2 ;;
             --no-signing)       signing="0"; shift ;;
             --force)            force="1"; shift ;;
             -h|--help)          usage; return 2 ;;
@@ -279,10 +303,10 @@ cmd_add_payload() {
     local destination="" mode="" owner="" group="" no_verify="0"
     while [ $# -gt 0 ]; do
         case "$1" in
-            --destination) destination="$2"; shift 2 ;;
-            --mode)        mode="$2"; shift 2 ;;
-            --owner)       owner="$2"; shift 2 ;;
-            --group)       group="$2"; shift 2 ;;
+            --destination) need_value "$1" $# "$2" || return 2; destination="$2"; shift 2 ;;
+            --mode)        need_value "$1" $# "$2" || return 2; mode="$2"; shift 2 ;;
+            --owner)       need_value "$1" $# "$2" || return 2; owner="$2"; shift 2 ;;
+            --group)       need_value "$1" $# "$2" || return 2; group="$2"; shift 2 ;;
             --no-verify)   no_verify="1"; shift ;;
             -h|--help)     usage; return 2 ;;
             *) fail_usage "add-payload: unknown option: $1"; return 2 ;;
@@ -356,6 +380,39 @@ cmd_set() {
         return 1
     fi
 
+    # A key path naming a payload entry has to name one that is there. plister
+    # cannot create a key whose parent container is missing, so without this the
+    # write below is a silent no-op - and an agent building a document one
+    # command at a time would get exit 0 from every one of them and a document
+    # with the fields missing. The archlist branch has always checked this; the
+    # check belongs here, where every type passes.
+    case "$key_path" in
+        /COMPONENTS/0/PAYLOAD/*)
+            local payload_index="${key_path#/COMPONENTS/0/PAYLOAD/}"
+            payload_index="${payload_index%%/*}"
+            case "$payload_index" in
+                ''|*[!0-9]*)
+                    printf 'pkgbuilder: %s does not name a payload entry index\n' "$key_path" >&2
+                    return 1
+                    ;;
+                # All digits, but more of them than an integer comparison can
+                # take: "[" would print its own complaint about the expression
+                # onto an agent's stderr and skip the bounds test. Ten digits is
+                # already four billion entries.
+                ??????????*)
+                    printf 'pkgbuilder: %s names payload entry %s, which is not a number of entries a document has\n' \
+                        "$key_path" "$payload_index" >&2
+                    return 1
+                    ;;
+            esac
+            if [ "$payload_index" -ge "$(payload_count)" ]; then
+                printf 'pkgbuilder: there is no payload entry %s in this document (it has %s)\n' \
+                    "$((payload_index + 1))" "$(payload_count)" >&2
+                return 1
+            fi
+            ;;
+    esac
+
     case "$wanted_type" in
         archlist)
             # Set by the loop below.
@@ -413,8 +470,8 @@ cmd_set() {
                     ;;
             esac
             case "$new_value" in
-                true|1|yes) model_set_bool "$key_path" 1 ;;
-                *) model_set_bool "$key_path" 0 ;;
+                true|1|yes) model_set_bool "$key_path" 1 || return 1 ;;
+                *) model_set_bool "$key_path" 0 || return 1 ;;
             esac
             ;;
         *)
@@ -434,7 +491,10 @@ cmd_set() {
                     esac
                     ;;
             esac
-            model_set "$key_path" "$new_value"
+            model_set "$key_path" "$new_value" || {
+                printf 'pkgbuilder: %s could not be written - is its parent container present?\n' "$key_path" >&2
+                return 1
+            }
             ;;
     esac
 
@@ -580,6 +640,11 @@ build_dry_run() {
     while [ "$index" -lt "$entry_count" ]; do
         source="$(resolve_stored_path "$(payload_get "$index" SOURCE)")"
         destination="$(expand_tokens "$(payload_get "$index" DESTINATION)")"
+        # Normalized first, exactly as stage_payload_root does before it builds
+        # the write path. Without this a destination carrying "." or a doubled
+        # slash prints one path here and stages to another, which makes the
+        # dry run a plan of a build that will not happen.
+        destination="$(normalize_path "$destination")"
         relative="$(staged_relative_path "$destination" "$install_location")"
         printf '  %s -> %s (%s)\n' "$source" "$relative" "$(payload_get "$index" MODE)" >&2
         index=$((index + 1))
@@ -616,10 +681,10 @@ cmd_build() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --dry-run)       dry_run="1"; shift ;;
-            --version)       version="$2"; shift 2 ;;
-            --artifacts-dir) artifacts="$2"; shift 2 ;;
-            --output-dir)    output="$2"; shift 2 ;;
-            --identity)      identity="$2"; shift 2 ;;
+            --version)       need_value "$1" $# "$2" || return 2; version="$2"; shift 2 ;;
+            --artifacts-dir) need_value "$1" $# "$2" || return 2; artifacts="$2"; shift 2 ;;
+            --output-dir)    need_value "$1" $# "$2" || return 2; output="$2"; shift 2 ;;
+            --identity)      need_value "$1" $# "$2" || return 2; identity="$2"; shift 2 ;;
             --unsigned)      unsigned="1"; shift ;;
             -h|--help)       usage; return 2 ;;
             -*) fail_usage "build: unknown option: $1"; return 2 ;;
@@ -654,27 +719,26 @@ cmd_build() {
     run_pipeline || return 1
 
     # The one line on stdout: what the run produced, so a caller can capture it
-    # without parsing the log. A signed run lands in the output folder; an
-    # unsigned one is an intermediate in a scratch directory that goes away
-    # when this command exits (design 8.3), so it is copied out when the
-    # document names an output folder to copy it to.
+    # without parsing the log. A signed run lands in the output folder. An
+    # unsigned one is copied out by the console presentation layer, which owns
+    # that decision because it is the one place the two frontends genuinely
+    # differ (design 8.3); it records where the package settled, and that is
+    # what gets printed here.
     local produced="$(built_package_path)"
     if [ -n "$produced" ]; then
         printf '%s\n' "$produced"
         return 0
     fi
 
+    local kept_file="$(state_dir)/kept_package.txt"
+    if [ -s "$kept_file" ]; then
+        /bin/cat "$kept_file"
+        printf '\n'
+        return 0
+    fi
+
     produced="$(built_distribution_path)"
     [ -n "$produced" ] || return 1
-    local keep_dir="$(output_dir_abs)"
-    if [ -n "$keep_dir" ] && [ -d "$keep_dir" ]; then
-        local kept="$keep_dir/$(/usr/bin/basename "$produced")"
-        if /bin/cp "$produced" "$kept"; then
-            append_log "Copied to: $kept"
-            printf '%s\n' "$kept"
-            return 0
-        fi
-    fi
     printf '%s\n' "$produced"
     return 0
 }

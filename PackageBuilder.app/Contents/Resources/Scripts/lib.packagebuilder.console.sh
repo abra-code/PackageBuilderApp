@@ -57,6 +57,34 @@ append_log_file() {
 rail_set() { :; }
 rail_reset() { :; }
 
+# --- What becomes of an unsigned package --------------------------------------
+# A terminal caller that turned signing off asked for the unsigned package, and
+# the scratch directory holding it goes away when the command exits - so unlike
+# the window, the console copies it out when the document names an output folder.
+# Design 8.3 is kept by the name rather than by the location: the file is
+# "<name>-unsigned.pkg", so nothing that looks like a finished package arrives
+# there unsigned. The path it settled on is recorded for the caller to print.
+report_unsigned_result() {
+    local package_path="$1"
+    append_log ""
+    append_log "Signing is turned off. This package is NOT signed and NOT notarized;"
+    append_log "macOS will refuse to install it on another Mac."
+    local keep_dir="$(output_dir_abs)"
+    if [ -n "$keep_dir" ] && [ -d "$keep_dir" ]; then
+        local kept="$keep_dir/$(/usr/bin/basename "$package_path")"
+        if /bin/cp "$package_path" "$kept"; then
+            printf '%s' "$kept" > "$(state_dir)/kept_package.txt"
+            append_log "  $kept"
+            return 0
+        fi
+        append_log "  ! Could not copy it to $keep_dir"
+    fi
+    append_log "It stays in this run's scratch directory, which goes away when this"
+    append_log "command exits:"
+    append_log "  $package_path"
+    return 0
+}
+
 # --- What comes after a signed package ----------------------------------------
 # No button to point at, so it prints the commands. The keychain profile is a
 # placeholder rather than a name, because a profile only exists on the machine

@@ -122,8 +122,18 @@ schema_check_type() {
 # Arguments: key path, label, space-separated allowed values
 schema_check_enum() {
     local key_path="$1" label="$2" allowed="$3"
+    # Presence is decided by the type, not by the value. "get value" prints
+    # nothing for an empty string, an empty dict and an empty array alike, so a
+    # value test cannot tell "absent" - which is fine, every enum is optional -
+    # from "present and wrong", which is not. Testing the value was reporting
+    # {} and [] as clean. Found in review, 2026-08-07.
+    local actual_type="$(schema_type "$key_path")"
+    [ -n "$actual_type" ] || return 0
+    if [ "$actual_type" != "string" ]; then
+        schema_error "$label is $actual_type, expected a string - one of: $allowed"
+        return 0
+    fi
     local actual="$(schema_value "$key_path")"
-    [ -n "$actual" ] || return 0
     case " $allowed " in
         *" $actual "*) return 0 ;;
     esac
@@ -168,8 +178,12 @@ schema_check_payload_entry() {
     # MODE is three or four octal digits. Checked here as well as in the build
     # preconditions because a document being assembled by machine is exactly
     # where "0755" arrives as the number 755 or as "rwxr-xr-x".
-    local mode="$(schema_value "$base/MODE")"
-    if [ -n "$mode" ]; then
+    # Gated on the type rather than on the value being non-empty, for the same
+    # reason schema_check_enum is: an empty string reads as absent through
+    # "get value" and was slipping past. A non-string MODE has already been
+    # reported by the type check above, so this stays quiet about it.
+    if [ "$(schema_type "$base/MODE")" = "string" ]; then
+        local mode="$(schema_value "$base/MODE")"
         case "$mode" in
             *[!0-7]*) schema_error "$label MODE \"$mode\" is not octal - use \"0755\" or \"0644\"" ;;
             ???|????) ;;

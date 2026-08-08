@@ -121,6 +121,19 @@ rail_reset() {
     done
 }
 
+# --- What becomes of an unsigned package --------------------------------------
+# Design 8.3: the output folder only ever receives a signed package. In the
+# window an unsigned build is an intermediate, so it stays in the scratch
+# directory and the log says where.
+report_unsigned_result() {
+    local package_path="$1"
+    append_log ""
+    append_log "Signing is turned off, so nothing was written to the output folder."
+    append_log "The unsigned package is an intermediate and stays here:"
+    append_log "  $package_path"
+    return 0
+}
+
 # --- What comes after a signed package ----------------------------------------
 # Here it is a button, so the message names the button and the one setting that
 # matters in the app it opens. Arguments: the signed package path.
