@@ -27,9 +27,15 @@
 # checks here assert that a flag IS empty.
 document_uuid() { printf '%s' "${OMC_PARENT_DIALOG_GUID:-$OMC_ACTIONUI_WINDOW_UUID}"; }
 
+# Character for character what the app builds, INCLUDING the doubled slash it
+# gets from a TMPDIR that ends in one - which on macOS it always does. Stripping
+# that here reads like tidying and is not: the app stores this path in
+# built_component.txt and prints it in the run log, so a test that compares
+# against a tidied copy fails on a string while every path-based check passes.
+# Found exactly that way, porting section 51. The doubling is the app's, and if
+# it is ever worth removing it should be removed there and fail here.
 state_dir() {
-    local tmp="${TMPDIR:-/tmp}"
-    printf '%s/packagebuilder-state-%s' "${tmp%/}" "$(document_uuid)"
+    printf '%s/packagebuilder-state-%s' "${TMPDIR:-/tmp}" "$(document_uuid)"
 }
 
 model_file() { printf '%s/model.json' "$(state_dir)"; }
@@ -102,6 +108,78 @@ PLIST
     /bin/cp /bin/echo "$dir/mytool"
     printf 'notes\n' > "$dir/readme.txt"
     printf '%s' "$dir"
+}
+
+# A replay-shaped project: four bare tools into /usr/local/bin, a readme, a
+# pinned version and minimum OS. This is the shape the acceptance test compares
+# against the shipped replay_2.2.pkg, and the starting point for every build,
+# signing and verify scenario.
+setup_replay_project() {
+    local artifacts_dir="$OMCTEST_WORK/replay-artifacts" tool
+    reset_state
+    /bin/mkdir -p "$artifacts_dir"
+    for tool in replay gate dispatch fingerprint; do
+        /bin/cp /bin/echo "$artifacts_dir/$tool"
+    done
+    printf '{\\rtf1\\ansi readme}\n' > "$OMCTEST_WORK/replay-readme.rtf"
+    omc_object ""
+    omc_run PackageBuilder.main.init
+    omc_dialog_answer save_as "$OMCTEST_WORK/replay.pkgbuilderproj"
+    omc_run PackageBuilder.save.as
+    omc_dialog_answer choose_folder "$artifacts_dir"
+    omc_run PackageBuilder.choose.artifacts
+    omc_drop "$artifacts_dir/replay" "$artifacts_dir/gate" \
+             "$artifacts_dir/dispatch" "$artifacts_dir/fingerprint"
+    omc_run PackageBuilder.payload.drop
+    pl set string "com.abracode.pkg.replay" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+    pl set string "replay" "$(model_file)" /PROJECT/NAME
+    pl set string "2.2"    "$(model_file)" /PROJECT/VERSION
+    pl set string "10.15"  "$(model_file)" /PROJECT/MIN_OS_VERSION
+    pl set string "replay" "$(model_file)" /DISTRIBUTION/TITLE
+    omc_dialog_answer choose_file "$OMCTEST_WORK/replay-readme.rtf"
+    omc_run PackageBuilder.choose.readme
+    clear_payload_assertions
+}
+
+# Drop every verify assertion the payload entries picked up on the way in.
+#
+# The four replay fixtures are copies of /bin/echo standing in for the real
+# signed tools, and a dropped Mach-O starts out asserting universal, Developer
+# ID signed, hardened and timestamped (design 5.3). /bin/echo is none of those:
+# x86_64 + arm64e, "macOS Software Signing", no secure timestamp, no hardened
+# runtime. Left in place they would stop every build below at stage 1, so the
+# assertions are cleared here and the verify stage gets its own file, where what
+# /bin/echo really is turns out to be the exact shape of the two mistakes design
+# section 7 wants named.
+clear_payload_assertions() {
+    local entry_index=0 entry_total
+    entry_total="$(count /COMPONENTS/0/PAYLOAD)"
+    while [ "$entry_index" -lt "${entry_total:-0}" ]; do
+        pb_call payload_archs_set "$entry_index" ""
+        pl set string "" "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index/VERIFY/SIGNED_BY"
+        pl set bool false "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index/VERIFY/HARDENED_RUNTIME"
+        pl set bool false "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index/VERIFY/SECURE_TIMESTAMP"
+        pl set string "" "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index/VERIFY/VERSION_FLAG"
+        entry_index=$((entry_index + 1))
+    done
+}
+
+# Say out loud that a group of checks did not run, and why.
+#
+# A few scenarios need something this machine may not have - a Developer ID
+# Installer certificate, a copy of the shipped reference package. Failing there
+# would make the suite unusable on an ordinary checkout; skipping silently is
+# worse, because a skipped test and a passing one look identical in the output.
+# So it is announced, in a word that greps.
+skip_section() { # <reason>
+    printf 'SKIP %s\n' "$1" >&2
+}
+
+# The Developer ID Installer identity to sign with, empty when there is none.
+signing_identity() {
+    /usr/bin/security find-identity -v -p basic 2>/dev/null \
+        | /usr/bin/grep 'Developer ID Installer' \
+        | /usr/bin/sed 's/.*"\(.*\)".*/\1/' | /usr/bin/head -n 1
 }
 
 # --- Per-window state the applet keeps in the pasteboard ----------------------
@@ -228,7 +306,7 @@ for omctest_required_id in PAYLOAD_TABLE_ID PAYLOAD_ADD_ID PAYLOAD_REMOVE_ID \
     VERIFY_SIGNED_ID VERIFY_HARDENED_ID VERIFY_TIMESTAMP_ID VERSION_FLAG_ID \
     NAME_ID IDENTIFIER_ID VERSION_ID INSTALL_LOCATION_ID AUTH_ID OVERWRITE_ID \
     RELOCATABLE_ID TITLE_ID MIN_OS_ID ARCH_ARM64_ID ARCH_X86_64_ID README_ID \
-    PRESET_APPLICATIONS_ID PRESET_APP_SUPPORT_ID; do
+    IDENTITY_PICKER_ID PRESET_APPLICATIONS_ID PRESET_APP_SUPPORT_ID; do
     eval "omctest_required_value=\$$omctest_required_id"
     [ -n "$omctest_required_value" ] || {
         printf 'lib.test.packagebuilder: %s did not import from the app\n' \
