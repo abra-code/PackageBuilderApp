@@ -1,0 +1,36 @@
+{
+  "FORMAT_VERSION": 1,
+  "PROJECT": {
+    "NAME": "replay",
+    "VERSION": "2.2",
+    "MIN_OS_VERSION": "10.15",
+    "ARTIFACTS_DIR": "../replay-Distributions/build",
+    "OUTPUT_DIR": "../replay-Distributions",
+    "PACKAGE_NAME": "${NAME}_${VERSION}.pkg"
+  },
+  "COMPONENTS": [
+    {
+      "IDENTIFIER": "com.abracode.pkg.replay",
+      "INSTALL_LOCATION": "/",
+      "OVERWRITE_PERMISSIONS": false,
+      "RELOCATABLE": false,
+      "AUTH": "Root",
+      "PREINSTALL": "",
+      "POSTINSTALL": "",
+      "PAYLOAD": [
+        { "SOURCE": "${ARTIFACTS_DIR}/replay", "DESTINATION": "/usr/local/bin/replay",
+          "OWNER": "root", "GROUP": "wheel", "MODE": "0755" },
+        { "SOURCE": "${ARTIFACTS_DIR}/gate", "DESTINATION": "/usr/local/bin/gate",
+          "OWNER": "root", "GROUP": "wheel", "MODE": "0755" }
+      ]
+    }
+  ],
+  "DISTRIBUTION": {
+    "TITLE": "replay",
+    "HOST_ARCHITECTURES": [ "arm64", "x86_64" ],
+    "CUSTOMIZE": "never",
+    "REQUIRE_SCRIPTS": false,
+    "RESOURCES": { "README": "Resources/readme.rtf", "LICENSE": "", "WELCOME": "", "CONCLUSION": "", "BACKGROUND": "" }
+  },
+  "SIGNING": { "ENABLED": true, "INSTALLER_IDENTITY": "Developer ID Installer: Tomasz Kukielka (T9NM2ZLDTY)" }
+}
