@@ -188,12 +188,54 @@ staged_relative_path() {
     printf '%s' "$relative"
 }
 
+# Print the spelling the FILE SYSTEM will actually use for an absolute install
+# path, by making it inside a throwaway tree and asking what came out. Arguments:
+# probe root, absolute path.
+#
+# This exists because the nesting gate is a string comparison and the volume the
+# payload stages on folds case and folds NFD to NFC: "/opt/DIR" and "/opt/dir",
+# or the NFC and NFD spellings of one accented name, are a single directory there
+# while comparing unequal in the shell. Two entries whose destinations differ
+# only that way therefore merged into one directory with the document reported
+# clean - which design 4.1 forbids, because the second entry's ditto races the
+# first.
+#
+# Every destination is made inside ONE probe tree, so a case-variant sibling
+# lands in the directory its predecessor created and canonicalizes to the same
+# name. Comparing those canonical forms makes both the equality test and the
+# prefix test fold-correct, without resolving anything lexically and without
+# Python (design 12). On any failure it returns the path unchanged, so the gate
+# degrades to the string comparison it was rather than to no gate at all.
+fold_install_path() {
+    local probe_root="$1" path="$2"
+    local relative folded
+    relative="${path#/}"
+    if [ -z "$relative" ]; then
+        printf '/'
+        return 0
+    fi
+    /bin/mkdir -p "$probe_root/$relative" 2>/dev/null || {
+        printf '%s' "$path"
+        return 0
+    }
+    folded="$(canonical_path "$probe_root/$relative")"
+    if [ -z "$folded" ] || [ "$folded" = "$probe_root" ]; then
+        printf '%s' "$path"
+        return 0
+    fi
+    printf '/%s' "${folded#"$probe_root"/}"
+}
+
 check_preconditions() {
     # Set once per iteration of the loops below.
     local source destination mode stored_source item_number
     local other_index other_destination
+    local folded_destination folded_other probe_root
 
     precondition_failures=0
+
+    # One throwaway tree for the whole check; see fold_install_path.
+    probe_root="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/pbfold.XXXXXX" 2>/dev/null)" || probe_root=""
 
     local name="$(model_get /PROJECT/NAME)"
     local version="$(model_get /PROJECT/VERSION)"
@@ -290,11 +332,21 @@ check_preconditions() {
             # directory, and it is a literal prefix comparison.
             other_destination="$(normalize_path "$(expand_tokens "$(payload_get "$other_index" DESTINATION)")")"
             if [ -n "$destination" ] && [ -n "$other_destination" ]; then
-                if [ "$destination" = "$other_destination" ]; then
+                # Compared in the spelling the file system will use, not the one
+                # the document holds. The messages still name what the document
+                # says, because that is what the reader has to go and change.
+                if [ -n "$probe_root" ]; then
+                    folded_destination="$(fold_install_path "$probe_root" "$destination")"
+                    folded_other="$(fold_install_path "$probe_root" "$other_destination")"
+                else
+                    folded_destination="$destination"
+                    folded_other="$other_destination"
+                fi
+                if [ "$folded_destination" = "$folded_other" ]; then
                     fail_precondition "Items $item_number and $((other_index + 1)) install to the same path: $destination"
-                elif path_is_under "$other_destination" "$destination"; then
+                elif path_is_under "$folded_other" "$folded_destination"; then
                     fail_precondition "Item $((other_index + 1)) installs inside item $item_number: $other_destination is under $destination"
-                elif path_is_under "$destination" "$other_destination"; then
+                elif path_is_under "$folded_destination" "$folded_other"; then
                     fail_precondition "Item $item_number installs inside item $((other_index + 1)): $destination is under $other_destination"
                 fi
             fi
@@ -303,6 +355,8 @@ check_preconditions() {
 
         index=$((index + 1))
     done
+
+    [ -z "$probe_root" ] || /bin/rm -rf "$probe_root"
 
     [ "$precondition_failures" -eq 0 ]
 }
@@ -354,7 +408,19 @@ check_distribution_preconditions() {
     # installer would then show, say, the license text as the readme - a wrong
     # package that builds cleanly. Refused here rather than resolved by
     # inventing names, so what the document says is what ships.
-    local seen_basenames="" base
+    # The collision is asked of the FILE SYSTEM, not of a string comparison.
+    # Resources are staged flat, so the collision that matters is the one the
+    # file system will actually make - and the volume this stages on folds case
+    # and folds NFD to NFC, so "README.txt" and "readme.txt", or the NFC and NFD
+    # spellings of one accented name, are a single file there while comparing
+    # unequal in the shell. A string compare therefore called a wrong package
+    # clean: the license text shipped as the readme, exactly the outcome the
+    # paragraph above says this check exists to prevent. Touching one marker per
+    # basename and asking whether it already exists gets case folding, Unicode
+    # folding and anything else the volume does, for free and without Python
+    # (design 12).
+    local seen_dir base
+    seen_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/pbresnames.XXXXXX" 2>/dev/null)" || seen_dir=""
     for pair in $DISTRIBUTION_RESOURCE_KINDS; do
         model_key="${pair%%:*}"
         stored="$(model_get "/DISTRIBUTION/RESOURCES/$model_key")"
@@ -371,13 +437,25 @@ check_distribution_preconditions() {
             continue
         fi
         base="$(/usr/bin/basename "$source")"
-        case "$seen_basenames" in
-            *"|$base|"*)
-                fail_precondition "Two presentation resources are both named \"$base\" - the installer can only show one of them"
+        # A resource is staged under its own file name. "." and ".." are not file
+        # names, and basename "/" is "/" rather than the empty string, so the
+        # "*/*" arm is what catches a resource of "/" - which would otherwise
+        # aim a copy at the staging directory itself.
+        case "$base" in
+            ''|.|..|*/*)
+                fail_precondition "The $model_key resource $stored does not name a file"
+                continue
                 ;;
-            *) seen_basenames="$seen_basenames|$base|" ;;
         esac
+        if [ -n "$seen_dir" ]; then
+            if [ -e "$seen_dir/$base" ]; then
+                fail_precondition "Two presentation resources are both named \"$base\" - the installer can only show one of them"
+            else
+                : > "$seen_dir/$base" 2>/dev/null
+            fi
+        fi
     done
+    [ -z "$seen_dir" ] || /bin/rm -rf "$seen_dir"
 
     [ "$precondition_failures" -eq 0 ]
 }

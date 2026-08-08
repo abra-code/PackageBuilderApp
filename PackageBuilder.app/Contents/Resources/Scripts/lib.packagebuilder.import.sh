@@ -99,6 +99,16 @@ import_walk_node() {
             append_log "  note: \"$(/usr/bin/basename "$raw_path")\" has entries described inside it; it is imported whole"
         fi
         source_abs="$(import_resolve "$raw_path" "$path_type")"
+        # raw_path was checked above, but the RECORD stores source_abs, which for
+        # a project-relative node is "$import_project_dir/$raw_path" - so a
+        # .pkgproj sitting in a folder whose own name carries a line break slips
+        # through with entirely ordinary content and shifts every field after it.
+        case "$source_abs" in
+            *"$newline"*)
+                append_log "! A payload source path contains a line break, which cannot be imported: $(printf '%s' "$source_abs" | /usr/bin/head -n 1) ..."
+                return 1
+                ;;
+        esac
         permissions="$(import_get "$node_path/PERMISSIONS")"
         case "$permissions" in
             ''|*[!0-9]*) mode_octal="0755" ;;
@@ -129,7 +139,21 @@ import_walk_node() {
         return 0
     fi
 
-    # A scaffold directory. The root's PATH is "/", which contributes nothing.
+    # A scaffold directory. Its PATH becomes part of the DESTINATION of
+    # everything beneath it, and the records file is line-oriented, so a line
+    # break here fabricates extra half-empty entries out of a data file exactly
+    # as one in a leaf path does - the leaf branch above refuses it, and this
+    # branch had no check at all.
+    local scaffold_newline="$(printf '\nx')"
+    scaffold_newline="${scaffold_newline%x}"
+    case "$raw_path" in
+        *"$scaffold_newline"*)
+            append_log "! A payload directory name contains a line break, which cannot be imported: $(printf '%s' "$raw_path" | /usr/bin/head -n 1) ..."
+            return 1
+            ;;
+    esac
+
+    # The root's PATH is "/", which contributes nothing.
     local next_prefix="$dest_prefix"
     case "$raw_path" in
         ''|/) ;;

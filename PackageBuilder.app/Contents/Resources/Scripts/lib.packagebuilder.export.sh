@@ -525,6 +525,14 @@ stage_entry() {
     case "/$s_destination/" in
         */../*) fail "Destination $s_destination must not contain \"..\"" ;;
     esac
+    # A newline would be recorded as its first line only in the line-oriented
+    # record file below, so the nesting check would compare a truncated string
+    # and let a nesting document through - which is exactly the invariant this
+    # helper's header promises. Refused rather than escaped: a newline in an
+    # install path is not something to guess the intent of.
+    if [ "$s_destination" != "$(printf '%s' "$s_destination" | /usr/bin/tr -d '\n')" ]; then
+        fail "Destination contains a line break, which cannot be installed"
+    fi
     s_destination="$(pb_normalize_path "$s_destination")"
     case "$s_destination" in
         "$install_location"|"${install_location%/}/"*) ;;
@@ -760,6 +768,12 @@ PB_PATCH
             stored="$(model_get "/DISTRIBUTION/RESOURCES/$model_key")"
             [ -n "$stored" ] || continue
             base="$(/usr/bin/basename "$stored")"
+            # Same refusal as the staging site. Harmless today only because the
+            # XML is generated before the resources are staged, so the staging
+            # guard fires first - which is an ordering accident, not a defense.
+            case "$base" in
+                ''|.|..|*/*) continue ;;
+            esac
             emit_xml_line "    <$element file=\"$(xml_escape "$base")\"/>"
         done
         emit_xml_line '    <choices-outline>'
