@@ -128,10 +128,7 @@ omc_object "$watched"
 omc_run PackageBuilder.main.init
 omc_run PackageBuilder.window.activated
 check "unchanged file, no reload" "com.abracode.pkg.replay"  "$(model /COMPONENTS/0/IDENTIFIER)"
-/bin/rm -f "$OMCTEST_WORK/edit.json"
-/bin/cp "$watched" "$OMCTEST_WORK/edit.json"
-pl set string "com.changed.externally" "$OMCTEST_WORK/edit.json" /COMPONENTS/0/IDENTIFIER >/dev/null 2>&1
-/bin/cp "$OMCTEST_WORK/edit.json" "$watched"
+pl set string "com.changed.externally" "$watched" /COMPONENTS/0/IDENTIFIER >/dev/null 2>&1
 omc_run PackageBuilder.window.activated
 check "reloaded from disk"       "com.changed.externally"    "$(model /COMPONENTS/0/IDENTIFIER)"
 check "clean after reload"       "0"                         "$(dirty)"

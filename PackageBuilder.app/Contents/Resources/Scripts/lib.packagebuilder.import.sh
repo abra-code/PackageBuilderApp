@@ -1,10 +1,11 @@
 #!/bin/sh
 # lib.packagebuilder.import.sh - import a Packages.app .pkgproj
 #
-# Design section 10. A .pkgproj is an XML plist, which plister reads once it
-# has been staged under a .plist extension (design 12.2). The interesting part
-# is the payload hierarchy walk: Packages stores a scaffold of the whole system
-# tree in every project, and the real payload references sit at TYPE = 3 leaf
+# Design section 10. A .pkgproj is a plist, XML or binary, which plister reads
+# in place now that it falls back to content for an extension it does not
+# recognize (design 12.2). The interesting part is the payload hierarchy walk:
+# Packages stores a scaffold of the whole system tree in every project, and the
+# real payload references sit at TYPE = 3 leaf
 # nodes inside it. Everything else - the presentation model beyond the readme,
 # the excluded-file patterns, the requirement list, the template tree itself -
 # is dropped, and the log says so, so nothing disappears quietly.
@@ -14,7 +15,8 @@
 #
 # POSIX sh only. Validate with "sh -n", never "bash -n".
 
-# The staged copy every import_ function below reads. Set by import_pkgproj.
+# The .pkgproj every import_ function below reads. Set by import_pkgproj, and
+# read-only: it is the user's file, not a copy of it.
 import_file=""
 import_project_dir=""
 
@@ -284,12 +286,29 @@ import_apply_payload() {
 import_pkgproj() {
     local pkgproj_path="$1"
     import_project_dir="$(/usr/bin/dirname "$pkgproj_path")"
-    import_file="$(state_dir)/import.plist"
+    # Read where it lies. This used to stage a copy under a .plist name, because
+    # plister picked the format from the extension alone and .pkgproj is not an
+    # extension it knows; it now falls back to the file's own content for any
+    # unknown extension, and a .pkgproj is a plist however it is named (design
+    # 12.2). Both the XML and the binary form read this way.
+    #
+    # import_file now names the USER'S project, so nothing in this file may
+    # write to it or delete it. The cleanup at the end of this function removes
+    # only what the import created - it used to name import_file as well, back
+    # when that was a copy.
+    import_file="$pkgproj_path"
 
-    # Staged under a .plist name: plister decides format by extension alone
-    # (design 12.2), and .pkgproj is not an extension it knows.
-    /bin/rm -f "$import_file" "$(state_dir)/import.entries"
-    /bin/cp "$pkgproj_path" "$import_file" || return 1
+    /bin/rm -f "$(state_dir)/import.entries"
+    # The copy used to be what refused an unreadable or absent file, and cp said
+    # why on stderr. plister would refuse it too, but a project it cannot read is
+    # indistinguishable from one with nothing in it, so the user would be told
+    # "this does not look like a Packages.app project" - plausible, and the wrong
+    # problem. Refuse it here and name it, or the message is worse than the one
+    # the copy used to produce.
+    if [ ! -r "$import_file" ]; then
+        append_log "! $(/usr/bin/basename "$pkgproj_path") cannot be read"
+        return 1
+    fi
 
     local settings="/PACKAGES/0/PACKAGE_SETTINGS"
     local name="$(import_get "$settings/NAME")"
@@ -378,6 +397,7 @@ import_pkgproj() {
     [ "$(import_count "/PROJECT/PROJECT_SETTINGS/EXCLUDED_FILES")" = "0" ] || \
         append_log "  the excluded-file patterns"
 
-    /bin/rm -f "$import_file" "$(state_dir)/import.entries"
+    # Only what the import created. import_file is the user's own .pkgproj.
+    /bin/rm -f "$(state_dir)/import.entries"
     return 0
 }

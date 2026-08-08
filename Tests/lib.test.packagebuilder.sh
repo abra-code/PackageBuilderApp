@@ -48,14 +48,11 @@ payload_field() { model "/COMPONENTS/0/PAYLOAD/$1/$2"; }
 dirty() { /bin/cat "$(state_dir)/dirty.txt" 2>/dev/null; }
 doc_path() { /bin/cat "$(state_dir)/doc_path.txt" 2>/dev/null; }
 
-# Read a field out of a .pkgbuilderproj on disk. plister decides the format from
-# the extension, so the file is staged as .json first - the same rule the app
-# follows (design 12.2).
-field_of() {
-    /bin/rm -f "$OMCTEST_WORK/peek.json"
-    /bin/cp "$1" "$OMCTEST_WORK/peek.json"
-    pl get value "$OMCTEST_WORK/peek.json" "$2" 2>/dev/null
-}
+# Read a field out of a .pkgbuilderproj on disk, and out of the real file rather
+# than a copy of it. plister used to pick the format from the extension alone, so
+# this had to stage the document as .json first; it now falls back to the
+# content for any extension it does not know (design 12.2).
+field_of() { pl get value "$1" "$2" 2>/dev/null; }
 
 hash_of() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
 

@@ -569,9 +569,18 @@ new_document() {
 # foreign or malformed JSON file is rejected before it can half-replace the
 # model, so a failed open leaves the window showing what it showed before.
 #
-# The document is staged as .json before plister sees it. plister decides
-# between JSON and plist by file extension alone, and ".pkgbuilderproj" is
-# neither, so reading the document in place fails with no useful error.
+# The document is staged as .json before plister sees it, and that stays true
+# now that plister can read a .pkgbuilderproj in place (design 12.2). The
+# staging does two jobs the in-place read does not:
+#
+#   - it is what makes the rejection total. The probe runs on the copy, so a
+#     foreign file has not touched the live model at the point it fails, and the
+#     adoption is a single mv rather than a cp that can half-finish.
+#   - ".json" forces the JSON parse. The model pipeline is JSON throughout, so a
+#     .pkgbuilderproj that happened to hold a plist has to be refused HERE. Read
+#     in place it would parse, pass this probe, and land in model.json, where
+#     every later read fails because that name forces JSON - a document that
+#     opens blank instead of one that is honestly refused.
 load_document() {
     local path="$1"
     [ -f "$path" ] || return 1
@@ -1774,8 +1783,9 @@ fill_project_fields_from_artifact() {
 # ActionUI builds the context as {"items":[String],"location":{...}} and
 # serializes it with NSJSONSerialization, so the paths carry JSON escaping and
 # may contain anything a filename may contain. It is parsed with plister rather
-# than with grep for that reason - and plister goes by file extension, so the
-# context is staged as .json first (design 12.2).
+# than with grep for that reason - and plister parses files, not strings, so the
+# context is written out first. The name is .json because the content is JSON,
+# not to work around anything.
 #
 # DropHelper resolves each item to a plain filesystem path (URL(string:)?.path),
 # but an older engine handed over a "file://" URL, so both are accepted.

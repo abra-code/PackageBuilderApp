@@ -18,11 +18,8 @@ check "bool_str true"            "true"                      "$(pb_call bool_str
 check "bool_str false"           "false"                     "$(pb_call bool_str 0)"
 reset_state
 bools="$(work_copy Sample.pkgbuilderproj Bools.pkgbuilderproj)"
-/bin/rm -f "$OMCTEST_WORK/bools.json"
-/bin/cp "$bools" "$OMCTEST_WORK/bools.json"
-pl set bool false "$OMCTEST_WORK/bools.json" /SIGNING/ENABLED >/dev/null 2>&1
-pl set bool true "$OMCTEST_WORK/bools.json" /COMPONENTS/0/RELOCATABLE >/dev/null 2>&1
-/bin/cp "$OMCTEST_WORK/bools.json" "$bools"
+pl set bool false "$bools" /SIGNING/ENABLED >/dev/null 2>&1
+pl set bool true "$bools" /COMPONENTS/0/RELOCATABLE >/dev/null 2>&1
 omc_object "$bools"
 omc_run PackageBuilder.main.init
 check "signing read as false"    "false"                     "$(pb_call model_get_bool_str /SIGNING/ENABLED)"
@@ -226,18 +223,14 @@ race="$(work_copy Sample.pkgbuilderproj Race.pkgbuilderproj)"
 omc_object "$race"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $NAME_ID "my unsaved edit"
-/bin/rm -f "$OMCTEST_WORK/race.json"
-/bin/cp "$race" "$OMCTEST_WORK/race.json"
-pl set string "theirs" "$OMCTEST_WORK/race.json" /PROJECT/NAME >/dev/null 2>&1
-/bin/cp "$OMCTEST_WORK/race.json" "$race"
+pl set string "theirs" "$race" /PROJECT/NAME >/dev/null 2>&1
 alerts_reset
 alert_answer 255
 omc_run PackageBuilder.window.activated
 check "edits survived"           "my unsaved edit"           "$(model /PROJECT/NAME)"
 # Keeping this window's changes adopts the on-disk hash, so the same question is
 # not asked on every activation - a further change on disk asks again.
-pl set string "theirs again" "$OMCTEST_WORK/race.json" /PROJECT/NAME >/dev/null 2>&1
-/bin/cp "$OMCTEST_WORK/race.json" "$race"
+pl set string "theirs again" "$race" /PROJECT/NAME >/dev/null 2>&1
 alert_answer 1
 omc_run PackageBuilder.window.activated
 check "explicit reload works"    "theirs again"              "$(model /PROJECT/NAME)"
