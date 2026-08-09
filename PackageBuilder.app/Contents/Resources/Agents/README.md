@@ -57,8 +57,19 @@ pkgbuilder new <doc.pkgbld> --name <N> --identifier <ID>
 
 `--name` and `--identifier` are required; everything else has the same default the
 app's New Document has. The artifacts and output folders are stored relative to the
-document when they sit below it, exactly as the window stores them. Prints the
-document path on stdout.
+document when they sit below it, exactly as the window stores them.
+
+A destination with no extension gets `.pkgbld`; one you spelled yourself is kept
+as it is, whatever it is. A path that names a directory - ending in `/`, or `.`,
+or `..` - is refused rather than turned into a hidden `.pkgbld` inside it.
+
+Prints the path actually written on stdout. Capture that rather than reassembling
+the name, because it is what every later command needs:
+
+```sh
+DOC=$(pkgbuilder new ~/widget --name widget --identifier com.example.pkg.widget)
+# DOC is now ~/widget.pkgbld
+```
 
 ### add-payload - add an artifact
 
@@ -187,6 +198,9 @@ run next. This is what puts the packaging step on a CI machine with no GUI sessi
 ```
 pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbld> [--force]
 ```
+
+The destination follows the same rule as `new`: `.pkgbld` when you spelled no
+extension, otherwise left alone, and the path written is printed.
 
 Maps a Packages.app `.pkgproj` into a PackageBuilder document: settings, install
 location, the payload hierarchy, the readme, and the build path. What Packages

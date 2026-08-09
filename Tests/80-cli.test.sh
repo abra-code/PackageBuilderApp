@@ -679,6 +679,69 @@ check "the artifacts folder survives" "1"                     "$(/usr/bin/grep -
 check "the clean source is tokenized" '${ARTIFACTS_DIR}/w1'   "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbld" /COMPONENTS/0/PAYLOAD/0/SOURCE 2>/dev/null)"
 check "and so is the other one"      '${ARTIFACTS_DIR}/w2'    "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbld" /COMPONENTS/0/PAYLOAD/1/SOURCE 2>/dev/null)"
 
+section "149. a created document gets .pkgbld only when none was spelled"
+# The window's Save As forces the extension onto whatever was typed; a command
+# line is a deliberate path, so an extension the caller spelled is kept. What
+# every case has in common is that the printed path is the path written - the
+# documented workflow captures it and feeds it to every later command.
+ext="$OMCTEST_WORK/ext"; /bin/rm -rf "$ext"; /bin/mkdir -p "$ext/v1.2"
+new_ext() { pbcli new "$1" --name E --identifier com.example.ext --no-signing 2>/dev/null; }
+
+check "bare name gets one"       "$ext/bare.pkgbld"           "$(new_ext "$ext/bare")"
+check_exists "and that is the file" "$ext/bare.pkgbld"
+check "a spelled one is kept"    "$ext/named.pkgbld"          "$(new_ext "$ext/named.pkgbld")"
+check "so is a foreign one"      "$ext/thing.json"            "$(new_ext "$ext/thing.json")"
+check "and an upper-case one"    "$ext/loud.PKGBLD"           "$(new_ext "$ext/loud.PKGBLD")"
+# A dot in a parent directory is not the leaf's extension, and a leading dot
+# marks a hidden file rather than one.
+check "a dotted parent is not it" "$ext/v1.2/deep.pkgbld"     "$(new_ext "$ext/v1.2/deep")"
+check "a hidden name has none"   "$ext/.tucked.pkgbld"        "$(new_ext "$ext/.tucked")"
+check "a hidden one can have one" "$ext/.shown.pkgbld"        "$(new_ext "$ext/.shown.pkgbld")"
+
+# The settled name is what the existence check tests, or "new" would overwrite a
+# document it just refused to name.
+pbcli new "$ext/bare" --name E --identifier com.example.ext --no-signing > "$ext/again.txt" 2>&1
+check "the settled name collides" "1"                         "$?"
+check "and it said which file"   "1"                          "$(/usr/bin/grep -c 'bare.pkgbld already exists' "$ext/again.txt" | /usr/bin/tr -d ' ')"
+
+# A path that names a directory is refused, not appended to. Appending would
+# make "dir/.pkgbld", which LaunchServices does not claim - and it would slip
+# past the existence guard above, because the directory exists and that name
+# does not.
+/bin/mkdir -p "$ext/adir"
+pbcli new "$ext/adir/" --name E --identifier com.example.ext --no-signing > "$ext/dir.txt" 2>&1
+check "a trailing slash is refused" "1"                       "$?"
+check "and said why"             "1"                          "$(/usr/bin/grep -c 'names a directory, not a document' "$ext/dir.txt" | /usr/bin/tr -d ' ')"
+check "no hidden file was made"  ""                           "$(/bin/ls -A "$ext/adir")"
+( cd "$ext/adir" && pbcli new . --name E --identifier com.example.ext --no-signing ) >/dev/null 2>&1
+check "a bare dot is refused"    "1"                          "$?"
+( cd "$ext/adir" && pbcli new .. --name E --identifier com.example.ext --no-signing ) >/dev/null 2>&1
+check "and so is dot-dot"        "1"                          "$?"
+check "neither wrote anything"   ""                           "$(/bin/ls -A "$ext/adir")"
+# Usage errors still win over the path complaint, so --help and a missing --name
+# answer the way they always did.
+pbcli new "$ext/adir/" --name E > "$ext/order.txt" 2>&1
+check "a usage error comes first" "1"                         "$(/usr/bin/grep -c 'identifier is required' "$ext/order.txt" | /usr/bin/tr -d ' ')"
+
+# import-pkgproj creates a document too, and follows the same rules.
+/bin/cat > "$ext/src.json" <<EXTIMP
+{"PACKAGES":[{"PACKAGE_SETTINGS":{"NAME":"ext","VERSION":"1.0","IDENTIFIER":"com.example.ext"}}]}
+EXTIMP
+/usr/bin/plutil -convert xml1 -o "$ext/Src.pkgproj" "$ext/src.json" >/dev/null 2>&1
+check "import settles it too"    "$ext/imported.pkgbld"       "$(pbcli import-pkgproj "$ext/Src.pkgproj" "$ext/imported" 2>/dev/null)"
+check_exists "and wrote there"   "$ext/imported.pkgbld"
+# The settled name is what import's existence check tests as well.
+pbcli import-pkgproj "$ext/Src.pkgproj" "$ext/imported" > "$ext/imp2.txt" 2>&1
+check "import collides on it"    "1"                          "$?"
+check "and named that file"      "1"                          "$(/usr/bin/grep -c 'imported.pkgbld already exists' "$ext/imp2.txt" | /usr/bin/tr -d ' ')"
+# A forgotten destination must not let the option become the document name.
+pbcli import-pkgproj "$ext/Src.pkgproj" --force > "$ext/imp3.txt" 2>&1
+check "a bare option is refused" "2"                          "$?"
+# The whole listing, not the one name that was predicted: without the guard the
+# write fails at mv, so "--force.pkgbld" never appears and only the landing file
+# "--force.pkgbld.pkgbuilder.<pid>" is left behind.
+check "and left nothing behind" ""                            "$(/bin/ls -A "$ext" | /usr/bin/grep '^--')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 

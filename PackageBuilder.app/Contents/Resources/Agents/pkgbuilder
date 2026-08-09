@@ -134,6 +134,49 @@ require_document() {
     return 0
 }
 
+# Where "new" and "import-pkgproj" will actually write, once the extension is
+# settled. Set rather than printed: a destination ending in a newline would lose
+# it to command substitution, and this has to survive any name the caller gives.
+document_destination=""
+
+# Give a created document the .pkgbld extension when the caller did not spell
+# one. This deliberately differs from the window's Save As, which forces .pkgbld
+# onto whatever was typed: a path typed into a save panel is a name, but a path
+# passed on a command line is a deliberate choice, so an extension the caller
+# did spell is left exactly as it is.
+#
+# Only the last component can carry an extension, and a leading dot marks a
+# hidden file rather than one, so "/opt/v1.2/widget" and ".widget" both count as
+# having none. The extension also has to be non-empty, so a trailing dot is not
+# mistaken for one.
+#
+# A path whose last component is empty, "." or ".." names a directory, and is
+# refused rather than appended to. Appending would produce "dir/.pkgbld" - a
+# hidden file whose whole name is the extension, which LaunchServices does not
+# claim, so it is exactly the unopenable document this function exists to
+# prevent. It would also be silent: the caller's own "already exists" guard
+# tests the settled path, and while "dir/" exists, "dir/.pkgbld" does not, so a
+# command that used to refuse a directory would write into it instead.
+#
+# Arguments: destination path. Sets document_destination. Returns non-zero, with
+# a diagnostic, when the path cannot name a document.
+settle_destination() {
+    local path="$1"
+    local base="${path##*/}"
+    case "$base" in
+        ''|.|..)
+            printf 'pkgbuilder: %s names a directory, not a document\n' "$path" >&2
+            document_destination=""
+            return 1
+            ;;
+    esac
+    case "${base#.}" in
+        ?*.?*) document_destination="$path" ;;
+        *)     document_destination="$path.pkgbld" ;;
+    esac
+    return 0
+}
+
 # Copy this run's model back out to a path, through a temp file and a rename so
 # an interrupted write cannot truncate the caller's document.
 write_document() {
@@ -218,6 +261,8 @@ Usage:
   pkgbuilder schema
 
 Diagnostics go to stderr; capturable results go to stdout.
+"new" and "import-pkgproj" add .pkgbld when the destination has no extension,
+and keep one you spelled. Either way they print the path actually written.
 Exit: 0 ok, 2 warnings or usage error, 1 errors. See README.md for details.
 USAGE
 }
@@ -250,6 +295,13 @@ cmd_new() {
     done
     [ -n "$name" ] || { fail_usage "new: --name is required"; return 2; }
     [ -n "$identifier" ] || { fail_usage "new: --identifier is required"; return 2; }
+    # Settled before anything acts on the path: the existence check has to test
+    # the file that will really be written, set_doc_path has to record it, and
+    # the caller captures the printed path and passes it to every later command.
+    # It comes after the option loop so "-h" and a missing --name still answer
+    # with usage rather than with a complaint about the path.
+    settle_destination "$destination" || return 1
+    destination="$document_destination"
     if [ -e "$destination" ] && [ "$force" != "1" ]; then
         printf 'pkgbuilder: %s already exists; pass --force to replace it\n' "$destination" >&2
         return 1
@@ -826,11 +878,18 @@ cmd_import_pkgproj() {
             *) fail_usage "import-pkgproj: unknown option: $1"; return 2 ;;
         esac
     done
-    [ -n "$destination" ] || { fail_usage "import-pkgproj: <in.pkgproj> and <out.pkgbld> are required"; return 2; }
+    # "-*" as well as empty, matching "new": with only an emptiness test, a
+    # forgotten destination let the option itself become the document name.
+    case "$destination" in
+        ''|-*) fail_usage "import-pkgproj: <in.pkgproj> and <out.pkgbld> are required"; return 2 ;;
+    esac
     if [ ! -f "$source_path" ]; then
         printf 'pkgbuilder: no such project: %s\n' "$source_path" >&2
         return 1
     fi
+    # As in "new", and for the same three reasons.
+    settle_destination "$destination" || return 1
+    destination="$document_destination"
     if [ -e "$destination" ] && [ "$force" != "1" ]; then
         printf 'pkgbuilder: %s already exists; pass --force to replace it\n' "$destination" >&2
         return 1
