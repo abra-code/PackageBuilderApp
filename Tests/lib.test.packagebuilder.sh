@@ -54,10 +54,10 @@ payload_field() { model "/COMPONENTS/0/PAYLOAD/$1/$2"; }
 dirty() { /bin/cat "$(state_dir)/dirty.txt" 2>/dev/null; }
 doc_path() { /bin/cat "$(state_dir)/doc_path.txt" 2>/dev/null; }
 
-# Read a field out of a .pkgbuilderproj on disk, and out of the real file rather
-# than a copy of it. plister used to pick the format from the extension alone, so
-# this had to stage the document as .json first; it now falls back to the
-# content for any extension it does not know (design 12.2).
+# Read a field out of a .pkgbld on disk, and out of the real file rather than a
+# copy of it. plister used to pick the format from the extension alone, so this
+# had to stage the document as .json first; it now falls back to the content for
+# any extension it does not know (design 12.2).
 field_of() { pl get value "$1" "$2" 2>/dev/null; }
 
 hash_of() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
@@ -124,7 +124,7 @@ setup_replay_project() {
     printf '{\\rtf1\\ansi readme}\n' > "$OMCTEST_WORK/replay-readme.rtf"
     omc_object ""
     omc_run PackageBuilder.main.init
-    omc_dialog_answer save_as "$OMCTEST_WORK/replay.pkgbuilderproj"
+    omc_dialog_answer save_as "$OMCTEST_WORK/replay.pkgbld"
     omc_run PackageBuilder.save.as
     omc_dialog_answer choose_folder "$artifacts_dir"
     omc_run PackageBuilder.choose.artifacts

@@ -8,7 +8,7 @@
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 
-sample="$(fixture_copy Sample.pkgbuilderproj)"
+sample="$(fixture_copy Sample.pkgbld)"
 
 section "18. toggles are pushed as true/false, not 1/0 (C1)"
 # ActionUI Bool elements accept only "true"/"false" through
@@ -17,7 +17,7 @@ section "18. toggles are pushed as true/false, not 1/0 (C1)"
 check "bool_str true"            "true"                      "$(pb_call bool_str 1)"
 check "bool_str false"           "false"                     "$(pb_call bool_str 0)"
 reset_state
-bools="$(work_copy Sample.pkgbuilderproj Bools.pkgbuilderproj)"
+bools="$(work_copy Sample.pkgbld Bools.pkgbld)"
 pl set bool false "$bools" /SIGNING/ENABLED >/dev/null 2>&1
 pl set bool true "$bools" /COMPONENTS/0/RELOCATABLE >/dev/null 2>&1
 omc_object "$bools"
@@ -29,10 +29,10 @@ section "19. a document missing whole subtrees is normalized on load (M2)"
 # plister "set" cannot create intermediate containers, so without this an edit
 # into a missing subtree is silently dropped while the document reports dirty.
 reset_state
-printf '{"FORMAT_VERSION":1,"PROJECT":{"NAME":"partial"}}\n' > "$OMCTEST_WORK/Partial.pkgbuilderproj"
-omc_object "$OMCTEST_WORK/Partial.pkgbuilderproj"
+printf '{"FORMAT_VERSION":1,"PROJECT":{"NAME":"partial"}}\n' > "$OMCTEST_WORK/Partial.pkgbld"
+omc_object "$OMCTEST_WORK/Partial.pkgbld"
 omc_run PackageBuilder.main.init
-check "it did open"              "$OMCTEST_WORK/Partial.pkgbuilderproj" "$(doc_path)"
+check "it did open"              "$OMCTEST_WORK/Partial.pkgbld" "$(doc_path)"
 check "name preserved"           "partial"                   "$(model /PROJECT/NAME)"
 check "containers created"       "dict"                      "$(pl get type "$(model_file)" /DISTRIBUTION/RESOURCES 2>/dev/null)"
 check "install location default" "/"                         "$(model /COMPONENTS/0/INSTALL_LOCATION)"
@@ -42,8 +42,8 @@ check "and is dirty"             "1"                         "$(dirty)"
 
 section "20. out-of-range enum values are normalized (m4)"
 reset_state
-printf '{"FORMAT_VERSION":1,"COMPONENTS":[{"AUTH":1}],"DISTRIBUTION":{"CUSTOMIZE":"bogus"}}\n' > "$OMCTEST_WORK/Enum.pkgbuilderproj"
-omc_object "$OMCTEST_WORK/Enum.pkgbuilderproj"
+printf '{"FORMAT_VERSION":1,"COMPONENTS":[{"AUTH":1}],"DISTRIBUTION":{"CUSTOMIZE":"bogus"}}\n' > "$OMCTEST_WORK/Enum.pkgbld"
+omc_object "$OMCTEST_WORK/Enum.pkgbld"
 omc_run PackageBuilder.main.init
 check "AUTH integer 1 -> Root"   "Root"                      "$(model /COMPONENTS/0/AUTH)"
 check "bogus CUSTOMIZE -> never" "never"                     "$(model /DISTRIBUTION/CUSTOMIZE)"
@@ -65,12 +65,12 @@ reset_state
 omc_object "$sample"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $TITLE_ID "edited"
-/bin/mkdir -p "$OMCTEST_WORK/Directory.pkgbuilderproj"
-omc_dialog_answer save_as "$OMCTEST_WORK/Directory.pkgbuilderproj"
+/bin/mkdir -p "$OMCTEST_WORK/Directory.pkgbld"
+omc_dialog_answer save_as "$OMCTEST_WORK/Directory.pkgbld"
 omc_run PackageBuilder.save.as
 check "document still dirty"     "1"                         "$(dirty)"
 check "doc_path not moved"       "$sample"                   "$(doc_path)"
-check "nothing inside the dir"   ""                          "$(/bin/ls -A "$OMCTEST_WORK/Directory.pkgbuilderproj")"
+check "nothing inside the dir"   ""                          "$(/bin/ls -A "$OMCTEST_WORK/Directory.pkgbld")"
 check "hash still usable"        "yes"                       "$([ -n "$(/bin/cat "$(state_dir)/doc_hash.txt")" ] && echo yes || echo no)"
 
 section "23. a canceled Save As on the close path keeps the work (C3)"
@@ -98,7 +98,7 @@ pb_set loading ""
 
 section "25. a non-numeric trigger view id is refused (m9)"
 reset_state
-injection="$(work_copy Sample.pkgbuilderproj Injection.pkgbuilderproj)"
+injection="$(work_copy Sample.pkgbld Injection.pkgbld)"
 omc_object "$injection"
 omc_run PackageBuilder.main.init
 # The sink is an eval that interpolates the view id INSIDE double quotes
@@ -168,7 +168,7 @@ wait "$victim" 2>/dev/null
 
 section "28. close + Don't Save discards, close + Save keeps (M5)"
 reset_state
-close1="$(work_copy Sample.pkgbuilderproj Close1.pkgbuilderproj)"
+close1="$(work_copy Sample.pkgbld Close1.pkgbld)"
 omc_object "$close1"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $TITLE_ID "discard me"
@@ -179,7 +179,7 @@ check_absent "state discarded"   "$(state_dir)"
 check "file not written"         "replay"                    "$(field_of "$close1" /DISTRIBUTION/TITLE)"
 
 reset_state
-close2="$(work_copy Sample.pkgbuilderproj Close2.pkgbuilderproj)"
+close2="$(work_copy Sample.pkgbld Close2.pkgbld)"
 omc_object "$close2"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $TITLE_ID "keep me"
@@ -191,7 +191,7 @@ check_absent "state cleaned up"  "$(state_dir)"
 
 section "29. an alert that times out must not discard the work (M5)"
 reset_state
-close3="$(work_copy Sample.pkgbuilderproj Close3.pkgbuilderproj)"
+close3="$(work_copy Sample.pkgbld Close3.pkgbld)"
 omc_object "$close3"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $TITLE_ID "survives timeout"
@@ -203,9 +203,9 @@ check "saved rather than lost"   "survives timeout"          "$(field_of "$close
 section "30. a failed save on close strands the model, never deletes it (C3)"
 reset_state
 /bin/mkdir -p "$OMCTEST_WORK/ro"
-/bin/cp "$(fixture Sample.pkgbuilderproj)" "$OMCTEST_WORK/ro/Locked.pkgbuilderproj"
-/bin/chmod u+w "$OMCTEST_WORK/ro/Locked.pkgbuilderproj"
-omc_object "$OMCTEST_WORK/ro/Locked.pkgbuilderproj"
+/bin/cp "$(fixture Sample.pkgbld)" "$OMCTEST_WORK/ro/Locked.pkgbld"
+/bin/chmod u+w "$OMCTEST_WORK/ro/Locked.pkgbld"
+omc_object "$OMCTEST_WORK/ro/Locked.pkgbld"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $TITLE_ID "must not vanish"
 /bin/chmod 555 "$OMCTEST_WORK/ro"
@@ -219,7 +219,7 @@ check "the user was told"        "1"                         "$(alerts_mention '
 
 section "31. external-change alert failure keeps unsaved edits (M5)"
 reset_state
-race="$(work_copy Sample.pkgbuilderproj Race.pkgbuilderproj)"
+race="$(work_copy Sample.pkgbld Race.pkgbld)"
 omc_object "$race"
 omc_run PackageBuilder.main.init
 omc_fire PackageBuilder.field.changed $NAME_ID "my unsaved edit"

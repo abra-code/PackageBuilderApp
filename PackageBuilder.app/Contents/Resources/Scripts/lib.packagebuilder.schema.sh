@@ -29,8 +29,11 @@
 schema_errors=0
 schema_warnings=0
 
-# The file under inspection, staged under a .json name because plister decides
-# format by extension alone (design 12.2) and ".pkgbuilderproj" is neither.
+# The file under inspection, staged as a copy in the state directory so nothing
+# is written beside the user's document (design 8.4). The .json name is no
+# longer what makes plister read it - that falls back to the content for any
+# extension it does not know (design 12.2) - but it costs nothing and keeps the
+# staged file honest about what it holds.
 schema_file=""
 
 # Overridable by the caller: the CLI sends these to stderr, and a future
@@ -227,7 +230,7 @@ schema_check_payload_entry() {
 }
 
 # Check one file. Returns 1 when it found errors, 2 when only warnings, 0 clean.
-# Arguments: path to the .pkgbuilderproj
+# Arguments: path to the .pkgbld
 schema_check_document() {
     local document_path="$1"
     schema_errors=0
@@ -242,8 +245,8 @@ schema_check_document() {
         return 1
     fi
 
-    # Staged under .json for plister, and in the state directory so nothing is
-    # written beside the user's document (design 8.4).
+    # Staged in the state directory so nothing is written beside the user's
+    # document (design 8.4).
     schema_file="$(state_dir)/schema-check.json"
     /bin/rm -f "$schema_file"
     /bin/cp "$document_path" "$schema_file" || {

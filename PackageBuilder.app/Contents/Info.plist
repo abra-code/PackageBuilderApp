@@ -9,7 +9,7 @@
 		<dict>
 			<key>CFBundleTypeExtensions</key>
 			<array>
-				<string>pkgbuilderproj</string>
+				<string>pkgbld</string>
 			</array>
 			<key>CFBundleTypeIconFile</key>
 			<string>Tools</string>
@@ -84,7 +84,7 @@
 			<dict>
 				<key>public.filename-extension</key>
 				<array>
-					<string>pkgbuilderproj</string>
+					<string>pkgbld</string>
 				</array>
 			</dict>
 		</dict>

@@ -570,17 +570,17 @@ new_document() {
 # model, so a failed open leaves the window showing what it showed before.
 #
 # The document is staged as .json before plister sees it, and that stays true
-# now that plister can read a .pkgbuilderproj in place (design 12.2). The
-# staging does two jobs the in-place read does not:
+# now that plister can read a .pkgbld in place (design 12.2). The staging does
+# two jobs the in-place read does not:
 #
 #   - it is what makes the rejection total. The probe runs on the copy, so a
 #     foreign file has not touched the live model at the point it fails, and the
 #     adoption is a single mv rather than a cp that can half-finish.
 #   - ".json" forces the JSON parse. The model pipeline is JSON throughout, so a
-#     .pkgbuilderproj that happened to hold a plist has to be refused HERE. Read
-#     in place it would parse, pass this probe, and land in model.json, where
-#     every later read fails because that name forces JSON - a document that
-#     opens blank instead of one that is honestly refused.
+#     .pkgbld that happened to hold a plist has to be refused HERE. Read in
+#     place it would parse, pass this probe, and land in model.json, where every
+#     later read fails because that name forces JSON - a document that opens
+#     blank instead of one that is honestly refused.
 load_document() {
     local path="$1"
     [ -f "$path" ] || return 1
@@ -604,9 +604,17 @@ load_document() {
 # Arguments: path
 save_document() {
     local dest="$1"
-    case "$dest" in
-        *.pkgbuilderproj) ;;
-        *) dest="${dest}.pkgbuilderproj" ;;
+    # Case-insensitive, so a document the user opened as Widget.PKGBLD is saved
+    # back over itself instead of turning into Widget.PKGBLD.pkgbld and leaving
+    # the file they opened stale. LaunchServices matches an extension tag
+    # case-insensitively, so .PKGBLD really is one of these documents and really
+    # does reach here. The .pkg arms elsewhere enumerate their three plausible
+    # spellings; six characters is sixty-four, so fold instead. LC_ALL=C keeps
+    # tr to ASCII, and the X sentinel keeps command substitution from eating a
+    # trailing newline in the name and matching the wrong arm.
+    case "$(printf '%sX' "$dest" | LC_ALL=C /usr/bin/tr 'A-Z' 'a-z')" in
+        *.pkgbldx) ;;
+        *) dest="${dest}.pkgbld" ;;
     esac
     # A destination that exists as something other than a plain file must be
     # refused here: "mv -f file dir" moves the file *into* the directory and

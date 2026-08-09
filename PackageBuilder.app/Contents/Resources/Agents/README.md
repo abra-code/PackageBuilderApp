@@ -25,8 +25,8 @@ itself; just run it by path:
 
 ## The document
 
-A PackageBuilder project is a JSON file with the extension `.pkgbuilderproj`. The
-full format lives in `packagebuilder-schema.jsonc` beside this README - commented
+A PackageBuilder project is a JSON file with the extension `.pkgbld`. The full
+format lives in `packagebuilder-schema.jsonc` beside this README - commented
 pseudo-JSON giving every key with its type, default and constraint, which
 `pkgbuilder schema` prints. Read that file; the short version is:
 
@@ -49,7 +49,7 @@ the artifacts.
 ### new - start a document
 
 ```
-pkgbuilder new <doc.pkgbuilderproj> --name <N> --identifier <ID>
+pkgbuilder new <doc.pkgbld> --name <N> --identifier <ID>
                [--version <V>] [--min-os <V>] [--artifacts-dir <D>]
                [--output-dir <D>] [--install-location <L>] [--title <T>]
                [--identity <I>] [--no-signing] [--force]
@@ -95,8 +95,8 @@ rejects out-of-range enumerations (`AUTH`, `CUSTOMIZE`) and architecture names.
 The two architecture arrays take a comma-separated value:
 
 ```
-pkgbuilder set doc.pkgbuilderproj /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES arm64,x86_64
-pkgbuilder set doc.pkgbuilderproj /DISTRIBUTION/HOST_ARCHITECTURES arm64,x86_64
+pkgbuilder set doc.pkgbld /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES arm64,x86_64
+pkgbuilder set doc.pkgbld /DISTRIBUTION/HOST_ARCHITECTURES arm64,x86_64
 ```
 
 `get` with no key path prints the whole document; with one it prints that value, or
@@ -185,7 +185,7 @@ run next. This is what puts the packaging step on a CI machine with no GUI sessi
 ### import-pkgproj - convert a Packages.app project
 
 ```
-pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbuilderproj> [--force]
+pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbld> [--force]
 ```
 
 Maps a Packages.app `.pkgproj` into a PackageBuilder document: settings, install
@@ -210,7 +210,7 @@ running the command. Read it before writing a document by hand.
 ```sh
 PB="/Applications/PackageBuilder.app/Contents/Resources/Agents/pkgbuilder"
 
-DOC=$("$PB" new ~/widget.pkgbuilderproj \
+DOC=$("$PB" new ~/widget.pkgbld \
         --name widget --identifier com.example.pkg.widget \
         --version 2.0 --min-os 12.0 \
         --artifacts-dir ~/build --output-dir ~/dist \

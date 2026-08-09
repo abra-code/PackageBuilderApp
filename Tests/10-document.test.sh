@@ -8,7 +8,7 @@
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 
-sample="$(fixture_copy Sample.pkgbuilderproj)"
+sample="$(fixture_copy Sample.pkgbld)"
 
 section "1. open a document"
 reset_state
@@ -70,16 +70,28 @@ check "hash follows the save"    "$(hash_of "$sample")"      "$(/bin/cat "$(stat
 check "no temp file left behind" ""                          "$(/bin/ls -a "$OMCTEST_WORK" | /usr/bin/grep pbsaving)"
 
 section "9. Save As adopts the new path"
-omc_dialog_answer save_as "$OMCTEST_WORK/SavedAs.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/SavedAs.pkgbld"
 omc_run PackageBuilder.save.as
-check "doc_path moved"           "$OMCTEST_WORK/SavedAs.pkgbuilderproj" "$(doc_path)"
-check_exists "new file exists"   "$OMCTEST_WORK/SavedAs.pkgbuilderproj"
+check "doc_path moved"           "$OMCTEST_WORK/SavedAs.pkgbld" "$(doc_path)"
+check_exists "new file exists"   "$OMCTEST_WORK/SavedAs.pkgbld"
 check "original left alone"      "com.example.pkg.new"       "$(field_of "$sample" /COMPONENTS/0/IDENTIFIER)"
 
 section "10. Save As with no extension gets one"
 omc_dialog_answer save_as "$OMCTEST_WORK/NoExtension"
 omc_run PackageBuilder.save.as
-check "extension appended"       "$OMCTEST_WORK/NoExtension.pkgbuilderproj" "$(doc_path)"
+check "extension appended"       "$OMCTEST_WORK/NoExtension.pkgbld" "$(doc_path)"
+
+section "10b. an extension the user spelled in caps is left alone"
+# LaunchServices matches the extension tag case-insensitively, so Shouty.PKGBLD
+# opens as one of these documents. Appending to it would save to a second file
+# and leave the one the user opened stale.
+omc_dialog_answer save_as "$OMCTEST_WORK/Shouty.PKGBLD"
+omc_run PackageBuilder.save.as
+check "no second extension"      "$OMCTEST_WORK/Shouty.PKGBLD" "$(doc_path)"
+check_exists "and that is the file" "$OMCTEST_WORK/Shouty.PKGBLD"
+omc_dialog_answer save_as "$OMCTEST_WORK/Mixed.PkgBld"
+omc_run PackageBuilder.save.as
+check "mixed case too"           "$OMCTEST_WORK/Mixed.PkgBld" "$(doc_path)"
 
 section "11. a canceled Save As changes nothing"
 before="$(doc_path)"
@@ -88,7 +100,7 @@ omc_run PackageBuilder.save.as
 check "doc_path unchanged"       "$before"                   "$(doc_path)"
 
 section "12. a path with spaces and quotes survives"
-awkward="$OMCTEST_WORK/a project 'quoted' name.pkgbuilderproj"
+awkward="$OMCTEST_WORK/a project 'quoted' name.pkgbld"
 omc_dialog_answer save_as "$awkward"
 omc_run PackageBuilder.save.as
 check_exists "awkward path saved" "$awkward"
@@ -96,8 +108,8 @@ check "and adopted"              "$awkward"                  "$(doc_path)"
 
 section "13. a foreign file is refused"
 reset_state
-printf '{"hello":"world"}\n' > "$OMCTEST_WORK/Foreign.pkgbuilderproj"
-omc_object "$OMCTEST_WORK/Foreign.pkgbuilderproj"
+printf '{"hello":"world"}\n' > "$OMCTEST_WORK/Foreign.pkgbld"
+omc_object "$OMCTEST_WORK/Foreign.pkgbld"
 omc_run PackageBuilder.main.init
 # Both of these were assertions that the model is EMPTY, which is also what
 # "no model was built at all" looks like: deleting the fall-back to New left the
@@ -123,7 +135,7 @@ check_absent "state dir gone"    "$(state_dir)"
 
 section "16. external-change detection"
 reset_state
-watched="$(work_copy Sample.pkgbuilderproj Watched.pkgbuilderproj)"
+watched="$(work_copy Sample.pkgbld Watched.pkgbld)"
 omc_object "$watched"
 omc_run PackageBuilder.main.init
 omc_run PackageBuilder.window.activated

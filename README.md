@@ -29,8 +29,8 @@ PackageBuilder ends at a signed package and hands it over.
 
 ## The document
 
-A project is a `.pkgbuilderproj` file: plain JSON, meant to live in the
-repository next to the sources it packages, so a version bump is a one-line diff.
+A project is a `.pkgbld` file: plain JSON, meant to live in the repository next
+to the sources it packages, so a version bump is a one-line diff.
 
 ```json
 {

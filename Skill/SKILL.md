@@ -1,7 +1,7 @@
 ---
 name: packagebuilder
 description: >
-  Build, sign and verify macOS installer packages (.pkg) with PackageBuilder.app and its pkgbuilder CLI. Use when the user asks to create or edit a .pkgbuilderproj project, package a binary or app into a .pkg, verify payload artifacts before packaging, convert a Packages.app .pkgproj, export a standalone packaging script, or debug pkgbuild/productbuild/productsign/PackageInfo problems.
+  Build, sign and verify macOS installer packages (.pkg) with PackageBuilder.app and its pkgbuilder CLI. Use when the user asks to create or edit a .pkgbld project, package a binary or app into a .pkg, verify payload artifacts before packaging, convert a Packages.app .pkgproj, export a standalone packaging script, or debug pkgbuild/productbuild/productsign/PackageInfo problems.
 version: "1.0"
 ---
 
@@ -50,7 +50,7 @@ set incorrectly - so it is documentation to read, not a document to parse.
 PB="/Applications/PackageBuilder.app/Contents/Resources/Agents/pkgbuilder"
 
 # 1. Start a document. --name and --identifier are required.
-DOC=$("$PB" new ~/widget.pkgbuilderproj \
+DOC=$("$PB" new ~/widget.pkgbld \
         --name widget --identifier com.example.pkg.widget \
         --version 2.0 --min-os 12.0 \
         --artifacts-dir ~/build --output-dir ~/dist \
@@ -171,7 +171,7 @@ otherwise collapse to `/usr/local/bin/tool`, which very likely exists and is the
 
 ```sh
 # Convert an old Packages.app project.
-"$PB" import-pkgproj old.pkgproj new.pkgbuilderproj
+"$PB" import-pkgproj old.pkgproj new.pkgbld
 
 # Write a self-contained /bin/sh script that reproduces this package with no
 # dependency on PackageBuilder - for a CI machine with no GUI session.

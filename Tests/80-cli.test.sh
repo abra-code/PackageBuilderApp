@@ -27,10 +27,10 @@ check "the CLI is present"       "yes"                        "$([ -x "$cli_path
 # combination is the normal state of a project under construction and is
 # exactly what the two halves of validate are separated to express: no format
 # findings, unmet preconditions, exit 2 rather than 1.
-pbcli validate "$(fixture Sample.pkgbuilderproj)" >/dev/null 2>"$OMCTEST_WORK/cli/sample.txt"
+pbcli validate "$(fixture Sample.pkgbld)" >/dev/null 2>"$OMCTEST_WORK/cli/sample.txt"
 check "the sample is not an error" "2"                        "$?"
 check "and the format is clean"  "1"                          "$(/usr/bin/grep -c '0 error(s), 0 warning(s)' "$OMCTEST_WORK/cli/sample.txt" | /usr/bin/tr -d ' ')"
-/bin/cat > "$OMCTEST_WORK/cli/bad.pkgbuilderproj" <<'BAD'
+/bin/cat > "$OMCTEST_WORK/cli/bad.pkgbld" <<'BAD'
 { "FORMAT_VERSION": 1,
   "PROJECT": { "NAME": "w", "VERSION": "1.0", "ARTIFACT_DIR": "build" },
   "COMPONENTS": [ { "IDENTIFIER": "com.example.w", "RELOCATABLE": "false", "AUTH": "root",
@@ -41,7 +41,7 @@ check "and the format is clean"  "1"                          "$(/usr/bin/grep -
   "SIGNING": { "ENABLED": true, "INSTALLER_IDENTITY": "" } }
 BAD
 bad_report="$OMCTEST_WORK/cli/bad.txt"
-pbcli validate "$OMCTEST_WORK/cli/bad.pkgbuilderproj" > /dev/null 2> "$bad_report"
+pbcli validate "$OMCTEST_WORK/cli/bad.pkgbld" > /dev/null 2> "$bad_report"
 check "errors mean exit 1"       "1"                          "$?"
 check "a misspelled key is named" "1"                         "$(/usr/bin/grep -c 'unknown key "ARTIFACT_DIR"' "$bad_report" | /usr/bin/tr -d ' ')"
 check "a string bool is refused" "1"                          "$(/usr/bin/grep -c 'RELOCATABLE is string, expected bool' "$bad_report" | /usr/bin/tr -d ' ')"
@@ -51,15 +51,15 @@ check "a bad host arch is refused" "1"                        "$(/usr/bin/grep -
 check "a missing SOURCE is named" "1"                         "$(/usr/bin/grep -c 'payload entry 2 SOURCE is missing' "$bad_report" | /usr/bin/tr -d ' ')"
 # A file that is not a document at all stops at one message rather than
 # reporting every key in the format as missing.
-printf 'not json\n' > "$OMCTEST_WORK/cli/garbage.pkgbuilderproj"
-pbcli validate "$OMCTEST_WORK/cli/garbage.pkgbuilderproj" >/dev/null 2>"$OMCTEST_WORK/cli/garbage.txt"
+printf 'not json\n' > "$OMCTEST_WORK/cli/garbage.pkgbld"
+pbcli validate "$OMCTEST_WORK/cli/garbage.pkgbld" >/dev/null 2>"$OMCTEST_WORK/cli/garbage.txt"
 check "garbage exits 1"          "1"                          "$?"
 check "and says so once"         "1"                          "$(/usr/bin/grep -c 'is not a JSON object' "$OMCTEST_WORK/cli/garbage.txt" | /usr/bin/tr -d ' ')"
 
 section "135. the CLI constructs a document the app would have written"
 /bin/rm -rf "$OMCTEST_WORK/cli/build"; /bin/mkdir -p "$OMCTEST_WORK/cli/build" "$OMCTEST_WORK/cli/dist"
 /bin/cp /bin/echo "$OMCTEST_WORK/cli/build/widget"
-cli_doc="$OMCTEST_WORK/cli/Widget.pkgbuilderproj"
+cli_doc="$OMCTEST_WORK/cli/Widget.pkgbld"
 pbcli new "$cli_doc" --name widget --identifier com.example.pkg.widget --version 1.0 \
     --min-os 10.15 --artifacts-dir "$OMCTEST_WORK/cli/build" --output-dir "$OMCTEST_WORK/cli/dist" \
     --no-signing >/dev/null 2>&1
@@ -86,9 +86,9 @@ check "a non-boolean is refused" "1"                          "$?"
 check "and none of it landed"    "widget"                     "$(field_of "$cli_doc" /PROJECT/NAME)"
 pbcli set "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES "x86_64,arm64e" >/dev/null 2>&1
 check "an arch list is written"  "0"                          "$?"
-# Read straight out of the .pkgbuilderproj. The proof of concept staged a .json
-# copy here, because plister picked its format from the extension alone; it
-# falls back to the file's content now (design 12.2).
+# Read straight out of the .pkgbld. The proof of concept staged a .json copy
+# here, because plister picked its format from the extension alone; it falls
+# back to the file's content now (design 12.2).
 check "as an array of two"       "2"                          "$(pl get count "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES 2>/dev/null | /usr/bin/tr -d ' ')"
 check "with the names given"     "arm64e"                     "$(field_of "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES/1)"
 # And now that it has a payload and its artifacts are on this disk, the whole
@@ -144,7 +144,7 @@ section "138. a destination may not climb out of the staging root"
 # gate is a literal prefix test, so ".." passed it while naming somewhere else
 # entirely: a document could write anywhere the invoking user could, over
 # anything already there. Found in review, 2026-08-07.
-trav_doc="$OMCTEST_WORK/cli/trav.pkgbuilderproj"
+trav_doc="$OMCTEST_WORK/cli/trav.pkgbld"
 pbcli new "$trav_doc" --name Trav --identifier com.example.pkg.trav --version 1.0 \
     --artifacts-dir "$OMCTEST_WORK/cli/build" --output-dir "$OMCTEST_WORK/cli/dist" --no-signing >/dev/null 2>&1
 pbcli add-payload "$trav_doc" "$OMCTEST_WORK/cli/build/widget" >/dev/null 2>&1
@@ -199,10 +199,10 @@ pl append dict "$trav_proj" "$trav_root/CHILDREN/0/CHILDREN" 2>/dev/null || pl i
 pl insert TYPE integer 3 "$trav_proj" "$trav_root/CHILDREN/0/CHILDREN/0"
 pl insert PATH_TYPE integer 0 "$trav_proj" "$trav_root/CHILDREN/0/CHILDREN/0"
 pl insert PATH string "$OMCTEST_WORK/cli/build/widget" "$trav_proj" "$trav_root/CHILDREN/0/CHILDREN/0"
-/bin/rm -f "$OMCTEST_WORK/cli/imported.pkgbuilderproj"
-pbcli import-pkgproj "$trav_proj" "$OMCTEST_WORK/cli/imported.pkgbuilderproj" --force > "$OMCTEST_WORK/cli/trav-import.txt" 2>&1
+/bin/rm -f "$OMCTEST_WORK/cli/imported.pkgbld"
+pbcli import-pkgproj "$trav_proj" "$OMCTEST_WORK/cli/imported.pkgbld" --force > "$OMCTEST_WORK/cli/trav-import.txt" 2>&1
 check "import refuses the climb" "1"                          "$(/usr/bin/grep -c 'contains "\.\." and was refused' "$OMCTEST_WORK/cli/trav-import.txt" | /usr/bin/tr -d ' ')"
-check "and writes no document"   "no"                         "$([ -e "$OMCTEST_WORK/cli/imported.pkgbuilderproj" ] && echo yes || echo no)"
+check "and writes no document"   "no"                         "$([ -e "$OMCTEST_WORK/cli/imported.pkgbld" ] && echo yes || echo no)"
 
 # ".." is one spelling of a non-canonical path; "." and "//" are others, and
 # they defeat the nesting check the same way, without ever tripping the ".."
@@ -215,7 +215,7 @@ sym_escape="$OMCTEST_WORK/cli/ESCAPE"
 /bin/rm -rf "$sym_escape" "$OMCTEST_WORK/cli/build/d"; /bin/mkdir -p "$sym_escape" "$OMCTEST_WORK/cli/build/d"
 /bin/ln -s "$sym_escape" "$OMCTEST_WORK/cli/build/d/sub"
 printf 'payload\n' > "$OMCTEST_WORK/cli/build/pwned.txt"
-sym_doc="$OMCTEST_WORK/cli/symlink.pkgbuilderproj"
+sym_doc="$OMCTEST_WORK/cli/symlink.pkgbld"
 pbcli new "$sym_doc" --name Sym --identifier com.example.pkg.sym --version 1.0 \
     --artifacts-dir "$OMCTEST_WORK/cli/build" --output-dir "$OMCTEST_WORK/cli/dist" --no-signing >/dev/null 2>&1
 pbcli add-payload "$sym_doc" "$OMCTEST_WORK/cli/build/d" --destination /opt/demo/d --mode 0755 --no-verify >/dev/null 2>&1
@@ -236,7 +236,7 @@ section "139. an option at the end of the command line"
 # "shift 2" with one argument left shifts nothing and returns non-zero under
 # /bin/sh, so the option loop spun forever at full CPU with no output. A
 # truncated command line is an ordinary thing for an agent to produce.
-( pbcli new "$OMCTEST_WORK/cli/never.pkgbuilderproj" --name Foo --identifier com.x.y --version ) \
+( pbcli new "$OMCTEST_WORK/cli/never.pkgbld" --name Foo --identifier com.x.y --version ) \
     > "$OMCTEST_WORK/cli/trunc.txt" 2>&1 &
 trunc_pid=$!
 trunc_waited=0
@@ -252,9 +252,9 @@ else
     check "a truncated option exits" "yes"                    "yes"
 fi
 check "and says what was missing" "1"                         "$(/usr/bin/grep -c 'requires a value' "$OMCTEST_WORK/cli/trunc.txt" | /usr/bin/tr -d ' ')"
-check "no document was written"  "no"                         "$([ -e "$OMCTEST_WORK/cli/never.pkgbuilderproj" ] && echo yes || echo no)"
+check "no document was written"  "no"                         "$([ -e "$OMCTEST_WORK/cli/never.pkgbld" ] && echo yes || echo no)"
 # An option where a value belongs is a mistake, not a value.
-pbcli new "$OMCTEST_WORK/cli/never2.pkgbuilderproj" --name --force --identifier com.x.y > "$OMCTEST_WORK/cli/trunc2.txt" 2>&1
+pbcli new "$OMCTEST_WORK/cli/never2.pkgbld" --name --force --identifier com.x.y > "$OMCTEST_WORK/cli/trunc2.txt" 2>&1
 check "an option is not a value" "1"                          "$(/usr/bin/grep -c 'got the option' "$OMCTEST_WORK/cli/trunc2.txt" | /usr/bin/tr -d ' ')"
 
 section "140. set reports what actually happened"
@@ -271,13 +271,13 @@ check "and the write is there"   "root"                       "$(field_of "$cli_
 section "141. the verifier tells absent from present-and-empty"
 # "get value" prints nothing for an empty string, an empty dict and an empty
 # array alike, so testing the value reported {} and [] as clean.
-/bin/cp "$cli_doc" "$OMCTEST_WORK/cli/empty-enum.pkgbuilderproj"
-pl set dict "$OMCTEST_WORK/cli/empty-enum.pkgbuilderproj" /COMPONENTS/0/AUTH
-pbcli validate "$OMCTEST_WORK/cli/empty-enum.pkgbuilderproj" > "$OMCTEST_WORK/cli/empty-enum.txt" 2>&1
+/bin/cp "$cli_doc" "$OMCTEST_WORK/cli/empty-enum.pkgbld"
+pl set dict "$OMCTEST_WORK/cli/empty-enum.pkgbld" /COMPONENTS/0/AUTH
+pbcli validate "$OMCTEST_WORK/cli/empty-enum.pkgbld" > "$OMCTEST_WORK/cli/empty-enum.txt" 2>&1
 check "an empty dict where an enum goes" "1"                  "$(/usr/bin/grep -c 'AUTH is dict' "$OMCTEST_WORK/cli/empty-enum.txt" | /usr/bin/tr -d ' ')"
-/bin/cp "$cli_doc" "$OMCTEST_WORK/cli/empty-mode.pkgbuilderproj"
-pl set string "" "$OMCTEST_WORK/cli/empty-mode.pkgbuilderproj" /COMPONENTS/0/PAYLOAD/0/MODE
-pbcli validate "$OMCTEST_WORK/cli/empty-mode.pkgbuilderproj" > "$OMCTEST_WORK/cli/empty-mode.txt" 2>&1
+/bin/cp "$cli_doc" "$OMCTEST_WORK/cli/empty-mode.pkgbld"
+pl set string "" "$OMCTEST_WORK/cli/empty-mode.pkgbld" /COMPONENTS/0/PAYLOAD/0/MODE
+pbcli validate "$OMCTEST_WORK/cli/empty-mode.pkgbld" > "$OMCTEST_WORK/cli/empty-mode.txt" 2>&1
 check "an empty MODE"            "1"                          "$(/usr/bin/grep -c 'MODE "" must be three or four octal digits' "$OMCTEST_WORK/cli/empty-mode.txt" | /usr/bin/tr -d ' ')"
 
 section "142. a component script keeps its tokens through export"
@@ -324,7 +324,7 @@ canary_state() { /usr/bin/find "$trav/canary" | /usr/bin/sort; }
 canary_before="$(canary_state)"
 
 # (a) Case: "DIR" and "dir" are one directory on APFS.
-case_doc="$trav/Case.pkgbuilderproj"
+case_doc="$trav/Case.pkgbld"
 pbcli new "$case_doc" --name Case --identifier com.example.case --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$case_doc" "$trav/tree"     --destination /opt/demo/DIR --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$case_doc" "$trav/evil.txt" --destination /opt/demo/dir/escape/sub/PWNED.txt --mode 0644 >/dev/null 2>&1
@@ -342,7 +342,7 @@ check "nothing reached the canary" "$canary_before"           "$(canary_state)"
 # and they print identically, so the log is not a witness either.
 nfc="$(/usr/bin/python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "café"))')"
 nfd="$(/usr/bin/python3 -c 'import unicodedata; print(unicodedata.normalize("NFD", "café"))')"
-uni_doc="$trav/Uni.pkgbuilderproj"
+uni_doc="$trav/Uni.pkgbld"
 pbcli new "$uni_doc" --name Uni --identifier com.example.uni --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$uni_doc" "$trav/tree"     --destination "/opt/$nfc" --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$uni_doc" "$trav/evil.txt" --destination "/opt/$nfd/escape/sub/PWNED.txt" --mode 0644 >/dev/null 2>&1
@@ -356,7 +356,7 @@ check "nothing reached the canary" "$canary_before"           "$(canary_state)"
 # nesting precondition refuses the document long before staging, and this check
 # would pass without ever reaching the guard it names. Spelled this way the
 # parent resolves INSIDE the root (to opt/LEAF) and only the leaf is the escape.
-leaf_doc="$trav/Leaf.pkgbuilderproj"
+leaf_doc="$trav/Leaf.pkgbld"
 /bin/mkdir -p "$trav/dir2"; printf 'y\n' > "$trav/dir2/inner.txt"
 pbcli new "$leaf_doc" --name Leaf --identifier com.example.leaf --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$leaf_doc" "$trav/tree"  --destination /opt/LEAF --mode 0755 >/dev/null 2>&1
@@ -367,7 +367,7 @@ check "nothing reached the canary" "$canary_before"           "$(canary_state)"
 
 # Positive control: the same shape without the collision still builds. A guard
 # that refuses everything would pass every check above.
-good_doc="$trav/Good.pkgbuilderproj"
+good_doc="$trav/Good.pkgbld"
 pbcli new "$good_doc" --name Good --identifier com.example.good --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$good_doc" "$trav/tree"     --destination /opt/demo/one --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$good_doc" "$trav/evil.txt" --destination /opt/demo/two/file.txt --mode 0644 >/dev/null 2>&1
@@ -409,7 +409,7 @@ section "144. the exported script refuses what the app refuses"
 exp_dir="$trav/export"
 /bin/mkdir -p "$exp_dir"
 dots="/opt/../../../../../../../../../../../../../../../../../../../..$trav/canary/EXPORTED.txt"
-dots_doc="$trav/Dots.pkgbuilderproj"
+dots_doc="$trav/Dots.pkgbld"
 pbcli new "$dots_doc" --name Dots --identifier com.example.dots --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$dots_doc" "$trav/evil.txt" --destination "$dots" --mode 0644 >/dev/null 2>&1
 pbcli export-script "$dots_doc" "$exp_dir/dots.sh" >/dev/null 2>&1
@@ -431,7 +431,7 @@ check "nothing reached the canary" "$canary_before"           "$(canary_state)"
 # resolves the link, while "ditto" still writes straight through it.
 /bin/mkdir -p "$trav/tree2"
 printf 'PWNED\n' > "$trav/tree2/pwned.txt"
-nest_doc="$trav/Nest.pkgbuilderproj"
+nest_doc="$trav/Nest.pkgbld"
 pbcli new "$nest_doc" --name Nest --identifier com.example.nest --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$nest_doc" "$trav/tree"  --destination /opt/nest      --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$nest_doc" "$trav/tree2" --destination '/opt/nest/escape/' --mode 0755 >/dev/null 2>&1
@@ -459,7 +459,7 @@ section "145. a presentation resource must name a file"
 # model.json and the staging root mid-run.
 /bin/mkdir -p "$trav/rsrc/inner"
 printf 'readme\n' > "$trav/rsrc/README.txt"
-res_doc="$trav/Res.pkgbuilderproj"
+res_doc="$trav/Res.pkgbld"
 pbcli new "$res_doc" --name Res --identifier com.example.res --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$res_doc" "$trav/evil.txt" --destination /opt/res/f.txt --mode 0644 >/dev/null 2>&1
 pbcli set "$res_doc" /DISTRIBUTION/RESOURCES/README "$trav/rsrc/inner/.." >/dev/null 2>&1
@@ -489,7 +489,7 @@ section "146. the dry run plans the build that will actually happen"
 # staged_relative_path was called on an un-normalized destination here and on a
 # normalized one in the build, so a destination carrying "." or "//" printed one
 # path and staged another.
-dry_doc="$trav/Dry.pkgbuilderproj"
+dry_doc="$trav/Dry.pkgbld"
 pbcli new "$dry_doc" --name Dry --identifier com.example.dry --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$dry_doc" "$trav/evil.txt" --destination '/opt/./dry//f.txt' --mode 0644 >/dev/null 2>&1
 # The dry run stops at the preconditions before it ever prints a plan, so the
@@ -513,7 +513,7 @@ section "146b. the trailing-slash leaf guard, on a vector that reaches it"
 # the parent legitimately resolves inside the root, and the trailing slash is
 # then the only thing standing between "[ -L ]" and the symlink.
 /bin/mkdir -p "$trav/dir3"; printf 'inner\n' > "$trav/dir3/inner.txt"
-slash_doc="$trav/Slash.pkgbuilderproj"
+slash_doc="$trav/Slash.pkgbld"
 pbcli new "$slash_doc" --name Slash --identifier com.example.slash --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$slash_doc" "$trav/tree" --destination /opt/SLASH --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$slash_doc" "$trav/dir3" --destination '/opt/slash/escape/' --mode 0755 >/dev/null 2>&1
@@ -543,7 +543,7 @@ section "146c. a line break cannot hide a nesting destination"
 # it compare a truncated string and let a nesting document build - breaking the
 # invariant the generator's own header asserts, one round after it was closed.
 nl_dest="/opt/$(printf 'D\nX')"
-nl_doc="$trav/Newline.pkgbuilderproj"
+nl_doc="$trav/Newline.pkgbld"
 pbcli new "$nl_doc" --name NL --identifier com.example.nl --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$nl_doc" "$trav/tree"     --destination "$nl_dest"           --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$nl_doc" "$trav/evil.txt" --destination "$nl_dest/sub/x.txt" --mode 0644 >/dev/null 2>&1
@@ -562,7 +562,7 @@ section "146d. presentation resources collide the way the file system does"
 /bin/mkdir -p "$trav/ra" "$trav/rb"
 printf 'the readme\n' > "$trav/ra/README.txt"
 printf 'the license\n' > "$trav/rb/readme.txt"
-fold_doc="$trav/Fold.pkgbuilderproj"
+fold_doc="$trav/Fold.pkgbld"
 pbcli new "$fold_doc" --name Fold --identifier com.example.fold --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$fold_doc" "$trav/evil.txt" --destination /opt/fold/f.txt --mode 0644 >/dev/null 2>&1
 pbcli set "$fold_doc" /DISTRIBUTION/RESOURCES/README  "$trav/ra/README.txt" >/dev/null 2>&1
@@ -583,7 +583,7 @@ section "146e. two destinations that name one directory are refused"
 # the same class as 146d one rung along. The comparison now asks the file system
 # what spelling it will actually use.
 /bin/mkdir -p "$trav/cf1"; printf 'one\n' > "$trav/cf1/one.txt"
-cf_doc="$trav/Case2.pkgbuilderproj"
+cf_doc="$trav/Case2.pkgbld"
 pbcli new "$cf_doc" --name Case2 --identifier com.example.case2 --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$cf_doc" "$trav/cf1"      --destination /opt/CFDIR         --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$cf_doc" "$trav/evil.txt" --destination /opt/cfdir/two.txt --mode 0644 >/dev/null 2>&1
@@ -591,7 +591,7 @@ pbcli validate "$cf_doc" > "$trav/cf.txt" 2>&1
 check "a case-variant nesting is refused" "1"                 "$(/usr/bin/grep -c 'installs inside item 1' "$trav/cf.txt" | /usr/bin/tr -d ' ')"
 nfc2="$(/usr/bin/python3 -c 'import unicodedata; print(unicodedata.normalize("NFC", "café"))')"
 nfd2="$(/usr/bin/python3 -c 'import unicodedata; print(unicodedata.normalize("NFD", "café"))')"
-nfd_doc="$trav/Nfd.pkgbuilderproj"
+nfd_doc="$trav/Nfd.pkgbld"
 pbcli new "$nfd_doc" --name Nfd --identifier com.example.nfd --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$nfd_doc" "$trav/cf1"      --destination "/opt/$nfc2"         --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$nfd_doc" "$trav/evil.txt" --destination "/opt/$nfd2/two.txt" --mode 0644 >/dev/null 2>&1
@@ -599,7 +599,7 @@ pbcli validate "$nfd_doc" > "$trav/nfd2.txt" 2>&1
 check "and an NFC-vs-NFD one"     "1"                         "$(/usr/bin/grep -c 'installs inside item 1' "$trav/nfd2.txt" | /usr/bin/tr -d ' ')"
 # Positive control: two destinations that genuinely differ must still build, or a
 # gate that refused everything would pass both checks above.
-ok_doc="$trav/CaseOK.pkgbuilderproj"
+ok_doc="$trav/CaseOK.pkgbld"
 pbcli new "$ok_doc" --name CaseOK --identifier com.example.caseok --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$ok_doc" "$trav/cf1"      --destination /opt/ok/one     --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$ok_doc" "$trav/evil.txt" --destination /opt/ok/two.txt --mode 0644 >/dev/null 2>&1
@@ -612,7 +612,7 @@ section "147. the exported script and the app agree, and keep agreeing"
 # the app rather than fresh mistakes, so these check the AGREEMENT rather than
 # any one spelling - that is the property that keeps being broken.
 /bin/mkdir -p "$trav/plain"; printf 'a\n' > "$trav/plain/a.txt"
-nest2_doc="$trav/Nest2.pkgbuilderproj"
+nest2_doc="$trav/Nest2.pkgbld"
 pbcli new "$nest2_doc" --name Nest2 --identifier com.example.nest2 --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$nest2_doc" "$trav/plain"    --destination /opt/plain --mode 0755 >/dev/null 2>&1
 pbcli add-payload "$nest2_doc" "$trav/evil.txt" --destination /opt/plain/sub/x.txt --mode 0644 >/dev/null 2>&1
@@ -625,7 +625,7 @@ pbcli export-script "$nest2_doc" "$exp_dir/nest2.sh" >/dev/null 2>&1
 check "and so does its exported script" "1"                   "$(/usr/bin/grep -c 'installs inside' "$trav/nest2-run.txt" | /usr/bin/tr -d ' ')"
 check "which did not reach DONE"  "0"                         "$(/usr/bin/grep -c '== DONE ==' "$trav/nest2-run.txt" | /usr/bin/tr -d ' ')"
 # The same destination twice is refused by both as well.
-dup_doc="$trav/Dup.pkgbuilderproj"
+dup_doc="$trav/Dup.pkgbld"
 pbcli new "$dup_doc" --name Dup --identifier com.example.dup --version 1.0 >/dev/null 2>&1
 pbcli add-payload "$dup_doc" "$trav/evil.txt" --destination /opt/d/f.txt --mode 0644 >/dev/null 2>&1
 pbcli add-payload "$dup_doc" "$trav/tree2/pwned.txt" --destination /opt/d/f.txt --mode 0644 >/dev/null 2>&1
@@ -674,10 +674,10 @@ section '148. importing a source that carries ".."'
  "PROJECT":{"PROJECT_SETTINGS":{"BUILD_PATH":{"PATH":"build","PATH_TYPE":1}}}}
 IMPDOTS
 /usr/bin/plutil -convert xml1 -o "$OMCTEST_WORK/impdots/Fx.pkgproj" "$OMCTEST_WORK/impdots/fx.json" >/dev/null 2>&1
-pbcli import-pkgproj "$OMCTEST_WORK/impdots/Fx.pkgproj" "$OMCTEST_WORK/impdots/Out.pkgbuilderproj" --force > "$OMCTEST_WORK/impdots/run.txt" 2>&1
+pbcli import-pkgproj "$OMCTEST_WORK/impdots/Fx.pkgproj" "$OMCTEST_WORK/impdots/Out.pkgbld" --force > "$OMCTEST_WORK/impdots/run.txt" 2>&1
 check "the artifacts folder survives" "1"                     "$(/usr/bin/grep -c 'artifacts folder:' "$OMCTEST_WORK/impdots/run.txt" | /usr/bin/tr -d ' ')"
-check "the clean source is tokenized" '${ARTIFACTS_DIR}/w1'   "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbuilderproj" /COMPONENTS/0/PAYLOAD/0/SOURCE 2>/dev/null)"
-check "and so is the other one"      '${ARTIFACTS_DIR}/w2'    "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbuilderproj" /COMPONENTS/0/PAYLOAD/1/SOURCE 2>/dev/null)"
+check "the clean source is tokenized" '${ARTIFACTS_DIR}/w1'   "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbld" /COMPONENTS/0/PAYLOAD/0/SOURCE 2>/dev/null)"
+check "and so is the other one"      '${ARTIFACTS_DIR}/w2'    "$(pbcli get "$OMCTEST_WORK/impdots/Out.pkgbld" /COMPONENTS/0/PAYLOAD/1/SOURCE 2>/dev/null)"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"

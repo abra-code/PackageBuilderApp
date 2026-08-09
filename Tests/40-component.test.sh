@@ -17,7 +17,7 @@ section "51. a component package is built from the payload"
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Build.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Build.pkgbld"
 omc_run PackageBuilder.save.as
 omc_dialog_answer choose_folder "$artifacts"
 omc_run PackageBuilder.choose.artifacts
@@ -186,7 +186,7 @@ section "68. reordering preserves an architecture list the checkbox cannot expre
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Swap.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Swap.pkgbld"
 omc_run PackageBuilder.save.as
 omc_dialog_answer choose_folder "$artifacts"
 omc_run PackageBuilder.choose.artifacts
@@ -229,7 +229,7 @@ PLIST
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Fw.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Fw.pkgbld"
 omc_run PackageBuilder.save.as
 omc_dialog_answer choose_folder "$artifacts"
 omc_run PackageBuilder.choose.artifacts
@@ -247,7 +247,7 @@ section "70. a lock left by a dead handler does not wedge the window"
 # outright, so it never ran: any handler killed while holding the lock made
 # every later edit in that window fail with "Busy" until it was closed.
 reset_state
-wedged="$(work_copy Sample.pkgbuilderproj Wedged.pkgbuilderproj)"
+wedged="$(work_copy Sample.pkgbld Wedged.pkgbld)"
 omc_object "$wedged"
 omc_run PackageBuilder.main.init
 dead_pid="$(/bin/sh -c 'echo $$')"
@@ -270,7 +270,7 @@ section '71. an unset ${ARTIFACTS_DIR} never resolves onto a real system path'
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/NoArtifacts.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/NoArtifacts.pkgbld"
 omc_run PackageBuilder.save.as
 # The collapsed path has to be a bundle that CARRIES a version and a minimum
 # OS. The proof of concept used ${ARTIFACTS_DIR}/bin/echo, which collapses to

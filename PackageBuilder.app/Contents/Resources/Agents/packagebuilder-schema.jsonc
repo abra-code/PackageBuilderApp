@@ -1,4 +1,4 @@
-// PackageBuilder project document - the format of a .pkgbuilderproj file.
+// PackageBuilder project document - the format of a .pkgbld file.
 //
 // This file is documentation, not a parseable document: the comments make it
 // pseudo-JSON. A real document is plain JSON with the same keys. Every key
@@ -7,7 +7,7 @@
 // reports unknown keys.
 //
 // Print it with:  pkgbuilder schema
-// Check a document against it with:  pkgbuilder validate <doc.pkgbuilderproj>
+// Check a document against it with:  pkgbuilder validate <doc.pkgbld>
 // Write to it with:  pkgbuilder set <doc> <keypath> <value>   (validates types)
 
 {

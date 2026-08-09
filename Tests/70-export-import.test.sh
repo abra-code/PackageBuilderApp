@@ -223,7 +223,7 @@ section "126. Import Packages.app Project maps the document across"
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Imported.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Imported.pkgbld"
 omc_run PackageBuilder.save.as
 /bin/rm -rf "$OMCTEST_WORK/pkgimport"
 /bin/mkdir -p "$OMCTEST_WORK/pkgimport/archives/alpha.xcarchive/Products/usr/local/bin" \
@@ -391,7 +391,7 @@ check "the fixture really is binary" "1"                      "$(/usr/bin/file -
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/ImportedBinary.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/ImportedBinary.pkgbld"
 omc_run PackageBuilder.save.as
 omc_dialog_answer choose_file "$OMCTEST_WORK/pkgimport/Binary.pkgproj"
 omc_run PackageBuilder.import.pkgproj
@@ -409,7 +409,7 @@ section "133c. a project that cannot be read is named as unreadable"
 # plausible and names the wrong problem.
 /bin/cp "$OMCTEST_WORK/pkgimport/Fixture.pkgproj" "$OMCTEST_WORK/pkgimport/Locked.pkgproj"
 /bin/chmod 000 "$OMCTEST_WORK/pkgimport/Locked.pkgproj"
-pbcli import-pkgproj "$OMCTEST_WORK/pkgimport/Locked.pkgproj" "$OMCTEST_WORK/Locked.pkgbuilderproj" --force \
+pbcli import-pkgproj "$OMCTEST_WORK/pkgimport/Locked.pkgproj" "$OMCTEST_WORK/Locked.pkgbld" --force \
     > "$OMCTEST_WORK/locked.txt" 2>&1
 check "it refused"               "1"                          "$([ -s "$OMCTEST_WORK/locked.txt" ] && echo 1 || echo 0)"
 check "and said it cannot read it" "1"                        "$(/usr/bin/grep -c 'cannot be read' "$OMCTEST_WORK/locked.txt" | /usr/bin/tr -d ' ')"

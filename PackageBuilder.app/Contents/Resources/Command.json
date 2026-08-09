@@ -54,7 +54,7 @@
         "MESSAGE": "Save PackageBuilder Project As",
         "BUTTON_PROMPT": "Save",
         "DEFAULT_FILE_NAME": [
-          "Untitled.pkgbuilderproj"
+          "Untitled.pkgbld"
         ],
         "DEFAULT_LOCATION": [
           "~/Documents"

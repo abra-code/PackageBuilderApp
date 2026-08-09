@@ -6,9 +6,9 @@
 # pipeline - by driving the *same* shared library code the GUI uses
 # (Contents/Resources/Scripts/lib.packagebuilder*.sh), so a package built here
 # and a package built by pressing Build Package are the same package. It exists
-# because an agent assembling a .pkgbuilderproj has no window to press buttons
-# in, and because "did I get this document right" deserves an answer that costs
-# nothing to ask.
+# because an agent assembling a .pkgbld has no window to press buttons in, and
+# because "did I get this document right" deserves an answer that costs nothing
+# to ask.
 #
 # Progress and diagnostics go to stderr; results worth capturing - a created
 # document's path, a value read out of one, a built package's path - go to
@@ -119,7 +119,7 @@ need_value() {
 require_document() {
     local document_path="$1"
     if [ -z "$document_path" ]; then
-        fail_usage "a .pkgbuilderproj path is required"
+        fail_usage "a .pkgbld path is required"
         return 2
     fi
     if [ ! -f "$document_path" ]; then
@@ -200,7 +200,7 @@ usage() {
 pkgbuilder - construct, check and build PackageBuilder projects (agent CLI)
 
 Usage:
-  pkgbuilder new <doc.pkgbuilderproj> --name <N> --identifier <ID>
+  pkgbuilder new <doc.pkgbld> --name <N> --identifier <ID>
                  [--version <V>] [--min-os <V>] [--artifacts-dir <D>]
                  [--output-dir <D>] [--install-location <L>] [--title <T>]
                  [--identity <I>] [--no-signing] [--force]
@@ -214,7 +214,7 @@ Usage:
                  [--output-dir <D>] [--identity <I>] [--unsigned]
   pkgbuilder inspect <package.pkg>
   pkgbuilder export-script <doc> <out.sh>
-  pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbuilderproj> [--force]
+  pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbld> [--force]
   pkgbuilder schema
 
 Diagnostics go to stderr; capturable results go to stdout.
@@ -826,7 +826,7 @@ cmd_import_pkgproj() {
             *) fail_usage "import-pkgproj: unknown option: $1"; return 2 ;;
         esac
     done
-    [ -n "$destination" ] || { fail_usage "import-pkgproj: <in.pkgproj> and <out.pkgbuilderproj> are required"; return 2; }
+    [ -n "$destination" ] || { fail_usage "import-pkgproj: <in.pkgproj> and <out.pkgbld> are required"; return 2; }
     if [ ! -f "$source_path" ]; then
         printf 'pkgbuilder: no such project: %s\n' "$source_path" >&2
         return 1

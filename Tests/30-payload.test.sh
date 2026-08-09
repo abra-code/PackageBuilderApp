@@ -14,7 +14,7 @@ section "32. the artifacts folder is stored relative to the document"
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Payload.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Payload.pkgbld"
 omc_run PackageBuilder.save.as
 omc_dialog_answer choose_folder "$artifacts"
 omc_run PackageBuilder.choose.artifacts
@@ -156,7 +156,7 @@ section "46. a bare tool answers only when it has a version flag"
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
-omc_dialog_answer save_as "$OMCTEST_WORK/Tool.pkgbuilderproj"
+omc_dialog_answer save_as "$OMCTEST_WORK/Tool.pkgbld"
 omc_run PackageBuilder.save.as
 omc_drop "$artifacts/mytool"
 omc_run PackageBuilder.payload.drop
@@ -185,8 +185,8 @@ check_absent "no staging file left" "$(state_dir)/drop.json"
 section "49. a hand-written entry is normalized on load"
 reset_state
 printf '{"FORMAT_VERSION":1,"COMPONENTS":[{"PAYLOAD":[{"SOURCE":"a","DESTINATION":"/usr/local/bin/a"}]}]}\n' \
-    > "$OMCTEST_WORK/Terse.pkgbuilderproj"
-omc_object "$OMCTEST_WORK/Terse.pkgbuilderproj"
+    > "$OMCTEST_WORK/Terse.pkgbld"
+omc_object "$OMCTEST_WORK/Terse.pkgbld"
 omc_run PackageBuilder.main.init
 check "owner defaulted"          "root"                      "$(payload_field 0 OWNER)"
 check "mode defaulted"           "0755"                      "$(payload_field 0 MODE)"
