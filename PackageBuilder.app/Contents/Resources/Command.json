@@ -105,6 +105,17 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.payload.scan",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "CHOOSE_FOLDER_DIALOG": {
+        "MESSAGE": "Choose a folder to search for artifacts",
+        "BUTTON_PROMPT": "Scan",
+        "DIALOG_IDENTIFIER": "PackageBuilder.choose.artifacts"
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "PackageBuilder.payload.remove",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"

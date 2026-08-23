@@ -70,6 +70,7 @@ PAYLOAD_UP_ID=103
 PAYLOAD_DOWN_ID=104
 ARTIFACTS_DIR_ID=105
 ARTIFACTS_BROWSE_ID=106
+PAYLOAD_SCAN_ID=107
 
 SOURCE_ID=110
 SOURCE_BROWSE_ID=111
@@ -696,6 +697,7 @@ push_model_to_window() {
         repopulate_payload ""
     fi
     enable_view "$PAYLOAD_ADD_ID" 1
+    enable_view "$PAYLOAD_SCAN_ID" 1
     # The Actions menu is enabled as a whole once there is a document; the items
     # belonging to later phases carry their own "disabled" in the window JSON.
     enable_view "$ACTIONS_MENU_ID" 1
@@ -1275,6 +1277,44 @@ is_macho() {
     return 1
 }
 
+# Succeed when the path is a Mach-O *image* - something that can be installed
+# and run: an executable, a dylib, a loadable bundle. A relocatable object file
+# is excluded, and that is the whole point of having this beside is_macho: every
+# .o in a build folder is a Mach-O, so a folder scan that used is_macho came
+# back with three hundred object files and the three artifacts buried in them.
+#
+# Only the first line of "file -b" is looked at. A fat file makes it print one
+# summary line and then one line per architecture, and those per-architecture
+# lines carry the *file name* even under -b - so a universal executable called
+# "objectkit" reported "...executable...\nobjectkit (for architecture x86_64):
+# ..." and the object test matched its own name. Line one never carries the
+# name, for a thin file or a fat one, and it says "object" for a fat object file
+# and never for a fat executable. That is the whole question, so line one alone
+# answers it.
+is_macho_image() {
+    local path="$1"
+    # Declared apart from its assignment, as in is_macho: the "|| return 1" has
+    # to test the pipeline rather than local's own status.
+    local summary
+    [ -f "$path" ] || return 1
+    summary="$(/usr/bin/file -b "$path" 2>/dev/null | /usr/bin/head -n 1)" || return 1
+    case "$summary" in
+        # "Mach-O object i386", "Mach-O 64-bit object arm64", and inside a fat
+        # summary "[arm64:Mach-O 64-bit object arm64]".
+        #
+        # The space before "object" is all the anchoring this needs, and the
+        # first version of this test asked for "-bit object" instead, which was
+        # wrong: file emits the "64-bit" token only for MH_MAGIC_64, so every
+        # 32-bit object - i386, armv7, arm64_32 - said "Mach-O object i386" and
+        # sailed through as an artifact. The one guard this function exists for
+        # was off for any build folder holding watchOS or armv7 objects. Found
+        # in review, 2026-08-22.
+        *Mach-O*\ object*) return 1 ;;
+        *Mach-O*) return 0 ;;
+    esac
+    return 1
+}
+
 # Print the executable this payload entry's checks apply to: the file itself for
 # a bare binary, the main executable for a bundle, nothing for anything else.
 # This is what decides whether the verify toggles start on (design 5.3) and what
@@ -1347,6 +1387,121 @@ last_destination_dir() {
         *) return 0 ;;
     esac
     /usr/bin/dirname "$destination"
+}
+
+# --- Scanning a folder for artifacts ------------------------------------------
+# How many directory entries one scan may look at before it gives up. A user who
+# aims the panel at a home folder or a boot volume has to get an answer and a
+# complaint, not a walk that runs for minutes. The number is deliberately far
+# above any real build folder: it is a runaway guard, not a policy.
+#
+# Overridable from the environment so the truncation path can be driven with a
+# budget of two rather than by building a tree of twenty thousand files. Same
+# reason Tests/50-distribution.test.sh reads PACKAGEBUILDER_REFERENCE_PKG.
+PB_SCAN_ENTRY_BUDGET="${PB_SCAN_ENTRY_BUDGET:-20000}"
+
+# Set by scan_artifacts and read by its caller, which reports a scan that was
+# cut short rather than passing off a partial answer as a complete one. They are
+# plain globals because the walk writes its results to a file: run inside a
+# "$(...)" instead, every count it kept would be discarded with the subshell -
+# the same trap PackageBuilder.payload.drop.sh documents.
+pb_scan_examined=0
+pb_scan_truncated=0
+
+# The recursive half of scan_artifacts. Prints one absolute path per line.
+scan_artifacts_walk() {
+    local dir="$1"
+    # Set by the loop below.
+    local entry base
+    for entry in "$dir"/*; do
+        # An unmatched glob is left as the pattern itself, which names nothing.
+        # This is also what an unreadable directory looks like from here.
+        [ -e "$entry" ] || continue
+        if [ "$pb_scan_examined" -ge "$PB_SCAN_ENTRY_BUDGET" ]; then
+            pb_scan_truncated=1
+            return 0
+        fi
+        pb_scan_examined=$((pb_scan_examined + 1))
+        # -L is asked first and on its own, because -d and -f both follow a
+        # symlink and would answer for the target. A link into a tree already
+        # being walked would add one artifact twice under two names, and a link
+        # back up it would never end.
+        if [ -L "$entry" ]; then
+            continue
+        fi
+        if [ -d "$entry" ]; then
+            base="$(/usr/bin/basename "$entry")"
+            case "$base" in
+                # A .dSYM answers yes to is_bundle - it really does carry a
+                # Contents/Info.plist - so without this line every scan of a
+                # build folder offered to ship the debug symbols alongside the
+                # binary they belong to.
+                *.dSYM) continue ;;
+            esac
+            if is_bundle "$entry"; then
+                # A bundle is one artifact, not the four hundred files inside
+                # it, so the walk stops here rather than descending.
+                printf '%s\n' "$entry"
+            else
+                scan_artifacts_walk "$entry"
+            fi
+        elif [ -f "$entry" ]; then
+            if is_macho_image "$entry"; then
+                printf '%s\n' "$entry"
+            fi
+        fi
+    done
+    return 0
+}
+
+# Find every artifact under a folder and write one absolute path per line to a
+# file. Returns non-zero only when the folder cannot be walked at all.
+#
+# What counts as an artifact: a bundle of any kind (.app, .framework, .prefPane
+# and the rest, recognized by Info.plist rather than by extension, so a bundle
+# with an unusual extension is still one), and any loose Mach-O image. That is
+# what finds build/Release/Widget.app and build/Release/widget in one pass.
+#
+# Left out on purpose, each because leaving it in made the result useless rather
+# than merely longer:
+#   - Hidden entries. The glob does not match them, which is the behavior we
+#     want: .git and .build hold nothing anyone means to install.
+#   - Symlinks, of either kind. See the walk.
+#   - .dSYM bundles. See the walk.
+#   - Relocatable object files. See is_macho_image.
+#
+# Ordering is deterministic: the glob sorts each directory and the walk is
+# depth-first, so the same folder always produces the same list in the same
+# order, and so does the payload built from it.
+#
+# Arguments: absolute folder path, output file
+scan_artifacts() {
+    local root="$1" out_file="$2"
+    pb_scan_examined=0
+    pb_scan_truncated=0
+    [ -n "$root" ] && [ -n "$out_file" ] || return 1
+    [ -d "$root" ] || return 1
+    : > "$out_file" || return 1
+
+    # The root obeys exactly the rule a child directory obeys, and it has to be
+    # said here because the walk only ever tests a directory it is about to
+    # descend INTO. Without this, choosing Widget.app in the panel - which a
+    # folder panel lets you do, and Cmd-Shift-G lets you do to anything -
+    # descended into it and offered Contents/MacOS/Widget and every framework
+    # inside it as separate artifacts, instead of the one entry meant. Found in
+    # review, 2026-08-22.
+    case "$(/usr/bin/basename "$root")" in
+        *.dSYM) return 0 ;;
+    esac
+    if is_bundle "$root"; then
+        printf '%s\n' "$root" > "$out_file"
+        return 0
+    fi
+
+    # No "$(...)" around this call, so the two counters the walk keeps are the
+    # ones the caller reads afterwards.
+    scan_artifacts_walk "$root" > "$out_file"
+    return 0
 }
 
 # --- Reading a version out of an artifact (design 4.5) ------------------------

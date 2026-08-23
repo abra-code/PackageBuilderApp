@@ -51,6 +51,20 @@ pl() { "$OMC_OMC_SUPPORT_PATH/plister" "$@"; }
 model() { pl get value "$(model_file)" "$1" 2>/dev/null; }
 count() { pl get count "$(model_file)" "$1" 2>/dev/null; }
 payload_field() { model "/COMPONENTS/0/PAYLOAD/$1/$2"; }
+# How many payload sources contain a substring. Written as a count so a check
+# can assert zero: the folder-scan tests are mostly about what did NOT get
+# added, and "no entry mentions Contents/MacOS" is the readable way to say it.
+payload_sources_matching() { # <substring>
+    local wanted="$1" total="$(count /COMPONENTS/0/PAYLOAD)" index=0 hits=0
+    [ -n "$total" ] || total=0
+    while [ "$index" -lt "$total" ]; do
+        case "$(payload_field "$index" SOURCE)" in
+            *"$wanted"*) hits=$((hits + 1)) ;;
+        esac
+        index=$((index + 1))
+    done
+    printf '%s' "$hits"
+}
 dirty() { /bin/cat "$(state_dir)/dirty.txt" 2>/dev/null; }
 doc_path() { /bin/cat "$(state_dir)/doc_path.txt" 2>/dev/null; }
 
@@ -108,6 +122,118 @@ PLIST
     /bin/cp /bin/echo "$dir/mytool"
     printf 'notes\n' > "$dir/readme.txt"
     printf '%s' "$dir"
+}
+
+# A build-folder-shaped tree for the folder scan: two artifacts worth finding
+# and one of every kind the walk is supposed to leave behind.
+#
+# Names are all lower case at the character that decides each comparison, so the
+# glob's order - and with it the order the payload comes out in - is the same
+# under any collation the suite might run in.
+#
+# Expected result, in this order: alpha.app, gamma.framework, then
+# nested/deep/betatool.
+#   alpha.app             a bundle: ONE artifact, and the walk must not descend
+#                         into it and offer Contents/MacOS/alpha as a second
+#   gamma.framework       a VERSIONED bundle - Info.plist under
+#                         Versions/A/Resources and no Contents directory at all,
+#                         the layout bundle_info_plist exists to handle
+#   nested/deep/betatool  a loose Mach-O, found at depth
+#   notes.txt             not Mach-O
+#   objs/part.o           a 64-bit Mach-O *object*: build folders are full of
+#                         them
+#   objs/part32.o         a 32-bit one, which says "Mach-O object i386" with no
+#                         "-bit" token at all and slipped through the first
+#                         version of is_macho_image
+#   symlink               a link to alpha.app: the same artifact twice
+#   syms.dSYM             a real bundle by the Info.plist test, and debug
+#                         symbols nobody means to install
+#   .hidden/ghost         a Mach-O the glob never offers
+make_scan_tree() { # [directory, default $OMCTEST_WORK/scan]
+    local dir="${1:-$OMCTEST_WORK/scan}"
+    /bin/mkdir -p "$dir/alpha.app/Contents/MacOS"
+    /bin/cat > "$dir/alpha.app/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.example.alpha</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleExecutable</key><string>alpha</string>
+    <key>CFBundleShortVersionString</key><string>1.2.3</string>
+    <key>LSMinimumSystemVersion</key><string>12.0</string>
+</dict>
+</plist>
+PLIST
+    /bin/cp /bin/echo "$dir/alpha.app/Contents/MacOS/alpha"
+    /bin/mkdir -p "$dir/gamma.framework/Versions/A/Resources"
+    /bin/cat > "$dir/gamma.framework/Versions/A/Resources/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.example.gamma</string>
+    <key>CFBundlePackageType</key><string>FMWK</string>
+    <key>CFBundleExecutable</key><string>gamma</string>
+    <key>CFBundleShortVersionString</key><string>4.5</string>
+</dict>
+</plist>
+PLIST
+    /bin/cp /bin/echo "$dir/gamma.framework/Versions/A/gamma"
+    /bin/ln -sfh A "$dir/gamma.framework/Versions/Current"
+    /bin/ln -sfh Versions/Current/gamma "$dir/gamma.framework/gamma"
+    /bin/mkdir -p "$dir/nested/deep"
+    /bin/cp /bin/echo "$dir/nested/deep/betatool"
+    printf 'notes\n' > "$dir/notes.txt"
+    /bin/mkdir -p "$dir/objs"
+    make_object_file "$dir/objs/part.o"
+    make_object_file_32 "$dir/objs/part32.o"
+    /bin/ln -sfh "$dir/alpha.app" "$dir/symlink"
+    /bin/mkdir -p "$dir/syms.dSYM/Contents"
+    /bin/cat > "$dir/syms.dSYM/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key><string>com.apple.xcode.dsym.com.example.alpha</string>
+    <key>CFBundlePackageType</key><string>dSYM</string>
+</dict>
+</plist>
+PLIST
+    /bin/mkdir -p "$dir/.hidden"
+    /bin/cp /bin/echo "$dir/.hidden/ghost"
+    printf '%s' "$dir"
+}
+
+# Write a relocatable Mach-O object file, the thing a folder scan must not
+# mistake for an artifact. Compiled rather than committed, for the reason
+# make_artifacts gives: no binaries in the repo. The compiler is a fixture
+# precondition like /bin/echo's two architectures, so a machine without one
+# fails here by name instead of silently weakening the check that uses it.
+make_object_file() { # <path>
+    local path="$1"
+    local source_file="${path%.o}.c"
+    printf 'int pb_scan_fixture(void) { return 0; }\n' > "$source_file"
+    /usr/bin/xcrun cc -c "$source_file" -o "$path" 2>/dev/null
+    /bin/rm -f "$source_file"
+    check_exists "fixture precondition: an object file was compiled" "$path"
+}
+
+# Write a THIRTY-TWO bit Mach-O object file. Handwritten rather than compiled,
+# because a current Xcode will not emit i386 at all - and it is exactly the file
+# that has to exist for this fixture to be worth anything: "file" prints the
+# "64-bit" token only for MH_MAGIC_64, so a 32-bit object is described as
+# "Mach-O object i386" and the first version of is_macho_image, which looked for
+# "-bit object", classified it as an artifact.
+#
+# The header is the first seven words of mach_header, little endian: MH_MAGIC
+# 0xfeedface, CPU_TYPE_I386 7, subtype 3, MH_OBJECT 1, then ncmds, sizeofcmds
+# and flags all zero. "file" needs nothing past that.
+make_object_file_32() { # <path>
+    local path="$1"
+    printf '\316\372\355\376\007\000\000\000\003\000\000\000\001\000\000\000\000\000\000\000\000\000\000\000\000\000\000\000' > "$path"
+    check "fixture precondition: a 32-bit object" "Mach-O object i386" \
+        "$(/usr/bin/file -b "$path" 2>/dev/null | /usr/bin/head -n 1)"
 }
 
 # A replay-shaped project: four bare tools into /usr/local/bin, a readme, a
@@ -301,7 +427,8 @@ omctest_import_view_ids \
 # and name every id the suite drives rather than a sample of them: an id that
 # went missing from the app is exactly the case this guard is for.
 for omctest_required_id in PAYLOAD_TABLE_ID PAYLOAD_ADD_ID PAYLOAD_REMOVE_ID \
-    PAYLOAD_UP_ID PAYLOAD_DOWN_ID PAYLOAD_INDEX_COLUMN ARTIFACTS_DIR_ID \
+    PAYLOAD_UP_ID PAYLOAD_DOWN_ID PAYLOAD_SCAN_ID PAYLOAD_INDEX_COLUMN \
+    ARTIFACTS_DIR_ID \
     SOURCE_ID DESTINATION_ID OWNER_ID GROUP_ID MODE_ID VERIFY_UNIVERSAL_ID \
     VERIFY_SIGNED_ID VERIFY_HARDENED_ID VERIFY_TIMESTAMP_ID VERSION_FLAG_ID \
     NAME_ID IDENTIFIER_ID VERSION_ID INSTALL_LOCATION_ID AUTH_ID OVERWRITE_ID \

@@ -61,6 +61,24 @@ to the sources it packages, so a version bump is a one-line diff.
 `ARTIFACTS_DIR` is the one field that changes between releases: repoint it and
 every payload source follows.
 
+## Adding artifacts
+
+Drop files on the payload table, or use the buttons below it: `+` adds one
+artifact, the folder button searches a folder and adds everything it finds.
+
+The search descends into ordinary directories and stops at a bundle, so an
+`.app` arrives as one payload entry rather than as the four hundred files inside
+it. It picks up loose Mach-O images at any depth, which is what finds
+`build/Release/Widget.app` and `build/Release/widget` in one pass. It skips
+symlinks, hidden entries, `.dSYM` bundles and relocatable object files - every
+`.o` in a build folder is a Mach-O, and a list of three hundred of them helps
+nobody. Choosing a bundle itself as the folder to scan adds that bundle, not its
+contents. Running it twice over the same folder adds nothing the second time.
+
+However an artifact arrives, its destination and permissions are guessed from
+its kind, the verify checks start on for a Mach-O, and its source is stored
+against `ARTIFACTS_DIR` when it lives below that folder.
+
 ## What it gets right that a raw pkgbuild does not
 
 - **`overwrite-permissions` is forced to false.** `pkgbuild` writes `true`, which
@@ -79,9 +97,23 @@ every payload source follows.
 
 ## Status
 
-Under development. Phase 1 (document lifecycle) is implemented; the build
-pipeline is not yet. See `Private/Design.md` for the full specification and the
-phasing plan.
+Working end to end. A document opens, a payload is assembled, and Build Package
+runs verify, component, distribution and sign in order, writing a signed `.pkg`.
+
+Implemented: the document lifecycle, including close confirmation and noticing
+that the file changed on disk; the payload tab with drop, folder scan, reorder
+and the per-item inspector; the verify stage with its diagnostics and a Stop
+that asks the build to stop rather than killing it; `pkgbuild` with the
+`overwrite-permissions` and `--component-plist` corrections; `Distribution.xml`
+generation; `productbuild` and `productsign`; export as a standalone packaging
+script; import of a Packages.app `.pkgproj`; and the handoff to Notarize.app.
+Beyond the original plan there is an agent CLI at
+`Contents/Resources/Agents/pkgbuilder`, a document format verifier, and a skill.
+
+Not implemented: **Inspect Built Package** is a disabled placeholder in the
+Actions menu, and per-project preferences are unwired.
+
+See `Private/Design.md` for the full specification and the phasing plan.
 
 ## Building the applet
 
@@ -97,6 +129,21 @@ are fatal there.
 
 To trace handler execution, `touch /tmp/packagebuilder_debug` and read
 `/tmp/packagebuilder_debug.log`.
+
+## Tests
+
+```sh
+"$AB" test PackageBuilder.app --tests Tests
+```
+
+Eight files, around 670 checks. They drive the handler scripts under a
+simulated OMC environment and assert on the model file and the window calls the
+handlers produce, so the whole app is testable headlessly.
+
+One test is machine-dependent by design: the BOM acceptance check in
+`50-distribution.test.sh` expands a package the app just built and compares it
+against the shipped `replay_2.2.pkg`. It skips itself when that package is not
+on the machine; set `PACKAGEBUILDER_REFERENCE_PKG` to point at a copy.
 
 ## License
 

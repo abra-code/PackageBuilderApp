@@ -208,6 +208,167 @@ check "ampersand survives"       "pre-v&v-post"              "$(pb_call expand_t
 check "slash survives"           "x/a/b/y"                   "$(pb_call expand_tokens 'x/${NAME}/y')"
 check "unset token is empty"     "//"                        "$(pb_call expand_tokens '/${ARTIFACTS_DIR}/')"
 
+section "51. a folder scan finds bundles and loose executables, and nothing else"
+reset_state
+scan_tree="$(make_scan_tree)"
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Scan.pkgbld"
+omc_run PackageBuilder.save.as
+# The scan button is a payload control and comes alive with the document, the
+# way [+] does. It starts disabled in the window JSON.
+check "scan enabled with a doc"  "1"                         "$(ui_enabled $PAYLOAD_SCAN_ID)"
+omc_dialog_answer choose_folder "$scan_tree"
+omc_run PackageBuilder.choose.artifacts
+omc_dialog_answer choose_folder "$scan_tree"
+omc_run PackageBuilder.payload.scan
+# Three, out of a tree holding nine things that look like candidates. Every one
+# left out is left out for its own reason - see make_scan_tree.
+check "three entries"            "3"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "the bundle, tokenized"    '${ARTIFACTS_DIR}/alpha.app' "$(payload_field 0 SOURCE)"
+check "and its destination"      "/Applications/alpha.app"   "$(payload_field 0 DESTINATION)"
+# A framework keeps its Info.plist under Versions/A/Resources and has no
+# Contents directory, so it is the layout a Contents-only bundle test misses.
+check "the framework"            '${ARTIFACTS_DIR}/gamma.framework' "$(payload_field 1 SOURCE)"
+check "and its destination"      "/Library/Frameworks/gamma.framework" "$(payload_field 1 DESTINATION)"
+check "the deep tool"            '${ARTIFACTS_DIR}/nested/deep/betatool' "$(payload_field 2 SOURCE)"
+check "and its destination"      "/usr/local/bin/betatool"   "$(payload_field 2 DESTINATION)"
+check "the table shows all three" "3"                        "$(ui_row_count $PAYLOAD_TABLE_ID)"
+check "last row selected"        "2"                         "$(selected_index)"
+check "the document is dirty"    "1"                         "$(dirty)"
+# A scan is a bulk add: the project fields fill from the first artifact exactly
+# as a drop's do (design 4.5).
+check "name from the bundle"     "alpha"                     "$(model /PROJECT/NAME)"
+check "version from Info.plist"  "1.2.3"                     "$(model /PROJECT/VERSION)"
+check_absent "no scan file left" "$(state_dir)/scan-found.txt"
+check_absent "no dedupe file left" "$(state_dir)/scan-existing.txt"
+
+section "52. the walk stops at a bundle rather than descending into it"
+# Stated separately from the count above because it is the failure that would
+# look most like success: Contents/MacOS/alpha IS a Mach-O, and a walk that
+# descended would add it as a second artifact with a plausible destination.
+check "no bundle interior"       "0"                         "$(payload_sources_matching 'Contents/MacOS')"
+check "no framework interior"    "0"                         "$(payload_sources_matching 'Versions/')"
+check "no 64-bit object"         "0"                         "$(payload_sources_matching 'part.o')"
+check "no 32-bit object"         "0"                         "$(payload_sources_matching 'part32.o')"
+check "no dSYM"                  "0"                         "$(payload_sources_matching 'dSYM')"
+check "no symlinked duplicate"   "0"                         "$(payload_sources_matching 'symlink')"
+check "no hidden directory"      "0"                         "$(payload_sources_matching 'ghost')"
+
+section "53. a second scan of the same folder adds nothing"
+omc_dialog_answer choose_folder "$scan_tree"
+omc_run PackageBuilder.payload.scan
+check "still three entries"      "3"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and it said so"           "Everything found is already in the payload" "$(ui_value $STATUS_ID)"
+
+section "54. an object file is a Mach-O and is still not an artifact"
+# is_macho and is_macho_image disagree on exactly one thing, and this is it.
+check "is_macho says yes"        "0"                         "$(pb_call is_macho "$scan_tree/objs/part.o"; printf '%s' $?)"
+check "is_macho_image says no"   "1"                         "$(pb_call is_macho_image "$scan_tree/objs/part.o"; printf '%s' $?)"
+# The 32-bit one is the case that got through the first time. "file" prints the
+# "64-bit" token only for MH_MAGIC_64, so a test anchored on "-bit object" saw
+# "Mach-O object i386" and called it an artifact.
+check "and no to a 32-bit one"   "1"                         "$(pb_call is_macho_image "$scan_tree/objs/part32.o"; printf '%s' $?)"
+check "and yes to an executable" "0"                         "$(pb_call is_macho_image "$scan_tree/nested/deep/betatool"; printf '%s' $?)"
+check "and no to a text file"    "1"                         "$(pb_call is_macho_image "$scan_tree/notes.txt"; printf '%s' $?)"
+
+section "55. a scan of a folder with nothing in it says so and changes nothing"
+/bin/mkdir -p "$OMCTEST_WORK/barren/sub"
+printf 'nothing here\n' > "$OMCTEST_WORK/barren/sub/plain.txt"
+omc_dialog_answer choose_folder "$OMCTEST_WORK/barren"
+omc_run PackageBuilder.payload.scan
+check "payload untouched"        "3"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and it said so"           "No bundles or executables under barren" "$(ui_value $STATUS_ID)"
+
+section "56. a bundle chosen as the folder to scan is one artifact, not its contents"
+# A folder panel lets you choose a bundle, and Cmd-Shift-G lets you choose
+# anything. The walk only tests a directory it is about to descend INTO, so
+# without the root obeying the same rule this added Contents/MacOS/alpha and
+# every framework inside instead of the one entry meant.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Root.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$scan_tree/alpha.app"
+omc_run PackageBuilder.payload.scan
+check "one entry"                "1"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and it is the bundle"     "/Applications/alpha.app"   "$(payload_field 0 DESTINATION)"
+check "nothing from inside it"   "0"                         "$(payload_sources_matching 'Contents/')"
+# A framework root is the same question with the harder layout.
+omc_dialog_answer choose_folder "$scan_tree/gamma.framework"
+omc_run PackageBuilder.payload.scan
+check "the framework too"        "2"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "as one entry"             "/Library/Frameworks/gamma.framework" "$(payload_field 1 DESTINATION)"
+# A .dSYM root is refused for the same reason a .dSYM child is skipped: it is
+# never something anyone means to install.
+omc_dialog_answer choose_folder "$scan_tree/syms.dSYM"
+omc_run PackageBuilder.payload.scan
+check "a dSYM root adds nothing" "2"                         "$(count /COMPONENTS/0/PAYLOAD)"
+
+section "57. a path the walk names but the append cannot find is not added"
+# payload_append_from_path succeeds on a path that is not there - guess_
+# destination falls through to the previous entry's directory, and is_bundle and
+# is_macho_image simply say no - so without a guard in the handler a bad line
+# became a real payload row REPORTED AS A SUCCESS. That first check states the
+# trap rather than a fix: the library function is not where this is caught.
+#
+# The way in used here is a file name containing a newline. The walk writes one
+# path per line, so such a name arrives as two lines, and neither of them names
+# a file. The same window opens without any exotic name at all - the walk and
+# the append are minutes apart on a large scan - but this is the version that
+# reproduces on demand.
+reset_state
+/bin/mkdir -p "$OMCTEST_WORK/vanish"
+/bin/cp /bin/echo "$OMCTEST_WORK/vanish/two$(printf '\nlines')"
+/bin/cp /bin/echo "$OMCTEST_WORK/vanish/plain"
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Vanish.pkgbld"
+omc_run PackageBuilder.save.as
+check "append does not guard"    "0"                         "$(pb_call payload_append_from_path "$OMCTEST_WORK/vanish/gone" >/dev/null 2>&1; printf '%s' $?)"
+# -E, not "\|": that alternation is a GNU extension and BSD grep matches it
+# literally, which is the same trap omctest_import_view_ids documents for sed.
+check "fixture: the name has a newline" "2"                  "$(/bin/ls "$OMCTEST_WORK/vanish" | /usr/bin/grep -c -E '^(two|lines)$' | /usr/bin/tr -d ' ')"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Vanish2.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$OMCTEST_WORK/vanish"
+omc_run PackageBuilder.payload.scan
+# Only the well-named tool. The two halves of the split name are counted as
+# unreadable and reported, not stored.
+check "only the real tool"       "1"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and it is that one"       "/usr/local/bin/plain"      "$(payload_field 0 DESTINATION)"
+check "no half-name stored"      "0"                         "$(payload_sources_matching 'two')"
+check "no orphan half stored"    "0"                         "$(payload_sources_matching 'lines')"
+check "and the count was owned"  "Added 1 artifact(s); 2 could not be read" "$(ui_value $STATUS_ID)"
+
+section "58. a scan that runs out of budget says so instead of looking finished"
+# The guard against a user aiming the panel at a home folder. What matters is
+# not that it stops - it is that a partial answer is never handed over as a
+# complete one, which is the failure a bulk operation hides best.
+#
+# Two entries of budget, driven from the environment rather than by building a
+# tree of twenty thousand files. The walk emits alpha.app and gamma.framework
+# and then gives up, which is deterministic: the glob sorts, and both are
+# bundles that emit without descending.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Budget.pkgbld"
+omc_run PackageBuilder.save.as
+PB_SCAN_ENTRY_BUDGET=2
+export PB_SCAN_ENTRY_BUDGET
+omc_dialog_answer choose_folder "$scan_tree"
+omc_run PackageBuilder.payload.scan
+unset PB_SCAN_ENTRY_BUDGET
+# What it did find is kept - this is a stop, not a failure.
+check "the two it reached"       "2"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "the deep tool is missing" "0"                         "$(payload_sources_matching 'betatool')"
+check "and the status owns it"   "1"                         "$(ui_value $STATUS_ID | /usr/bin/grep -c 'too large to search in full')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 # unknown_ids.log accumulates across the whole file and nothing resets it, so
 # one assertion here covers every section above. The per-section copy in the
