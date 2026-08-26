@@ -1,4 +1,5 @@
 # PackageBuilder.app
+![PackageBuilder Icon](Icon/PackageBuilder-macOS-256x256@1x.png)
 
 A macOS applet that turns pre-built artifacts into a signed installer package.
 
@@ -148,3 +149,16 @@ on the machine; set `PACKAGEBUILDER_REFERENCE_PKG` to point at a copy.
 ## License
 
 Apache 2.0. See `LICENSE`.
+
+### App icon
+
+The icon artwork is a separate work under different terms. "Cardboard Boxes
+Vectors" by [Creative Alys](https://www.creativealys.com), obtained via
+[FreeVector.com](https://www.freevector.com/cardboard-boxes-vectors) and
+licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The
+source page states the requested credit verbatim as "Delivery Boxes by
+Creativealys.com"; that string is recorded in the `cc:attributionName` field of
+the SVG's metadata.
+Modified: one box was isolated from the original six-box set and recomposed as
+an icon layer over a generated gradient. CC BY 4.0 has no ShareAlike term,
+so this does not affect the Apache 2.0 license on the rest of the project.
