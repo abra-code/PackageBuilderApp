@@ -152,7 +152,16 @@ if [ -n "$harness_identity" ]; then
     check "no package recorded"    ""                        "$(built_signed)"
     pl set string "$harness_identity" "$(model_file)" /SIGNING/INSTALLER_IDENTITY
 else
-    skip_section "sections 81-84: no Developer ID Installer certificate in this keychain"
+    # Not a comment on this machine, which is what this message used to imply.
+    # omctest isolates $HOME, the keychain search list lives in
+    # ~/Library/Preferences, and so "security find-identity" reports nothing
+    # inside the suite however many certificates are really installed. Verified
+    # directly: the same command with HOME pointed at an empty directory finds 0
+    # identities on a machine where it otherwise finds 2. Signing for real needs
+    # a keychain the suite cannot reach, so these sections cannot run here at
+    # all - which is worth saying plainly rather than sending someone off to
+    # check their certificates.
+    skip_section "sections 81-84: no identity is visible under the suite's isolated HOME"
 fi
 
 section "85. signing turned off stops before the output folder"
@@ -331,6 +340,133 @@ pl set string "" "$(model_file)" /PROJECT/NAME
 omc_run PackageBuilder.step.sign
 check "empty name refused"       "1"                          "$(log_says 'not usable in a filename')"
 check "no _.pkg was signed"      ""                           "$(built_signed)"
+
+section "107. Inspect refuses politely when nothing has been built"
+reset_state
+setup_replay_project
+omc_run PackageBuilder.inspect
+check "nothing to inspect"       "Build a package first - there is nothing to inspect" "$(ui_value $STATUS_ID)"
+check "and no log was written"   "1"                         "$([ -f "$(state_dir)/run.log" ] && echo 0 || echo 1)"
+
+section "108. Inspect describes the component package when that is all there is"
+omc_run PackageBuilder.step.component
+omc_run PackageBuilder.inspect
+# Which package is being looked at is the first thing the report says. A user
+# reading a signature section needs to know it belongs to a component package
+# and not to the installer they are about to ship.
+check "it named the kind"        "1"                         "$(log_says 'Inspecting the component package')"
+check "the identifier"           "1"                         "$(log_says 'identifier:            com.abracode.pkg.replay')"
+check "the version"              "1"                         "$(log_says 'version:               2.2')"
+check "install-location"         "1"                         "$(log_says 'install-location:      /')"
+# Design 8.1 and 8.2, read back off the built artifact rather than off the
+# document that asked for them. This is the check that would have caught the
+# two pkgbuild defaults the whole app exists to correct.
+check "overwrite-permissions"    "1"                         "$(log_says 'overwrite-permissions: false')"
+check "not relocatable"          "1"                         "$(log_says 'relocatable:           no (empty relocate list)')"
+check "the payload count"        "1"                         "$(log_says 'Payload, 8 item(s):')"
+check "and a payload line"       "1"                         "$(log_says './usr/local/bin/replay')"
+# The four tools plus the four directories above them, and the directories are
+# the reason design 8.1 exists: the BOM carries ./usr/local as root:wheel, so an
+# install with overwrite-permissions="true" would re-own it and leave Homebrew
+# unable to write. Seeing both in one report is the point of listing the BOM.
+check "the parents are listed"   "1"                         "$(log_says './usr/local	0	0	40755')"
+# By name-prefix, not by exact name: both are pid-scoped so a second click
+# during a slow expand cannot truncate the first run's file, and the test cannot
+# know the handler's pid.
+check "no inspect leftovers"     "0"                         "$(/bin/ls "$(state_dir)" | /usr/bin/grep -c '^inspect' | /usr/bin/tr -d ' ')"
+
+section "109. Inspect prefers the distribution package once there is one"
+omc_run PackageBuilder.step.distribution
+omc_run PackageBuilder.inspect
+check "it named the kind"        "1"                         "$(log_says 'Inspecting the unsigned distribution package')"
+check "the title"                "1"                         "$(log_says 'title:                 replay')"
+check "host architectures"       "1"                         "$(log_says 'hostArchitectures:     arm64,x86_64')"
+check "the minimum macOS"        "1"                         "$(log_says 'minimum macOS:         10.15')"
+check "the readme resource"      "1"                         "$(log_says 'readme: replay-readme.rtf')"
+# The point of the whole section. pkgbuild writes auth="root" into PackageInfo
+# whatever the document says, so a user who goes looking finds the wrong answer
+# in the obvious place. The report reads auth off the Distribution pkg-ref,
+# which is where the document's value actually lands (design section 4), and
+# labels it so nobody trusts the other one.
+check "auth from the pkg-ref"    "1"                         "$(log_says 'auth (the real one):   Root')"
+check "the component inside it"  "1"                         "$(log_says 'Component replay.pkg:')"
+
+section "110. an unsigned package is reported as unsigned, not as an error"
+# pkgutil --check-signature exits non-zero for an unsigned package. That status
+# is deliberately not tested: "is this actually signed" is one of the two
+# questions this feature exists to answer, so the answer "no" has to arrive as
+# a report rather than as a failure.
+check "the section is there"     "1"                         "$(log_says 'Signature:')"
+check "and it says no signature" "1"                         "$(log_says 'no signature')"
+check "the handler still won"    "Inspected replay-unsigned.pkg" "$(ui_value $STATUS_ID)"
+
+section "111. the report says when the package was built"
+# Only run_pipeline clears all three built_*.txt records; each partial step
+# clears just its own. So a signed package from an earlier build stays on disk,
+# stays recorded, and wins the "most finished" chain over a component just
+# built. The label is always right about which artifact is being read - every
+# built_*_path checks the file is still there - but without a timestamp nothing
+# in the report distinguishes a fresh package from last week's.
+check "a build date is printed"  "1"                         "$(log_says "built $(/bin/date '+%Y-%m-')")"
+
+section "112. XML entities are decoded, not printed raw"
+# generate_distribution_xml's own xml_escape uses "Rock & Roll" as its worked
+# example, so this is the project name that made the raw form visible.
+pl set string 'Rock & Roll' "$(model_file)" /DISTRIBUTION/TITLE
+omc_run PackageBuilder.step.distribution
+omc_run PackageBuilder.inspect
+check "the XML really escaped it" "1"                        "$(xml_has '<title>Rock &amp; Roll</title>')"
+check "the report decoded it"    "1"                         "$(log_says 'title:                 Rock & Roll')"
+check "and not the raw entity"   "0"                         "$(log_says 'Rock &amp; Roll')"
+pl set string 'replay' "$(model_file)" /DISTRIBUTION/TITLE
+
+section "113. a package that cannot be expanded is reported, not swallowed"
+reset_state
+setup_replay_project
+printf 'this is not a package\n' > "$OMCTEST_WORK/notapkg.pkg"
+printf '%s' "$OMCTEST_WORK/notapkg.pkg" > "$(state_dir)/built_component.txt"
+omc_run PackageBuilder.inspect
+check "it said so"               "Could not read that package" "$(ui_value $STATUS_ID)"
+check "and the log names it"     "1"                         "$(log_says 'Could not expand the package')"
+check "no expansion left behind" "0"                         "$(/bin/ls "$(state_dir)" | /usr/bin/grep -c '^inspect' | /usr/bin/tr -d ' ')"
+
+section "114. Inspect refuses while a build is running"
+# Not because inspecting could damage anything - it is read-only - but because
+# patch_overwrite_permissions deletes and recreates the package as it works, so
+# a report read mid-rebuild describes neither the old package nor the new one.
+pb_set busy 1
+printf '%s' "$$" > "$(state_dir)/run.pid"
+omc_run PackageBuilder.inspect
+check "refused"                  "A build is running - inspect it when that finishes" "$(ui_value $STATUS_ID)"
+pb_set busy ""
+/bin/rm -f "$(state_dir)/run.pid"
+
+section "115. a long payload listing is capped and says that it was"
+# Driven through a handmade BOM rather than a 250-file package: mkbom is what
+# pkgbuild uses, so the Bom is real, and the cap is arithmetic on lsbom's output
+# that has nothing to do with how the package was assembled.
+big="$OMCTEST_WORK/bigroot"
+/bin/rm -rf "$big"
+/bin/mkdir -p "$big/usr/local/bin"
+i=0
+while [ "$i" -lt 205 ]; do
+    printf 'x\n' > "$big/usr/local/bin/tool$i"
+    i=$((i + 1))
+done
+fakepkg="$OMCTEST_WORK/fakepkg"
+/bin/rm -rf "$fakepkg"
+/bin/mkdir -p "$fakepkg"
+/usr/bin/mkbom "$big" "$fakepkg/Bom" >/dev/null 2>&1
+printf '<?xml version="1.0" encoding="utf-8"?>\n<pkg-info identifier="com.big" version="1.0" install-location="/" overwrite-permissions="false">\n<relocate/>\n</pkg-info>\n' > "$fakepkg/PackageInfo"
+# The log file is what log_says reads, so emptying it is enough to isolate this
+# section; clear_log is the app's own and is not in scope here.
+: > "$(state_dir)/run.log"
+pb_build_call inspect_component_dir "$fakepkg" "big.pkg" >/dev/null 2>&1
+check "the count is exact"       "1"                         "$(log_says 'Payload, 209 item(s):')"
+# The count is never capped; only the listing is, and the log has to say so or
+# a truncated report reads as a complete one.
+check "the listing is capped"    "1"                         "$(log_says 'and 9 more, not listed')"
+check "200 rows were listed"     "200"                       "$(/usr/bin/grep -c "^    \..*	" "$(state_dir)/run.log" | /usr/bin/tr -d ' ')"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"

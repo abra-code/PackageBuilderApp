@@ -245,6 +245,76 @@ prefs_set() {
     "$plister" set string "$pref_value" "$prefs_file" "/$pref_name"
 }
 
+# The two defaults of design section 9. Both answer the same question - "the
+# last time I set this up by hand, what did I choose?" - for the two fields a
+# new project cannot guess and every project in one workflow shares.
+PREF_DEFAULT_IDENTITY="default_installer_identity"
+PREF_DEFAULT_OUTPUT_DIR="default_output_dir"
+
+# Remember an identity the user deliberately picked, so the next new project
+# starts with it. Only the picker calls this; a value that arrived by opening a
+# document is that document's choice, not a preference.
+remember_default_identity() {
+    local identity="$1"
+    [ -n "$identity" ] || return 0
+    prefs_set "$PREF_DEFAULT_IDENTITY" "$identity"
+    return 0
+}
+
+# The same for an output folder, and it must be stored ABSOLUTE. The document
+# keeps this field relative when the folder sits below the project (design 4.2),
+# and a preference is read by projects that have no relation to that one - a
+# remembered "build" would resolve against whichever document asked next.
+remember_default_output_dir() {
+    local folder="$1"
+    [ -n "$folder" ] || return 0
+    [ -d "$folder" ] || return 0
+    case "$folder" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+    prefs_set "$PREF_DEFAULT_OUTPUT_DIR" "$folder"
+    return 0
+}
+
+# Seed a brand-new document from the remembered defaults.
+#
+# Deliberately not part of new_document, which the agent CLI also calls: a
+# headless "pkgbuilder new" in a CI job must produce the same document on every
+# machine, and inheriting whichever identity the developer at the keyboard last
+# clicked is the opposite of that. The window is where a person's habits belong.
+#
+# Nothing here marks the document dirty. These are not edits - the user has not
+# touched anything yet - and a fresh window that asks to be saved on close is a
+# nuisance. Nothing is lost by discarding them either: they came from the
+# preferences and the next new document gets them again.
+#
+# Each default is applied only when it still refers to something real. A stale
+# identity would seed a project that fails its signing precondition, and a
+# deleted folder one that fails its output precondition, in both cases for a
+# choice the user made months ago and did not repeat here.
+apply_new_document_defaults() {
+    local identity="$(prefs_get "$PREF_DEFAULT_IDENTITY")"
+    local output_dir="$(prefs_get "$PREF_DEFAULT_OUTPUT_DIR")"
+
+    if [ -n "$identity" ] && [ -z "$(model_get /SIGNING/INSTALLER_IDENTITY)" ]; then
+        if list_installer_identities | /usr/bin/grep -q -x -F -e "$identity"; then
+            model_set /SIGNING/INSTALLER_IDENTITY "$identity"
+        else
+            dbg "defaults: remembered identity [$identity] is not in this keychain"
+        fi
+    fi
+
+    if [ -n "$output_dir" ] && [ -z "$(model_get /PROJECT/OUTPUT_DIR)" ]; then
+        if [ -d "$output_dir" ]; then
+            model_set /PROJECT/OUTPUT_DIR "$output_dir"
+        else
+            dbg "defaults: remembered output folder [$output_dir] is gone"
+        fi
+    fi
+    return 0
+}
+
 # --- Model access -------------------------------------------------------------
 # The model is a file and the window is a projection of it (design section 9.1).
 

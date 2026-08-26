@@ -88,7 +88,7 @@
                                 "id": 325,
                                 "properties": {
                                     "title": "Inspect Built Package",
-                                    "disabled": true
+                                    "actionID": "PackageBuilder.inspect"
                                 }
                             },
                             {

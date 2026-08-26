@@ -1916,3 +1916,284 @@ run_pipeline() {
     build_end
     return 0
 }
+
+# --- Inspecting a built package (design section 6, Actions menu) --------------
+# How many BOM lines the report lists before it stops. A payload holding one .app
+# is tens of thousands of files, and a log view holding all of them is not a
+# report, it is a haystack. The COUNT is always exact; only the listing is
+# capped, and the log says when it was.
+PB_INSPECT_BOM_LINES=200
+
+# Turn the five XML entities back into the characters they stand for.
+#
+# The report is read by a person, and generate_distribution_xml's own xml_escape
+# uses "Rock & Roll" as its worked example - so without this, inspecting that
+# very project reported its title as "Rock &amp; Roll". Reachable through VERSION,
+# IDENTIFIER, INSTALL_LOCATION and TITLE, and pkgbuild escapes its own
+# attributes the same way. Found in review, 2026-08-23.
+#
+# &amp; is undone LAST. Any other order decodes it into an ampersand that the
+# remaining passes then read as the start of an entity, so a literal "&amp;gt;" in
+# a project name would come back as ">".
+xml_unescape() {
+    local text="$1"
+    case "$text" in
+        *'&'*) ;;
+        *) printf '%s' "$text"; return 0 ;;
+    esac
+    text="$(str_replace "$text" '&lt;' '<')"
+    text="$(str_replace "$text" '&gt;' '>')"
+    text="$(str_replace "$text" '&quot;' '"')"
+    text="$(str_replace "$text" '&apos;' "'")"
+    text="$(str_replace "$text" '&amp;' '&')"
+    printf '%s' "$text"
+}
+
+# Print the value of an XML attribute, scoped to a named element.
+#
+# The element name is not optional decoration, and the first version of this
+# left it out. A PackageInfo opens with <?xml version="1.0" encoding="utf-8"?>,
+# so a file-wide search for "version" answered 1.0 - the XML spec version -
+# for every package inspected, and reported it as the package version. Asking
+# for the attribute *of <pkg-info>* is the only way to get the right one.
+# Found by section 108.
+#
+# The tag is isolated first, with newlines folded so an element whose attributes
+# wrap still reads as one tag. Tags not carrying the attribute at all are then
+# dropped, which is what lets auth be read from the Distribution: there are two
+# pkg-ref elements and only the second one has it.
+#
+# "grep -o" rather than a sed substitution, the same idiom the test lib's
+# pkginfo_attr uses and for the same reason: pkgbuild writes every attribute of
+# <pkg-info> on one line, and "s/.*name=\"\([^\"]*\)\".*/\1/p" has a greedy .*
+# in front of it, so it answers for the LAST match on the line - again a
+# different attribute. -o prints one match per line instead.
+#
+# The (^|[[:space:]]) boundary is what keeps "location" off "install-location"
+# and "permissions" off "overwrite-permissions". After the fold every line the
+# inner grep sees begins at "<", so "^" can never match an attribute and the
+# whitespace alternative carries the whole boundary.
+#
+# Two limits, neither reachable from a package this app or pkgbuild produced,
+# both worth knowing before this is pointed at arbitrary XML. "[^>]*" truncates
+# a tag at the first ">", so a raw ">" inside a quoted value would blank every
+# attribute of that element - both writers escape it as &gt;, which is why this
+# holds. And an element commented out with <!-- --> is still matched, so a
+# commented-out <pkg-info> ahead of the real one would be believed; neither
+# writer emits comments.
+xml_element_attribute() {
+    local file="$1" element="$2" name="$3"
+    [ -f "$file" ] || return 0
+    /usr/bin/tr '\n' ' ' < "$file" 2>/dev/null \
+        | /usr/bin/grep -o "<$element[[:space:]][^>]*>" \
+        | /usr/bin/grep -E "(^|[[:space:]])$name=\"" \
+        | /usr/bin/head -n 1 \
+        | /usr/bin/grep -o -E "(^|[[:space:]])$name=\"[^\"]*\"" \
+        | /usr/bin/head -n 1 \
+        | /usr/bin/sed -e 's/^[^"]*"//' -e 's/"$//' \
+        | { IFS= read -r raw_value || true; xml_unescape "$raw_value"; }
+}
+
+# Print the text of a simple XML element, first occurrence. Only good for an
+# element whose content has no markup in it, which is all this reads: <title>.
+xml_element_text() {
+    local file="$1" name="$2"
+    [ -f "$file" ] || return 0
+    /usr/bin/grep -o "<$name>[^<]*</$name>" "$file" 2>/dev/null \
+        | /usr/bin/head -n 1 \
+        | /usr/bin/sed -e "s|^<$name>||" -e "s|</$name>\$||" \
+        | { IFS= read -r raw_text || true; xml_unescape "$raw_text"; }
+}
+
+# Rewrite a file with every line prefixed. Used to indent a tool's output before
+# it goes into the log, so a report reads as one document rather than as a
+# transcript with things pasted into it.
+indent_file() {
+    local file="$1" prefix="$2"
+    [ -f "$file" ] || return 0
+    /usr/bin/sed -e "s/^/$prefix/" "$file" > "$file.indented" || return 1
+    /bin/mv "$file.indented" "$file"
+}
+
+# Print when a package was last written, local time.
+package_built_when() {
+    local package_path="$1"
+    [ -f "$package_path" ] || return 0
+    /bin/date -r "$package_path" '+%Y-%m-%d %H:%M:%S' 2>/dev/null
+}
+
+# Print a package's size the way du reports it, e.g. "1.2M".
+package_disk_size() {
+    local package_path="$1"
+    [ -f "$package_path" ] || return 0
+    /usr/bin/du -h "$package_path" 2>/dev/null | /usr/bin/awk '{print $1; exit}'
+}
+
+# Describe one expanded component directory: the PackageInfo attributes and the
+# BOM. Arguments: the directory holding PackageInfo and Bom, a label for it.
+inspect_component_dir() {
+    local component_dir="$1" label="$2"
+    local package_info="$component_dir/PackageInfo"
+    local bom="$component_dir/Bom"
+    local scratch="$(state_dir)/inspect-$$.txt"
+
+    append_log ""
+    append_log "Component $label:"
+    if [ ! -f "$package_info" ]; then
+        append_log "  ! no PackageInfo - this is not a component package"
+        return 0
+    fi
+
+    append_log "  identifier:            $(xml_element_attribute "$package_info" pkg-info identifier)"
+    append_log "  version:               $(xml_element_attribute "$package_info" pkg-info version)"
+    append_log "  install-location:      $(xml_element_attribute "$package_info" pkg-info install-location)"
+    append_log "  overwrite-permissions: $(xml_element_attribute "$package_info" pkg-info overwrite-permissions)"
+
+    # The relocate list, not a "relocatable" attribute: pkgbuild expresses
+    # relocatability by listing the bundles it will hunt for, and an empty
+    # <relocate/> is what design 8.2 forces for a non-relocatable package. So
+    # the honest report is which bundles Installer would go looking for.
+    if /usr/bin/grep -q '<relocate/>' "$package_info"; then
+        append_log "  relocatable:           no (empty relocate list)"
+    else
+        local relocated="$(/usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$package_info" \
+            | /usr/bin/grep -o 'id="[^"]*"' | /usr/bin/sed -e 's/^id="//' -e 's/"$//' \
+            | /usr/bin/tr '\n' ' ')"
+        if [ -n "$relocated" ]; then
+            append_log "  relocatable:           YES, Installer will hunt for: $relocated"
+        else
+            append_log "  relocatable:           no relocate element at all"
+        fi
+    fi
+
+    # auth is deliberately NOT read from here. pkgbuild always writes
+    # auth="root" into PackageInfo whatever the document says, which is why the
+    # Distribution pkg-ref carries the real value (design section 4). Reporting
+    # PackageInfo's copy would tell a user who chose "User" that they had chosen
+    # "Root", which is precisely the confusion this whole feature is for.
+
+    if [ ! -f "$bom" ]; then
+        append_log "  ! no Bom"
+        return 0
+    fi
+    /usr/bin/lsbom -p fugm "$bom" > "$scratch" 2>/dev/null
+    local entry_count="$(/usr/bin/grep -c . "$scratch" | /usr/bin/tr -d ' ')"
+    # The house guard, which model_count and the test lib both apply and this
+    # was the one counter in the app that did not. "grep -c" on a file that
+    # always exists cannot currently print anything but a number, so this is
+    # consistency rather than a live fix - but "[ "" -gt 200 ]" is a hard error,
+    # not a false, and the next person to change how $scratch is produced should
+    # not have to notice that.
+    case "$entry_count" in
+        ''|*[!0-9]*) entry_count=0 ;;
+    esac
+    append_log ""
+    append_log "  Payload, $entry_count item(s):"
+    if [ "$entry_count" -gt "$PB_INSPECT_BOM_LINES" ]; then
+        /usr/bin/head -n "$PB_INSPECT_BOM_LINES" "$scratch" > "$scratch.cut"
+        /bin/mv "$scratch.cut" "$scratch"
+    fi
+    indent_file "$scratch" "    "
+    append_log_file "$scratch"
+    if [ "$entry_count" -gt "$PB_INSPECT_BOM_LINES" ]; then
+        append_log "    ... and $((entry_count - PB_INSPECT_BOM_LINES)) more, not listed"
+    fi
+    /bin/rm -f "$scratch"
+    return 0
+}
+
+# Take a built package apart and describe it in the log. Returns non-zero only
+# when the package could not be expanded at all.
+# Arguments: package path, a short phrase naming which package this is
+inspect_package() {
+    local package_path="$1" kind="$2"
+    # Both names carry this handler's pid. state_dir is per WINDOW, the Actions
+    # menu is never disabled while an inspection runs, and commands are async -
+    # so a second click during a slow pkgutil --expand had the two runs sharing
+    # one expansion directory and one scratch file. The second run's "rm -rf"
+    # deleted the first run's expansion mid-read, which made it report "no
+    # PackageInfo - this is not a component package" about a perfectly good
+    # package, and each run's tool output landed in the other's report.
+    #
+    # Exactly the bug the folder scan had, found the same way, fixed the same
+    # way. Found in review, 2026-08-23.
+    local expand_dir="$(state_dir)/inspect-$$"
+    local scratch="$(state_dir)/inspect-$$.txt"
+
+    append_log "Inspecting the $kind:"
+    append_log ""
+    append_log "  $package_path"
+    # The timestamp is not decoration. Only run_pipeline clears all three
+    # built_*.txt records; each partial step clears just its own, so a signed
+    # package from an earlier build stays on disk and stays recorded, and the
+    # chain above will pick it over the component that was just built. The label
+    # is always right about WHICH artifact is being read - every built_*_path
+    # checks the file is still there - but nothing else in the report would
+    # distinguish a fresh package from last week's. Found in review, 2026-08-23.
+    append_log "  $(package_disk_size "$package_path") on disk, built $(package_built_when "$package_path")"
+    append_log ""
+
+    # Read from the flat package, never from the expansion: an expanded package
+    # is a directory and carries no signature at all. That is the same fact that
+    # makes patch_overwrite_permissions a re-flatten rather than an edit.
+    append_log "Signature:"
+    "$pkgutil_tool" --check-signature "$package_path" > "$scratch" 2>&1
+    # The status is not tested. An unsigned package makes pkgutil exit non-zero,
+    # and an unsigned package is a legitimate thing to be looking at - design 8.3
+    # keeps one out of the output folder but the intermediate is still here, and
+    # "is this actually signed" is one of the two questions this feature exists
+    # to answer.
+    indent_file "$scratch" "  "
+    append_log_file "$scratch"
+    /bin/rm -f "$scratch"
+
+    /bin/rm -rf "$expand_dir"
+    if ! "$pkgutil_tool" --expand "$package_path" "$expand_dir" > "$scratch" 2>&1; then
+        append_log ""
+        append_log "Could not expand the package:"
+        indent_file "$scratch" "  "
+        append_log_file "$scratch"
+        /bin/rm -f "$scratch"
+        /bin/rm -rf "$expand_dir"
+        return 1
+    fi
+    /bin/rm -f "$scratch"
+
+    local distribution="$expand_dir/Distribution"
+    if [ -f "$distribution" ]; then
+        append_log ""
+        append_log "Distribution:"
+        append_log "  title:                 $(xml_element_text "$distribution" title)"
+        local architectures="$(xml_element_attribute "$distribution" options hostArchitectures)"
+        append_log "  hostArchitectures:     ${architectures:-(any)}"
+        append_log "  customize:             $(xml_element_attribute "$distribution" options customize)"
+        append_log "  require-scripts:       $(xml_element_attribute "$distribution" options require-scripts)"
+        local min_os="$(xml_element_attribute "$distribution" os-version min)"
+        append_log "  minimum macOS:         ${min_os:-(none declared)}"
+        # This is where auth really lives, and the label says so because a user
+        # who goes looking will find auth="root" in PackageInfo and believe it.
+        append_log "  auth (the real one):   $(xml_element_attribute "$distribution" pkg-ref auth)"
+        local resource
+        for resource in readme license welcome conclusion background; do
+            local file_attr="$(/usr/bin/grep -o "<$resource file=\"[^\"]*\"" "$distribution" 2>/dev/null \
+                | /usr/bin/head -n 1 | /usr/bin/sed -e 's/^.*file="//' -e 's/"$//')"
+            [ -n "$file_attr" ] || continue
+            append_log "  $resource: $file_attr"
+        done
+    fi
+
+    # A distribution package holds its components as <name>.pkg directories; a
+    # component package built on its own IS one, with PackageInfo at the top.
+    local component_dir found_component=0
+    for component_dir in "$expand_dir"/*.pkg; do
+        [ -d "$component_dir" ] || continue
+        inspect_component_dir "$component_dir" "$(/usr/bin/basename "$component_dir")"
+        found_component=1
+    done
+    if [ "$found_component" = "0" ]; then
+        inspect_component_dir "$expand_dir" "$(/usr/bin/basename "$package_path")"
+    fi
+
+    /bin/rm -rf "$expand_dir"
+    return 0
+}

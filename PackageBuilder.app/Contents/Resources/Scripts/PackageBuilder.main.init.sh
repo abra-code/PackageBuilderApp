@@ -28,6 +28,10 @@ if [ "$opened" != "1" ]; then
         set_status "Could not start a new project - the document template is missing"
         exit 0
     fi
+    # Only here, and only for a genuinely new document. An opened one already
+    # carries its own choices, and overwriting them with this machine's habits
+    # would edit a project just by looking at it.
+    apply_new_document_defaults
 fi
 
 push_model_to_window

@@ -153,6 +153,165 @@ omc_run PackageBuilder.window.activated
 check "model untouched"          "com.changed.externally"    "$(model /COMPONENTS/0/IDENTIFIER)"
 check "doc_path kept"            "$watched"                  "$(doc_path)"
 
+section "18. a fresh profile has no preferences file, and a new project does not create one"
+# The defaults are READ on every new document, and prefs_get must not bring the
+# file into being on the way past - only prefs_set does that, through
+# prefs_ensure. A settings file that appears merely because the app was opened
+# is how a "clean profile" test stops meaning anything.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+check_absent "no prefs file yet" "$(prefs_path)"
+check "and no output folder"     ""                          "$(model /PROJECT/OUTPUT_DIR)"
+check "still clean"              "0"                         "$(dirty)"
+
+section "19. choosing an output folder is remembered"
+/bin/mkdir -p "$OMCTEST_WORK/dist-out"
+omc_dialog_answer choose_folder "$OMCTEST_WORK/dist-out"
+omc_run PackageBuilder.choose.output
+out_dir="$(real_path "$OMCTEST_WORK/dist-out")"
+check "the document has it"      "$out_dir"                  "$(model /PROJECT/OUTPUT_DIR)"
+check_exists "the prefs file now exists" "$(prefs_path)"
+check "and it was remembered"    "$out_dir"                  "$(pref default_output_dir)"
+
+section "20. the next new project starts in the remembered folder"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+check "seeded from preferences"  "$out_dir"                  "$(model /PROJECT/OUTPUT_DIR)"
+# Seeding is not an edit. A window that asks to be saved before the user has
+# typed anything is a nuisance, and there is nothing to lose by discarding it:
+# the next new document reads the same preference again.
+check "and the document is clean" "0"                        "$(dirty)"
+check "the field shows it too"   "$out_dir"                  "$(ui_value $OUTPUT_DIR_ID)"
+
+section "21. a remembered folder that has been deleted is not used"
+/bin/rm -rf "$OMCTEST_WORK/dist-out"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+# Refused rather than seeded: a path that is not there fails the build's output
+# precondition, and doing that to a user over a choice they made weeks ago and
+# did not repeat is worse than starting empty.
+check "left empty"               ""                          "$(model /PROJECT/OUTPUT_DIR)"
+check "the preference is kept"   "$out_dir"                  "$(pref default_output_dir)"
+
+section "22. an opened document is never touched by the defaults"
+# The defaults belong to File > New alone. A project carries its own choices,
+# and seeding one on open would edit it just by looking at it - and, worse,
+# would do so silently on a machine whose habits differ from the author's.
+/bin/mkdir -p "$OMCTEST_WORK/dist-out2"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer choose_folder "$OMCTEST_WORK/dist-out2"
+omc_run PackageBuilder.choose.output
+check "remembered again"         "$(real_path "$OMCTEST_WORK/dist-out2")" "$(pref default_output_dir)"
+reset_state
+sample="$(work_copy Sample.pkgbld Untouched.pkgbld)"
+omc_object "$sample"
+omc_run PackageBuilder.main.init
+check "the document's own value" "../replay-Distributions"   "$(model /PROJECT/OUTPUT_DIR)"
+check "and it is clean"          "0"                         "$(dirty)"
+# The check above cannot fail on its own, and saying so is the point of this
+# block. apply_new_document_defaults only writes into a field that is EMPTY, and
+# Sample.pkgbld names an output folder - so it would pass even if the defaults
+# ran on every open. The document that proves the claim is one with the field
+# empty: if seeding leaked into the open path, THIS is where it would show.
+# Found in review, 2026-08-23.
+reset_state
+blank="$(work_copy Sample.pkgbld NoOutput.pkgbld)"
+pl set string "" "$blank" /PROJECT/OUTPUT_DIR >/dev/null 2>&1
+omc_object "$blank"
+omc_run PackageBuilder.main.init
+check "an empty field stays empty" ""                        "$(model /PROJECT/OUTPUT_DIR)"
+check "still clean"              "0"                         "$(dirty)"
+# And the preference really was set at the time, so the check above is not
+# passing because there was nothing to seed with.
+check "the preference was live"  "$(real_path "$OMCTEST_WORK/dist-out2")" "$(pref default_output_dir)"
+
+section "23. a remembered identity is used only when this keychain has it"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+pb_call prefs_set default_installer_identity "Developer ID Installer: Nobody At All (ZZZZZZZZZZ)"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+# The stale half, which needs no certificate to prove and is the half that
+# matters: seeding an identity this machine cannot use produces a project that
+# fails its signing precondition for a reason the user never chose here.
+check "a stranger is refused"    ""                          "$(model /SIGNING/INSTALLER_IDENTITY)"
+# Proof that the check above means something. Under the suite's isolated HOME
+# list_installer_identities returns nothing, so "the identity was not seeded"
+# would also be true if apply_new_document_defaults had never run - or if its
+# grep were broken. The output folder is seeded by the same call from the same
+# still-live preference, so this says the function did execute and reached its
+# second branch. Found in review, 2026-08-23.
+check "but the defaults did run" "$(real_path "$OMCTEST_WORK/dist-out2")" "$(model /PROJECT/OUTPUT_DIR)"
+section "24. picking an identity remembers it; the app writing the picker does not"
+# Neither half needs a certificate. remember_default_identity never consults the
+# keychain - only apply_new_document_defaults does - so both are testable on any
+# machine, which the first version of these tests missed by putting them inside
+# the certificate skip. Found in review, 2026-08-23.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+pb_call prefs_set default_installer_identity ""
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "Developer ID Installer: Someone Real (AAAAAAAAAA)"
+check "the document has it"      "Developer ID Installer: Someone Real (AAAAAAAAAA)" "$(model /SIGNING/INSTALLER_IDENTITY)"
+check "and it was remembered"    "Developer ID Installer: Someone Real (AAAAAAAAAA)" "$(pref default_installer_identity)"
+
+section "25. an echoed programmatic write never touches the preference"
+# push_model_to_window writes this picker on EVERY document that opens. If such
+# an echo reached the preference, merely opening a project would retarget the
+# user's default to whatever that project names, and every later File > New
+# would inherit it. Two things stop it: loading_in_progress, simulated here, and
+# the value-equality exit that the write now sits behind.
+pb_set loading "$(/bin/date '+%s')"
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "Developer ID Installer: Somebody Else (BBBBBBBBBB)"
+pb_set loading ""
+check "the document is untouched" "Developer ID Installer: Someone Real (AAAAAAAAAA)" "$(model /SIGNING/INSTALLER_IDENTITY)"
+check "and so is the preference"  "Developer ID Installer: Someone Real (AAAAAAAAAA)" "$(pref default_installer_identity)"
+# The other half of the defense, with no loading flag set at all: an event
+# carrying the value the model already holds is the engine echoing a write back,
+# not a person choosing anything.
+pb_call prefs_set default_installer_identity "Developer ID Installer: Untouched (CCCCCCCCCC)"
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "Developer ID Installer: Someone Real (AAAAAAAAAA)"
+# The preference deliberately holds a DIFFERENT value here, so "inert" is a real
+# claim: if the echo reached the write, this would have been overwritten with
+# the picker's value.
+check "an unchanged value is inert" "Developer ID Installer: Untouched (CCCCCCCCCC)" "$(pref default_installer_identity)"
+check "and the document is too"  "Developer ID Installer: Someone Real (AAAAAAAAAA)" "$(model /SIGNING/INSTALLER_IDENTITY)"
+
+section "26. a remembered identity is seeded only when this keychain has it"
+real_identity="$(keychain_identity)"
+if [ -n "$real_identity" ]; then
+    pb_call prefs_set default_installer_identity "$real_identity"
+    reset_state
+    omc_object ""
+    omc_run PackageBuilder.main.init
+    check "a real one is seeded"  "$real_identity"           "$(model /SIGNING/INSTALLER_IDENTITY)"
+    check "and it is still clean" "0"                        "$(dirty)"
+    # The picker is the only gesture that says "this is the one I want", so it
+    # is the only one that writes the preference.
+    reset_state
+    omc_object ""
+    omc_run PackageBuilder.main.init
+    pb_call prefs_set default_installer_identity ""
+    omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "$real_identity"
+    check "picking it remembers"  "$real_identity"           "$(pref default_installer_identity)"
+    check "and the document has it" "$real_identity"         "$(model /SIGNING/INSTALLER_IDENTITY)"
+else
+    # Not a comment on this machine: omctest isolates $HOME, the keychain
+    # search list lives in ~/Library/Preferences, and so "security
+    # find-identity" reports nothing under the suite however many certificates
+    # are really installed. The stale-identity half above is the one that can
+    # be proved here, and it is the half that decides whether a bad default
+    # reaches a project.
+    skip_section "26 (second half): no identity is visible under the suite's isolated HOME"
+fi
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 # unknown_ids.log accumulates across the whole file and nothing resets it, so
 # one assertion here covers every section above. The per-section copy in the

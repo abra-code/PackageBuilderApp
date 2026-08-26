@@ -180,6 +180,32 @@ if [ "$failed" = "1" ]; then
 fi
 
 mark_dirty
+
+# Only now, and only for the picker. Everything above has to have held for
+# execution to arrive here: loading_in_progress returned, so this is not
+# push_model_to_window writing the picker as a document opens; the value differed
+# from the model, so it is not the engine echoing a programmatic write back; and
+# the write itself succeeded.
+#
+# That belt-and-braces placement is deliberate and was not the first attempt.
+# Sitting up beside resolve_identity_value, this had only the loading flag
+# between it and disaster - and that flag is cleared two dialog_tool spawns after
+# the picker is written (push_model_to_window), so an echoed event arriving even
+# slightly late would slip past it. Every other write in this handler has always
+# had the value-equality exit as a second line of defense; before this feature
+# existed, an escaped echo simply matched the model and exited, costing nothing.
+# A preference is different: it outlives the document and every later File > New
+# inherits it, so merely opening a project would have quietly retargeted the
+# user's default to whatever that project named. Found in review, 2026-08-23.
+#
+# The cost is that re-picking the identity a document already names does not
+# refresh the preference. That is a gesture with nothing to say - the value is
+# what it already was - and it is a fair price for a write that cannot fire by
+# accident.
+if [ "$vid" = "$IDENTITY_PICKER_ID" ]; then
+    remember_default_identity "$value"
+fi
+
 model_unlock
 
 exit 0

@@ -285,6 +285,12 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.inspect",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "PackageBuilder.reveal",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"

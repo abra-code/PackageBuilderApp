@@ -111,10 +111,51 @@ script; import of a Packages.app `.pkgproj`; and the handoff to Notarize.app.
 Beyond the original plan there is an agent CLI at
 `Contents/Resources/Agents/pkgbuilder`, a document format verifier, and a skill.
 
-Not implemented: **Inspect Built Package** is a disabled placeholder in the
-Actions menu, and per-project preferences are unwired.
+Phase 5 is now complete: Actions > Inspect Built Package takes the package apart
+and reports what is actually in it, and the two app-wide defaults are
+remembered.
 
 See `Private/Design.md` for the full specification and the phasing plan.
+
+## Inspecting what was built
+
+Actions > Inspect Built Package expands the package into a scratch directory,
+reports, and throws the expansion away. It reads the most finished package there
+is - the signed installer, or the unsigned distribution package when signing is
+off, or the component package after Build Component Only - and says which one it
+is looking at.
+
+What it reports is the artifact, not the document: the signature, the
+Distribution settings, and for each component the identifier, version, install
+location, `overwrite-permissions`, the relocate list, and the BOM with owners and
+modes. Two of those are the reason the feature is worth having.
+
+**`auth` is read from the Distribution, and labeled.** `pkgbuild` writes
+`auth="root"` into `PackageInfo` whatever the project says, so a user who goes
+looking for it finds the wrong answer in the obvious place. The document's real
+value lands on the Distribution `pkg-ref`, and that is what the report shows.
+
+**The BOM lists the parent directories, not just your files.** A payload into
+`/usr/local/bin` gives a BOM carrying `./usr/local` as `root:wheel`. Seeing that
+next to `overwrite-permissions: false` is the whole of why that correction
+exists.
+
+## What it remembers
+
+Two app-wide defaults live in
+`~/Library/Application Support/PackageBuilder/prefs.plist`: the installer
+identity you last chose from the picker, and the last output folder you picked
+through Browse. A new project starts with both filled in.
+
+They seed **new** projects only. An opened project carries its own choices and is
+never touched, and seeding does not mark a document dirty - a fresh window does
+not ask to be saved before you have typed anything. A remembered identity that is
+not in this machine's keychain, or a folder that has been deleted, is skipped
+rather than filled in: starting empty beats starting with a value that fails a
+build precondition for a choice you made weeks ago on another machine.
+
+The agent CLI deliberately does not read them. `pkgbuilder new` in a CI job has
+to produce the same document on every machine, whoever last used the window.
 
 ## Building the applet
 
@@ -137,7 +178,7 @@ To trace handler execution, `touch /tmp/packagebuilder_debug` and read
 "$AB" test PackageBuilder.app --tests Tests
 ```
 
-Eight files, around 670 checks. They drive the handler scripts under a
+Eight files, around 730 checks. They drive the handler scripts under a
 simulated OMC environment and assert on the model file and the window calls the
 handlers produce, so the whole app is testable headlessly.
 

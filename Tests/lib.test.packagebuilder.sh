@@ -308,6 +308,40 @@ signing_identity() {
         | /usr/bin/sed 's/.*"\(.*\)".*/\1/' | /usr/bin/head -n 1
 }
 
+# --- The applet's own preferences file ----------------------------------------
+# omctest isolates $HOME per test FILE, so everything below reads and writes a
+# throwaway profile and cannot touch the preferences of whoever runs the suite.
+# That isolation is the harness's guarantee, not this file's, and it is why
+# these can be asserted at all. Note that omctest pre-creates ~/Library and
+# ~/Library/Application Support but deliberately NOT the applet's own directory,
+# which is what makes "opening a window created no settings file" a real check.
+prefs_path() { printf '%s/Library/Application Support/PackageBuilder/prefs.plist' "$HOME"; }
+
+# A directory as the app will have spelled it. OMCTEST_WORK is built from
+# TMPDIR, which on macOS is /var/folders/... and ends in a slash; every path the
+# app records has been through canonical_path first, which resolves /var to
+# /private/var and collapses the doubled slash. Comparing a raw OMCTEST_WORK
+# path against a stored one therefore fails on the spelling while every
+# behavior it was meant to check is correct - the same trap state_dir carries a
+# note about above.
+real_path() { # <existing directory>
+    ( cd -P "$1" 2>/dev/null && /bin/pwd -P )
+}
+pref() { pl get value "$(prefs_path)" "/$1" 2>/dev/null; }
+
+# The Developer ID Installer identity to seed a preference with, empty when this
+# machine has none. Distinct from signing_identity only in intent: this one is
+# never used to sign anything, it is a string that has to be in the keychain for
+# apply_new_document_defaults to accept it.
+# NOTE: this is empty under the suite even on a machine that has such a
+# certificate. The keychain search list lives in ~/Library/Preferences, and
+# omctest isolates $HOME - so "security find-identity" inside a test sees an
+# empty profile and reports no identities. Verified directly: the same command
+# with HOME pointed at an empty directory finds 0 valid identities on a machine
+# where it otherwise finds two. Anything needing a real identity has to skip,
+# and the skip should say this rather than blame the machine.
+keychain_identity() { signing_identity; }
+
 # --- Per-window state the applet keeps in the pasteboard ----------------------
 
 pb_key() { printf 'pb_%s_%s' "$1" "$(document_uuid)"; }
