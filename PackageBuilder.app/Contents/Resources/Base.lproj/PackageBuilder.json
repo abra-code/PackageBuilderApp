@@ -109,6 +109,14 @@
                                     "title": "Import Packages.app Project...",
                                     "actionID": "PackageBuilder.import.pkgproj"
                                 }
+                            },
+                            {
+                                "type": "Button",
+                                "id": 328,
+                                "properties": {
+                                    "title": "Import Built Package...",
+                                    "actionID": "PackageBuilder.import.pkg"
+                                }
                             }
                         ]
                     },

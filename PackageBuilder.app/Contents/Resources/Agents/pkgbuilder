@@ -258,11 +258,12 @@ Usage:
   pkgbuilder inspect <package.pkg>
   pkgbuilder export-script <doc> <out.sh>
   pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbld> [--force]
+  pkgbuilder import-pkg <in.pkg> <out.pkgbld> [--force]
   pkgbuilder schema
 
 Diagnostics go to stderr; capturable results go to stdout.
-"new" and "import-pkgproj" add .pkgbld when the destination has no extension,
-and keep one you spelled. Either way they print the path actually written.
+"new", "import-pkgproj" and "import-pkg" add .pkgbld when the destination has
+no extension, and keep one you spelled. Either way they print the path actually written.
 Exit: 0 ok, 2 warnings or usage error, 1 errors. See README.md for details.
 USAGE
 }
@@ -910,6 +911,52 @@ cmd_import_pkgproj() {
     return 0
 }
 
+# Same shape as import-pkgproj, and deliberately so: both build a fresh document
+# from somebody else's file, both settle the destination the way "new" does, and
+# both refuse to overwrite without --force. Only the reader differs.
+cmd_import_pkg() {
+    local source_path="$1" destination="$2"
+    shift 2 2>/dev/null
+    local force="0"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) force="1"; shift ;;
+            *) fail_usage "import-pkg: unknown option: $1"; return 2 ;;
+        esac
+    done
+    case "$destination" in
+        ''|-*) fail_usage "import-pkg: <in.pkg> and <out.pkgbld> are required"; return 2 ;;
+    esac
+    # -e, not -f: an old bundle-format package is a DIRECTORY named .pkg, and a
+    # file test rejected it as "no such package" while it sat there in plain
+    # sight. It still cannot be imported, but import_pkg is the thing that knows
+    # why and says so.
+    if [ ! -e "$source_path" ]; then
+        printf 'pkgbuilder: no such package: %s\n' "$source_path" >&2
+        return 1
+    fi
+    settle_destination "$destination" || return 1
+    destination="$document_destination"
+    if [ -e "$destination" ] && [ "$force" != "1" ]; then
+        printf 'pkgbuilder: %s already exists; pass --force to replace it\n' "$destination" >&2
+        return 1
+    fi
+    . "$SCRIPTS_DIR/lib.packagebuilder.importpkg.sh"
+    new_document || return 1
+    model_normalize
+    # The destination on record before the import, so OUTPUT_DIR is stored
+    # relative to where the document will live (design 4.2).
+    set_doc_path "$destination"
+    if ! import_pkg "$(canonical_path "$source_path")"; then
+        printf 'pkgbuilder: nothing usable in %s\n' "$source_path" >&2
+        return 1
+    fi
+    write_document "$destination" || return 1
+    printf 'Imported: %s\n' "$destination" >&2
+    printf '%s\n' "$destination"
+    return 0
+}
+
 # --- schema -------------------------------------------------------------------
 
 # The schema lives beside this tool as a file rather than inside it, so an
@@ -943,6 +990,7 @@ case "$subcommand" in
     inspect)        cmd_inspect "$@" ;;
     export-script)  cmd_export_script "$@" ;;
     import-pkgproj) cmd_import_pkgproj "$@" ;;
+    import-pkg)     cmd_import_pkg "$@" ;;
     schema)         cmd_schema ;;
     -h|--help|help) usage; exit 2 ;;
     '')             usage; exit 2 ;;

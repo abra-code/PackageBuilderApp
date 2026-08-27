@@ -107,13 +107,18 @@ and the per-item inspector; the verify stage with its diagnostics and a Stop
 that asks the build to stop rather than killing it; `pkgbuild` with the
 `overwrite-permissions` and `--component-plist` corrections; `Distribution.xml`
 generation; `productbuild` and `productsign`; export as a standalone packaging
-script; import of a Packages.app `.pkgproj`; and the handoff to Notarize.app.
+script; import of a Packages.app `.pkgproj`; import of a built `.pkg`; and the
+handoff to Notarize.app.
 Beyond the original plan there is an agent CLI at
 `Contents/Resources/Agents/pkgbuilder`, a document format verifier, and a skill.
 
 Phase 5 is now complete: Actions > Inspect Built Package takes the package apart
 and reports what is actually in it, and the two app-wide defaults are
 remembered.
+
+A document holds one component. A multi-component package imports its first and
+names the rest in the log; `Private/Multi_Component_Support.md` records what
+lifting that limit would take, and why it has not been.
 
 See `Private/Design.md` for the full specification and the phasing plan.
 
@@ -139,6 +144,35 @@ value lands on the Distribution `pkg-ref`, and that is what the report shows.
 `/usr/local/bin` gives a BOM carrying `./usr/local` as `root:wheel`. Seeing that
 next to `overwrite-permissions: false` is the whole of why that correction
 exists.
+
+## Starting from a package you already have
+
+Actions > Import Built Package... is the other direction: it reads a flat `.pkg`
+and writes the document that would produce it. Identifier, install location,
+`overwrite-permissions`, whether the bundles are relocatable, `auth` from the
+Distribution `pkg-ref`, the payload with every mode and owner from the BOM, the
+Distribution options, and the installer identity read out of the package's own
+certificate rather than out of this machine's keychain - so it works on somebody
+else's package, and on one whose certificate has expired.
+
+The payload comes back as artifacts, not as files. A bundle is one entry rather
+than the thousands inside it, and a component whose install location is itself a
+bundle - a framework - becomes a single entry with the install location set to
+the bundle's parent, which is the document you would have written by dropping
+that framework on the payload table.
+
+The one thing a package cannot carry is where its artifacts came from. Every
+`SOURCE` arrives as `${ARTIFACTS_DIR}/<name>` and the artifacts folder is left
+empty, so the document is well-formed but refuses to build until you point that
+one field at a build folder. That refusal is deliberate: an empty
+`${ARTIFACTS_DIR}` would otherwise collapse to `/usr/local/bin/tool`, which very
+likely exists and is the previously installed copy.
+
+Everything that could not come across is named in the log rather than dropped
+quietly - the further components of a multi-component package, install scripts
+and presentation resources, which are in the package but are not extracted to
+disk, and any payload over 500 items, which is a file tree rather than a list of
+artifacts. In that last case the rest of the document still lands.
 
 ## What it remembers
 

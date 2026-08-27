@@ -208,6 +208,36 @@ stores and this model does not carry - the presentation model beyond the readme,
 the excluded-file patterns, the requirement list, and the filesystem template tree -
 is dropped, and the log names each dropped thing.
 
+### import-pkg - recover a document from a built package
+
+```
+pkgbuilder import-pkg <in.pkg> <out.pkgbld> [--force]
+```
+
+The reverse of the build, as far as a package can be reversed. Reads a flat
+`.pkg` - one this app built, or anybody's - and writes the document that would
+produce it: identifier, install location, `overwrite-permissions`, the relocate
+list, `auth` from the Distribution's `pkg-ref`, the payload with its modes and
+owners, the Distribution options, and the installer identity read out of the
+package's own certificate.
+
+The payload is collapsed back to artifacts rather than files: a bundle arrives as
+one entry, not as the thousands inside it, and a component whose install location
+is itself a bundle - a framework - arrives as a single entry with the install
+location set to the bundle's parent.
+
+What a package cannot carry is where its artifacts came from. Every `SOURCE` is
+written as `${ARTIFACTS_DIR}/<name>` and the artifacts folder is left empty, so
+the document is well-formed but will not build until you set it - which is the
+point, since design 4.3 makes an unset `${ARTIFACTS_DIR}` a hard precondition
+failure rather than a path that silently resolves to an installed copy.
+
+Also not imported, each named in the log: the further components of a
+multi-component package (this model holds one), the install scripts and
+presentation resources, which are in the package but are not extracted, and any
+payload over 500 items, which is a file tree rather than a list of artifacts -
+there the rest of the document still lands.
+
 ### schema - the document format
 
 ```

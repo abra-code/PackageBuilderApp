@@ -180,6 +180,12 @@ sh makepkg.sh --version 2.1 --artifacts-dir ./build --output-dir ./dist
 
 # Look inside a built package.
 "$PB" inspect dist/widget_2.0.pkg
+
+# Recover a document from a built package. Everything comes back except the
+# payload sources, which arrive as ${ARTIFACTS_DIR} placeholders - set the
+# artifacts folder before building.
+"$PB" import-pkg dist/widget_2.0.pkg recovered.pkgbld
+"$PB" set recovered.pkgbld /PROJECT/ARTIFACTS_DIR ./build
 ```
 
 ## Notarization

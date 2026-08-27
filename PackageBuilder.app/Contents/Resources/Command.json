@@ -314,6 +314,22 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.import.pkg",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file",
+      "WAIT_FOR_TASK_COMPLETION": true,
+      "CHOOSE_FILE_DIALOG": {
+        "MESSAGE": "Choose a built package to import",
+        "BUTTON_PROMPT": "Import",
+        "ALLOWED_CONTENT_TYPES": [
+          "com.apple.installer-package-archive",
+          "com.apple.installer-package",
+          "com.apple.installer-meta-package"
+        ]
+      }
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "PackageBuilder.export.script",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file",
