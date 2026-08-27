@@ -32,7 +32,7 @@ importpkg_expand_dir=""
 # than a tree and the verify block cannot be filled from real binaries.
 importpkg_payload_opaque=0
 
-# One collected payload record per line in $(state_dir)/importpkg.entries:
+# One collected payload record per line in the component's entries file:
 # relative path, destination, mode, owner, group - separated by the unit
 # separator, which no path produced by pkgbuild can contain.
 importpkg_record_separator="$(printf '\037')"
@@ -93,21 +93,38 @@ importpkg_expand() {
     return 1
 }
 
+# Which component's collected payload the three files below belong to.
+#
+# A package holds several components and each has its own payload, its own notes
+# and its own reason for being refused. They are collected in one pass before
+# anything is written, so all of them exist at once and cannot share a file name.
+# Empty for the first, so the names a person sees while debugging a
+# single-component import are the names they always were.
+importpkg_slot=""
+
+importpkg_entries_file() { printf '%s/importpkg.entries%s' "$(state_dir)" "$importpkg_slot"; }
+importpkg_notes_file()   { printf '%s/importpkg.notes%s' "$(state_dir)" "$importpkg_slot"; }
+importpkg_refusal_file() { printf '%s/importpkg.refusal%s' "$(state_dir)" "$importpkg_slot"; }
+
 # Remove everything the import created. Called from every exit of import_pkg,
 # success or failure: a half-written entries file surviving a refusal is
 # harmless, because the next run truncates it, but relying on that is below the
 # standard the rest of this file keeps.
 importpkg_cleanup() {
     [ -z "$importpkg_expand_dir" ] || /bin/rm -rf "$importpkg_expand_dir"
-    /bin/rm -f "$(state_dir)/importpkg.entries" \
+    # Globbed: there is one set of these per component, and the slot suffix
+    # that named them is whatever the last run reached rather than something
+    # this function can recompute.
+    /bin/rm -f "$(state_dir)"/importpkg.entries* \
+               "$(state_dir)"/importpkg.notes* \
+               "$(state_dir)"/importpkg.refusal* \
+               "$(state_dir)"/importpkg.readable* \
                "$(state_dir)/importpkg.components" \
                "$(state_dir)/importpkg.components.refs" \
                "$(state_dir)/importpkg.bundles" \
                "$(state_dir)/importpkg.bom" \
                "$(state_dir)/importpkg.bom.notes" \
-               "$(state_dir)/importpkg.notes" \
                "$(state_dir)/importpkg.sources" \
-               "$(state_dir)/importpkg.refusal" \
                "$(state_dir)/importpkg-$$.dropped" \
                "$(state_dir)/importpkg-$$.log" \
                "$(state_dir)/importpkg-$$.toc" \
@@ -226,7 +243,7 @@ importpkg_collect_payload() {
     local component_dir="$1" install_location="$2" whole_bundle="$3"
     local bom="$component_dir/Bom"
     local package_info="$component_dir/PackageInfo"
-    local entries_file="$(state_dir)/importpkg.entries"
+    local entries_file="$(importpkg_entries_file)"
     local bundles_file="$(state_dir)/importpkg.bundles"
     local bom_file="$(state_dir)/importpkg.bom"
 
@@ -238,7 +255,7 @@ importpkg_collect_payload() {
     # be one, which is a legitimate package and a legitimate thing to import.
     if [ ! -f "$bom" ]; then
         printf '%s\n' "  this component installs no files - it carries only install scripts." \
-            > "$(state_dir)/importpkg.refusal"
+            > "$(importpkg_refusal_file)"
         return 2
     fi
 
@@ -293,7 +310,7 @@ importpkg_collect_payload() {
             printf '%s\n' "  which means a payload path contains a line break. lsbom writes one raw, so"
             printf '%s\n' "  the entry splits across two lines and the tail of it reads as a whole"
             printf '%s\n' "  record - the payload cannot be read without inventing entries."
-        } > "$(state_dir)/importpkg.refusal"
+        } > "$(importpkg_refusal_file)"
         /bin/rm -f "$bundles_file" "$bom_file"
         return 2
     fi
@@ -453,7 +470,7 @@ importpkg_collect_payload() {
             printf '%s\n' "  $(/usr/bin/sed -n 's/^malformed //p' "$bom_file.notes") line(s) of the BOM do not parse as entries, which means a payload"
             printf '%s\n' "  path contains a tab. A tab shifts the mode, owner and group columns along,"
             printf '%s\n' "  so the payload cannot be read without dropping items silently."
-        } > "$(state_dir)/importpkg.refusal"
+        } > "$(importpkg_refusal_file)"
         /bin/rm -f "$bundles_file" "$bom_file" "$bom_file.notes"
         return 2
     fi
@@ -461,7 +478,7 @@ importpkg_collect_payload() {
     # The notes survive this function on purpose. They belong under the
     # "Payload:" heading, which import_pkg has not written yet, and printing
     # them here put them above it where they read as part of the preamble.
-    /bin/mv -f "$bom_file.notes" "$(state_dir)/importpkg.notes" 2>/dev/null
+    /bin/mv -f "$bom_file.notes" "$(importpkg_notes_file)" 2>/dev/null
     /bin/rm -f "$bundles_file" "$bom_file"
     return 0
 }
@@ -470,7 +487,7 @@ importpkg_collect_payload() {
 # a payload that lost four symlinks to this import is a payload the next build
 # will not reproduce, and the only place that can be noticed is here.
 importpkg_log_notes() {
-    local notes_file="$(state_dir)/importpkg.notes"
+    local notes_file="$(importpkg_notes_file)"
     # Set by the loop below.
     local note_kind note_count
     [ -f "$notes_file" ] || return 0
@@ -540,7 +557,7 @@ importpkg_installer_identity() {
 # fallback when two entries would otherwise claim the same source.
 importpkg_apply_payload() {
     local payload_root="$1" whole_bundle_name="$2"
-    local entries_file="$(state_dir)/importpkg.entries"
+    local entries_file="$(importpkg_entries_file)"
     local used_file="$(state_dir)/importpkg.sources"
     # Set by the loop below.
     local relative destination mode_octal owner group overflow
@@ -584,7 +601,7 @@ importpkg_apply_payload() {
         printf '%s\n' "$source_name" >> "$used_file"
 
         entry_index="$(payload_count)"
-        "$plister" insert "$entry_index" dict "$(model_file)" /COMPONENTS/0/PAYLOAD || return 1
+        "$plister" insert "$entry_index" dict "$(model_file)" "/COMPONENTS/$PB_COMPONENT_INDEX/PAYLOAD" || return 1
 
         # The verify block describes what the NEXT build must produce, not what
         # this package happens to contain, so the three assertions a dropped
@@ -654,6 +671,171 @@ importpkg_apply_payload() {
     return 0
 }
 
+# --- reading one component out of several -------------------------------------
+
+# The file-name suffix that keeps component <n>'s collected payload apart from
+# the others. Empty for the first, so a single-component import writes and reads
+# the same three file names it always did.
+importpkg_slot_for() {
+    local component_index="$1"
+    [ "$component_index" = "0" ] || printf '.%s' "$component_index"
+    return 0
+}
+
+# The install location, when this component installs INTO a bundle rather than
+# into a directory - a framework, an app. Prints nothing otherwise.
+importpkg_whole_bundle() {
+    local component_dir="$1" install_location="$2"
+    [ "$install_location" != "/" ] || return 0
+    [ "$(importpkg_payload_is_bundle "$component_dir/Bom")" = "1" ] || return 0
+    printf '%s' "$install_location"
+    return 0
+}
+
+# The auth attribute of the terminal pkg-ref naming this identifier.
+#
+# Read for one identifier rather than for the first pkg-ref in the file. A
+# multi-component Distribution carries one per component, and taking the first
+# would give every component the first one's auth - which is exactly the kind of
+# wrong-but-plausible import that is never noticed until an installer asks for a
+# password it should not need, or fails to ask for one it should.
+#
+# The whole document is accumulated into one string first, because the elements
+# are not reliably one per line: productbuild pretty-prints, this app's own
+# generator writes one per line, and a hand-written Distribution may put the lot
+# on a single line.
+# Arguments: Distribution path, identifier
+importpkg_pkgref_auth() {
+    local distribution="$1" identifier="$2"
+    [ -n "$identifier" ] || return 0
+    [ -f "$distribution" ] || return 0
+    /usr/bin/awk -v want="$identifier" '
+        { all = all $0 " " }
+        END {
+            pos = 1
+            while ((found = index(substr(all, pos), "<pkg-ref ")) > 0) {
+                start = pos + found - 1 + 9
+                rest = substr(all, start)
+                close_at = index(rest, ">")
+                tag = (close_at > 0) ? substr(rest, 1, close_at - 1) : rest
+                if (index(tag, "id=\"" want "\"") > 0 && match(tag, /auth="[^"]*"/)) {
+                    print substr(tag, RSTART + 6, RLENGTH - 7)
+                    exit
+                }
+                pos = start
+            }
+        }
+    ' "$distribution" 2>/dev/null
+    return 0
+}
+
+# The title of the choice that holds this identifier's pkg-ref, which is what a
+# multi-component installer shows in its list. Prints nothing when the
+# Distribution has no choice for it.
+# Arguments: Distribution path, identifier
+importpkg_choice_title() {
+    local distribution="$1" identifier="$2"
+    [ -n "$identifier" ] || return 0
+    [ -f "$distribution" ] || return 0
+    /usr/bin/awk -v want="$identifier" '
+        { all = all $0 " " }
+        END {
+            pos = 1
+            while ((found = index(substr(all, pos), "<choice ")) > 0) {
+                start = pos + found - 1 + 8
+                rest = substr(all, start)
+                end_at = index(rest, "</choice>")
+                block = (end_at > 0) ? substr(rest, 1, end_at - 1) : rest
+                if (index(block, "<pkg-ref id=\"" want "\"") > 0 &&
+                    match(block, /title="[^"]*"/)) {
+                    print substr(block, RSTART + 7, RLENGTH - 8)
+                    exit
+                }
+                pos = start
+            }
+        }
+    ' "$distribution" 2>/dev/null
+    return 0
+}
+
+# Whether the choice holding this identifier starts selected. Prints 1 unless
+# the Distribution says start_selected="false", because that is what
+# productbuild does with a choice that says nothing.
+# Arguments: Distribution path, identifier
+importpkg_choice_selected() {
+    local distribution="$1" identifier="$2"
+    if [ -z "$identifier" ] || [ ! -f "$distribution" ]; then
+        printf '1'
+        return 0
+    fi
+    /usr/bin/awk -v want="$identifier" '
+        { all = all $0 " " }
+        END {
+            pos = 1
+            while ((found = index(substr(all, pos), "<choice ")) > 0) {
+                start = pos + found - 1 + 8
+                rest = substr(all, start)
+                end_at = index(rest, "</choice>")
+                block = (end_at > 0) ? substr(rest, 1, end_at - 1) : rest
+                if (index(block, "<pkg-ref id=\"" want "\"") > 0) {
+                    # Only the opening tag: an attribute after the first ">"
+                    # belongs to a pkg-ref, not to the choice.
+                    gt = index(block, ">")
+                    open_tag = (gt > 0) ? substr(block, 1, gt - 1) : block
+                    if (index(open_tag, "start_selected=\"false\"") > 0) print "0"
+                    else print "1"
+                    exit
+                }
+                pos = start
+            }
+            print "1"
+        }
+    ' "$distribution" 2>/dev/null
+    return 0
+}
+
+# Give the document exactly as many components as the package has.
+#
+# Shrinking matters as much as growing. Importing a two-component package into a
+# document that held five must not leave three of the old ones behind: they
+# would describe a project this package knows nothing about, and the build would
+# happily produce them.
+importpkg_resize_components() {
+    local wanted="$1"
+    local have="$(model_count /COMPONENTS)"
+    case "$have" in
+        ''|*[!0-9]*) have=0 ;;
+    esac
+    while [ "$have" -lt "$wanted" ]; do
+        "$plister" insert "$have" dict "$(model_file)" /COMPONENTS || return 1
+        have=$((have + 1))
+    done
+    # Removed from the end, so the index of every element still to be removed
+    # stays what it was. Removing from the front renumbers the rest under the
+    # loop, which leaves it deleting elements it has already passed.
+    while [ "$have" -gt "$wanted" ]; do
+        "$plister" remove "$(model_file)" "/COMPONENTS/$((have - 1))" || return 1
+        have=$((have - 1))
+    done
+    # Fills in every key the new components do not have yet, including their
+    # empty PAYLOAD arrays, before the write pass starts putting values in them.
+    model_normalize
+    return 0
+}
+
+# How many payload entries the document holds across all its components. Used
+# only to decide whether the "sources did not come across" note has anything to
+# be about.
+importpkg_total_payload_entries() {
+    local total=0 component_index=0
+    local component_total="$(component_count)"
+    while [ "$component_index" -lt "$component_total" ]; do
+        total=$((total + $(payload_count "$component_index")))
+        component_index=$((component_index + 1))
+    done
+    printf '%s' "$total"
+}
+
 # --- the import ---------------------------------------------------------------
 
 # Read a built package into the current document's model. The window is not
@@ -666,11 +848,14 @@ import_pkg() {
     local identifier version install_location overwrite relocatable auth
     local title min_os architectures customize require_scripts
     local identity project_name package_base payload_root
-    local scripts_note resource_note extra_index extra_info
+    local scripts_note resource_note component_index
     local whole_bundle payload_total payload_readable
+    local scripts_seen refused_any first_package_info
 
     importpkg_file="$package_path"
-    /bin/rm -f "$(state_dir)/importpkg.entries" "$(state_dir)/importpkg.refusal"
+    importpkg_slot=""
+    /bin/rm -f "$(state_dir)"/importpkg.entries* "$(state_dir)"/importpkg.refusal* \
+               "$(state_dir)"/importpkg.notes* "$(state_dir)"/importpkg.readable*
 
     if [ ! -r "$importpkg_file" ]; then
         append_log "! $(/usr/bin/basename "$package_path") cannot be read"
@@ -693,50 +878,67 @@ import_pkg() {
     case "$component_count" in
         ''|*[!0-9]*) component_count=0 ;;
     esac
-    component_dir="$(/usr/bin/head -n 1 "$components_file")"
-    package_info="$component_dir/PackageInfo"
     distribution="$importpkg_expand_dir/Distribution"
+    first_package_info="$(/usr/bin/head -n 1 "$components_file")/PackageInfo"
 
-    if [ ! -f "$package_info" ]; then
+    if [ ! -f "$first_package_info" ]; then
         append_log "! that package's first component has no PackageInfo"
         importpkg_cleanup
         return 1
     fi
 
-    # Everything is read before anything is written, so a refusal partway
-    # through cannot leave a half-imported model behind a window still showing
-    # the old values. The .pkgproj importer learned this in review; this one
-    # inherits it rather than rediscovering it.
-    identifier="$(xml_element_attribute "$package_info" pkg-info identifier)"
-    version="$(xml_element_attribute "$package_info" pkg-info version)"
-    install_location="$(xml_element_attribute "$package_info" pkg-info install-location)"
-    overwrite="$(xml_element_attribute "$package_info" pkg-info overwrite-permissions)"
-    [ -n "$install_location" ] || install_location="/"
+    # =========================================================================
+    # Read pass. Nothing below this point writes to the model until the write
+    # pass begins, so a refusal partway through cannot leave a half-imported
+    # document behind a window still showing the old values. The .pkgproj
+    # importer learned this in review; this one inherits it rather than
+    # rediscovering it - and with several components there is more to lose,
+    # because a failure on the fourth would otherwise strand three.
+    # =========================================================================
+    component_index=0
+    while [ "$component_index" -lt "$component_count" ]; do
+        importpkg_slot="$(importpkg_slot_for "$component_index")"
+        component_dir="$(/usr/bin/sed -n "$((component_index + 1))p" "$components_file")"
+        package_info="$component_dir/PackageInfo"
+        if [ ! -f "$package_info" ]; then
+            append_log "! component $((component_index + 1)) of that package has no PackageInfo"
+            importpkg_cleanup
+            return 1
+        fi
 
-    # Relocatability is a list, not an attribute. pkgbuild expresses it by naming
-    # the bundles Installer will hunt for, and design 8.2 forces that list empty;
-    # PackageInfo's own relocatable="..." attribute is written by pkgbuild
-    # whatever was asked for, exactly as auth is. So the honest reading is
-    # whether the relocate list has anything in it.
-    if /usr/bin/grep -q '<relocate/>' "$package_info" 2>/dev/null; then
-        relocatable=0
-    elif /usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$package_info" 2>/dev/null | /usr/bin/grep -q 'id="'; then
-        relocatable=1
-    else
-        relocatable=0
-    fi
+        install_location="$(xml_element_attribute "$package_info" pkg-info install-location)"
+        [ -n "$install_location" ] || install_location="/"
+        whole_bundle="$(importpkg_whole_bundle "$component_dir" "$install_location")"
+        [ -z "$whole_bundle" ] || install_location="$(/usr/bin/dirname "$whole_bundle")"
 
-    # auth lives on the Distribution's pkg-ref, never in PackageInfo, which
-    # always says "root" (design section 4). A component package has no
-    # Distribution and therefore no recorded auth, so the default stands.
-    auth=""
+        # 2 is "the payload could not be read but the rest of the component is
+        # sound", which the >500 branch reaches by a different route and the
+        # write pass handles the same way: the component still gets everything
+        # else. Anything else is fatal for the whole import.
+        importpkg_collect_payload "$component_dir" "$install_location" "$whole_bundle"
+        payload_readable=$?
+        if [ "$payload_readable" != "0" ] && [ "$payload_readable" != "2" ]; then
+            importpkg_cleanup
+            return 1
+        fi
+        printf '%s' "$payload_readable" > "$(state_dir)/importpkg.readable$importpkg_slot"
+
+        component_index=$((component_index + 1))
+    done
+
+    # --- the package as a whole, read once -----------------------------------
+    version="$(xml_element_attribute "$first_package_info" pkg-info version)"
+
+    # auth, the title and the options live on the Distribution, never in
+    # PackageInfo, which always says auth="root" (design section 4). A component
+    # package has no Distribution and therefore no recorded auth, so the
+    # default stands.
     title=""
     min_os=""
     architectures=""
     customize=""
     require_scripts=""
     if [ -f "$distribution" ]; then
-        auth="$(xml_element_attribute "$distribution" pkg-ref auth)"
         title="$(xml_element_text "$distribution" title)"
         min_os="$(xml_element_attribute "$distribution" os-version min)"
         architectures="$(xml_element_attribute "$distribution" options hostArchitectures)"
@@ -745,65 +947,6 @@ import_pkg() {
     fi
 
     identity="$(importpkg_installer_identity "$package_path")"
-
-    # A component installing INTO a bundle describes one artifact, not the
-    # hundreds of files inside it. The install location becomes the bundle's
-    # parent and the single payload entry carries the bundle itself, which is
-    # exactly the document a user would have written by dropping that bundle on
-    # the payload table.
-    whole_bundle=""
-    if [ "$install_location" != "/" ] && [ "$(importpkg_payload_is_bundle "$component_dir/Bom")" = "1" ]; then
-        whole_bundle="$install_location"
-        install_location="$(/usr/bin/dirname "$install_location")"
-    fi
-
-    payload_root=""
-    [ "$importpkg_payload_opaque" = "0" ] && payload_root="$component_dir/Payload"
-    # 2 is "the payload could not be read but the rest of the package is sound",
-    # which the >500 branch below reaches by a different route and handles the
-    # same way: the document still gets everything else.
-    importpkg_collect_payload "$component_dir" "$install_location" "$whole_bundle"
-    payload_readable=$?
-    if [ "$payload_readable" != "0" ] && [ "$payload_readable" != "2" ]; then
-        importpkg_cleanup
-        return 1
-    fi
-
-    # Counted before anything is written, so the refusal below is a decision
-    # made with the whole payload in hand rather than an abort partway through
-    # writing one.
-    payload_total="$(/usr/bin/grep -c . "$(state_dir)/importpkg.entries" 2>/dev/null | /usr/bin/tr -d ' ')"
-    case "$payload_total" in
-        ''|*[!0-9]*) payload_total=0 ;;
-    esac
-
-    # --- nothing above this line writes to the model --------------------------
-
-    # A component package IS the expansion directory, whose name carries this
-    # handler's pid - "Component importpkg-21028:" told the user nothing and
-    # looked like a bug. Its own file name is the only name it has.
-    if [ "$component_dir" = "$importpkg_expand_dir" ]; then
-        append_log "Component $package_base:"
-    else
-        append_log "Component $(/usr/bin/basename "$component_dir"):"
-    fi
-    [ -z "$identifier" ] || model_set /COMPONENTS/0/IDENTIFIER "$identifier"
-    model_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
-
-    # The two safety-relevant flags. overwrite-permissions is written only when
-    # the package actually states it, so a package missing the attribute cannot
-    # silently turn design 8.1's protection off.
-    case "$overwrite" in
-        true|TRUE|1)  model_set_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS 1 ;;
-        false|FALSE|0) model_set_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS 0 ;;
-    esac
-    model_set_bool /COMPONENTS/0/RELOCATABLE "$relocatable"
-
-    case "$auth" in
-        Root|root|Admin|admin) model_set /COMPONENTS/0/AUTH "Root" ;;
-        '') ;;
-        *) model_set /COMPONENTS/0/AUTH "User" ;;
-    esac
 
     # PROJECT.NAME becomes part of a filename and design 4.4 restricts it to
     # [A-Za-z0-9._-]. An installer title is free text - "Python 3.14" - so it is
@@ -816,6 +959,176 @@ import_pkg() {
     # result still satisfies 4.4 and is still recognizable, and the alternative
     # is a transliteration table this app has no reason to carry.
     project_name="$(printf '%s' "$project_name" | /usr/bin/tr -c 'A-Za-z0-9._-' '_')"
+
+    # =========================================================================
+    # Write pass.
+    # =========================================================================
+
+    # The components array is resized to what the package holds before any of
+    # them is written. Shrinking matters as much as growing: importing a
+    # two-component package into a document that held five must not leave three
+    # of the old ones behind, describing a project this package knows nothing
+    # about.
+    importpkg_resize_components "$component_count" || {
+        append_log "! the document's component list could not be resized; save nothing and reopen the document"
+        importpkg_cleanup
+        return 1
+    }
+
+    scripts_seen=0
+    refused_any=0
+    component_index=0
+    while [ "$component_index" -lt "$component_count" ]; do
+        importpkg_slot="$(importpkg_slot_for "$component_index")"
+        PB_COMPONENT_INDEX="$component_index"
+        component_dir="$(/usr/bin/sed -n "$((component_index + 1))p" "$components_file")"
+        package_info="$component_dir/PackageInfo"
+
+        identifier="$(xml_element_attribute "$package_info" pkg-info identifier)"
+        install_location="$(xml_element_attribute "$package_info" pkg-info install-location)"
+        overwrite="$(xml_element_attribute "$package_info" pkg-info overwrite-permissions)"
+        [ -n "$install_location" ] || install_location="/"
+
+        # A component installing INTO a bundle describes one artifact, not the
+        # hundreds of files inside it. The install location becomes the bundle's
+        # parent and the single payload entry carries the bundle itself, which is
+        # exactly the document a user would have written by dropping that bundle
+        # on the payload table.
+        whole_bundle="$(importpkg_whole_bundle "$component_dir" "$install_location")"
+        [ -z "$whole_bundle" ] || install_location="$(/usr/bin/dirname "$whole_bundle")"
+
+        # Relocatability is a list, not an attribute. pkgbuild expresses it by
+        # naming the bundles Installer will hunt for, and design 8.2 forces that
+        # list empty; PackageInfo's own relocatable="..." attribute is written by
+        # pkgbuild whatever was asked for, exactly as auth is. So the honest
+        # reading is whether the relocate list has anything in it.
+        if /usr/bin/grep -q '<relocate/>' "$package_info" 2>/dev/null; then
+            relocatable=0
+        elif /usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$package_info" 2>/dev/null | /usr/bin/grep -q 'id="'; then
+            relocatable=1
+        else
+            relocatable=0
+        fi
+
+        # This component's own pkg-ref, not the first one in the file. With
+        # several components the Distribution carries several, and reading the
+        # first would give every component the first one's auth.
+        auth=""
+        [ ! -f "$distribution" ] || auth="$(importpkg_pkgref_auth "$distribution" "$identifier")"
+
+        payload_readable="$(/bin/cat "$(state_dir)/importpkg.readable$importpkg_slot" 2>/dev/null)"
+        case "$payload_readable" in
+            0|2) ;;
+            *) payload_readable=0 ;;
+        esac
+        payload_total="$(/usr/bin/grep -c . "$(importpkg_entries_file)" 2>/dev/null | /usr/bin/tr -d ' ')"
+        case "$payload_total" in
+            ''|*[!0-9]*) payload_total=0 ;;
+        esac
+        payload_root=""
+        [ "$importpkg_payload_opaque" = "0" ] && payload_root="$component_dir/Payload"
+
+        # A component package IS the expansion directory, whose name carries
+        # this handler's pid - "Component importpkg-21028:" told the user
+        # nothing and looked like a bug. Its own file name is the only name it
+        # has.
+        if [ "$component_dir" = "$importpkg_expand_dir" ]; then
+            append_log "Component $package_base:"
+        else
+            append_log "Component $(/usr/bin/basename "$component_dir"):"
+        fi
+
+        [ -z "$identifier" ] || component_set IDENTIFIER "$identifier"
+        component_set INSTALL_LOCATION "$install_location"
+
+        # The two safety-relevant flags. overwrite-permissions is written only
+        # when the package actually states it, so a package missing the
+        # attribute cannot silently turn design 8.1's protection off.
+        case "$overwrite" in
+            true|TRUE|1)   component_set_bool OVERWRITE_PERMISSIONS 1 ;;
+            false|FALSE|0) component_set_bool OVERWRITE_PERMISSIONS 0 ;;
+        esac
+        component_set_bool RELOCATABLE "$relocatable"
+
+        case "$auth" in
+            Root|root|Admin|admin) component_set AUTH "Root" ;;
+            '') ;;
+            *) component_set AUTH "User" ;;
+        esac
+
+        # The choice title, which a multi-component installer shows in its list
+        # and a single-component one borrows from the distribution title. Taken
+        # only when the Distribution actually names one for this component, so a
+        # package that says nothing leaves component_title's own fallback to
+        # answer rather than freezing a guess into the document.
+        if [ -f "$distribution" ] && [ "$component_count" -gt 1 ]; then
+            component_set TITLE "$(importpkg_choice_title "$distribution" "$identifier")"
+            component_set_bool SELECTED "$(importpkg_choice_selected "$distribution" "$identifier")"
+        fi
+
+        append_log ""
+        if [ "$payload_readable" = "2" ] || [ "$payload_total" -gt "$PB_IMPORT_MAX_PAYLOAD" ]; then
+            refused_any=1
+            # Everything else about this component has already landed and is
+            # worth keeping - identifier, install location, auth. Only the
+            # payload is refused, and refusing it is the honest answer: a
+            # component holding this many separate items was built from a source
+            # folder, not from a list of artifacts, and this document model has
+            # no way to say "that folder".
+            append_log "Payload: not imported"
+            if [ "$payload_readable" = "2" ] && [ -f "$(importpkg_refusal_file)" ]; then
+                append_log_file "$(importpkg_refusal_file)"
+            fi
+            if [ "$payload_readable" != "2" ]; then
+                append_log "  $payload_total items after collapsing bundles, over the limit of $PB_IMPORT_MAX_PAYLOAD."
+                append_log "  A payload that size is a file tree, not a list of artifacts."
+            fi
+            # The old payload has to go with it. Everything else about this
+            # component now describes the imported one, and leaving the previous
+            # project's entries in place produced a component that would build
+            # THAT payload under THIS identifier - the mirror of the .pkgproj
+            # importer's "one outcome an import should never produce silently".
+            while [ "$(payload_count)" -gt 0 ]; do
+                payload_remove_at 0 || break
+            done
+            # Reporting what is actually there, not what the loop meant to do.
+            # The break above is what stops a failing payload_remove_at
+            # spinning, and it leaves entries behind - saying "now empty" over
+            # them would be the one kind of log line that costs a user their
+            # trust in the rest.
+            if [ "$(payload_count)" -gt 0 ]; then
+                append_log "  ! the payload could not be cleared and still holds $(payload_count) entry/entries"
+                append_log "    from before this import. Do not save; reopen the document."
+            else
+                append_log "  The payload is now empty; everything else in the package was imported."
+                append_log "  Add the payload by hand or with the folder scan."
+            fi
+        else
+            append_log "Payload:"
+            importpkg_log_notes
+            if ! importpkg_apply_payload "$payload_root" "$(if [ -n "$whole_bundle" ]; then /usr/bin/basename "$whole_bundle"; fi)"; then
+                append_log "! A payload entry could not be written; save nothing and reopen the document"
+                # Restored on the way out like every other exit from this loop.
+                # The caller stops before pushing the model on a failure, so
+                # nothing reads it today - but a function that moves a global
+                # should put it back whatever happens, or the next thing to read
+                # it inherits an index from a component that failed.
+                PB_COMPONENT_INDEX=0
+                importpkg_slot=""
+                importpkg_cleanup
+                return 1
+            fi
+        fi
+
+        /usr/bin/grep -q '<scripts>' "$package_info" 2>/dev/null && scripts_seen=$((scripts_seen + 1))
+
+        component_index=$((component_index + 1))
+        [ "$component_index" -lt "$component_count" ] && append_log ""
+    done
+    PB_COMPONENT_INDEX=0
+    importpkg_slot=""
+
+    # --- the project and the distribution ------------------------------------
     [ -z "$project_name" ] || model_set /PROJECT/NAME "$project_name"
 
     # A version pkgbuild was never given is written as "0", which passes design
@@ -871,54 +1184,7 @@ import_pkg() {
         model_set_bool /SIGNING/ENABLED 0
     fi
 
-    append_log ""
-    if [ "$payload_readable" = "2" ] || [ "$payload_total" -gt "$PB_IMPORT_MAX_PAYLOAD" ]; then
-        # Everything else has already landed and is worth keeping - identifier,
-        # install location, the distribution options, the signing identity. Only
-        # the payload is refused, and refusing it is the honest answer: a
-        # component holding this many separate items was built from a source
-        # folder, not from a list of artifacts, and this document model has no
-        # way to say "that folder".
-        append_log "Payload: not imported"
-        if [ "$payload_readable" = "2" ] && [ -f "$(state_dir)/importpkg.refusal" ]; then
-            append_log_file "$(state_dir)/importpkg.refusal"
-        fi
-        if [ "$payload_readable" != "2" ]; then
-            append_log "  $payload_total items after collapsing bundles, over the limit of $PB_IMPORT_MAX_PAYLOAD."
-            append_log "  A payload that size is a file tree, not a list of artifacts."
-        fi
-        # The old payload has to go with it. Everything else about the document
-        # now describes the imported package, and leaving the previous project's
-        # entries in place produced a document that would build THAT payload
-        # under THIS identifier - the mirror of the .pkgproj importer's "one
-        # outcome an import should never produce silently".
-        while [ "$(payload_count)" -gt 0 ]; do
-            payload_remove_at 0 || break
-        done
-        # Reporting what is actually there, not what the loop meant to do. The
-        # break above is what stops a failing payload_remove_at spinning, and it
-        # leaves entries behind - saying "now empty" over them would be the one
-        # kind of log line that costs a user their trust in the rest.
-        if [ "$(payload_count)" -gt 0 ]; then
-            append_log "  ! the payload could not be cleared and still holds $(payload_count) entry/entries"
-            append_log "    from before this import. Do not save; reopen the document."
-        else
-            append_log "  The payload is now empty; everything else in the package was imported."
-            append_log "  Add the payload by hand or with the folder scan."
-        fi
-    else
-        append_log "Payload:"
-        importpkg_log_notes
-        if ! importpkg_apply_payload "$payload_root" "$(if [ -n "$whole_bundle" ]; then /usr/bin/basename "$whole_bundle"; fi)"; then
-            append_log "! A payload entry could not be written; save nothing and reopen the document"
-            importpkg_cleanup
-            return 1
-        fi
-    fi
-
     # --- what did not come across ---------------------------------------------
-    scripts_note=0
-    /usr/bin/grep -q '<scripts>' "$package_info" 2>/dev/null && scripts_note=1
     resource_note=""
     if [ -f "$distribution" ]; then
         resource_note="$(/usr/bin/grep -o '<\(readme\|license\|welcome\|conclusion\|background\) file="[^"]*"' "$distribution" 2>/dev/null \
@@ -929,25 +1195,21 @@ import_pkg() {
     # over an empty block reads like something failed to print.
     local dropped_file="$(state_dir)/importpkg-$$.dropped"
     : > "$dropped_file"
-    # The sources line only when there are sources to be missing. With the
+    # The sources line only when there are sources to be missing. With every
     # payload refused above there are none, and telling the user to set an
     # artifacts folder for placeholders that were never written sends them
     # looking for a field that would change nothing.
-    if [ "$payload_readable" = "0" ] && [ "$payload_total" -le "$PB_IMPORT_MAX_PAYLOAD" ] && [ "$payload_total" -gt 0 ]; then
+    if [ "$(importpkg_total_payload_entries)" -gt 0 ]; then
         printf '%s\n' "  the payload sources - a package does not carry them. Every SOURCE is a" >> "$dropped_file"
         printf '%s\n' "  \${ARTIFACTS_DIR} placeholder; set the artifacts folder before building." >> "$dropped_file"
     fi
-    if [ "$component_count" -gt 1 ]; then
-        printf '%s\n' "  $((component_count - 1)) further component(s), which this document model cannot hold:" >> "$dropped_file"
-        extra_index=2
-        while [ "$extra_index" -le "$component_count" ]; do
-            extra_info="$(/usr/bin/sed -n "${extra_index}p" "$components_file")/PackageInfo"
-            printf '%s\n' "    $(xml_element_attribute "$extra_info" pkg-info identifier) -> $(xml_element_attribute "$extra_info" pkg-info install-location)" >> "$dropped_file"
-            extra_index=$((extra_index + 1))
-        done
+    if [ "$scripts_seen" -gt 0 ]; then
+        if [ "$scripts_seen" = "1" ]; then
+            printf '%s\n' "  a component's install scripts, which are in the package but were not extracted" >> "$dropped_file"
+        else
+            printf '%s\n' "  the install scripts of $scripts_seen components, which are in the package but were not extracted" >> "$dropped_file"
+        fi
     fi
-    [ "$scripts_note" = "0" ] || \
-        printf '%s\n' "  the component's install scripts, which are in the package but were not extracted" >> "$dropped_file"
     [ -z "$resource_note" ] || \
         printf '%s\n' "  the presentation resources - $resource_note" >> "$dropped_file"
     [ "$importpkg_payload_opaque" = "0" ] || \
@@ -959,6 +1221,11 @@ import_pkg() {
         append_log_file "$dropped_file"
     fi
     /bin/rm -f "$dropped_file"
+
+    if [ "$component_count" -gt 1 ]; then
+        append_log ""
+        append_log "$component_count components were imported."
+    fi
 
     # Not a drop, so not in that block: the package really does declare this and
     # the document really did take it.

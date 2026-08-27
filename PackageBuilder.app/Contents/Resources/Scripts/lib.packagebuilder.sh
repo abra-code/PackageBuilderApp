@@ -476,7 +476,6 @@ model_normalize() {
     if [ -z "$(model_type /COMPONENTS/0)" ]; then
         "$plister" insert 0 dict "$(model_file)" /COMPONENTS
     fi
-    ensure_container /COMPONENTS/0 PAYLOAD array
     ensure_container / DISTRIBUTION dict
     ensure_container /DISTRIBUTION RESOURCES dict
     ensure_container /DISTRIBUTION HOST_ARCHITECTURES array
@@ -488,12 +487,6 @@ model_normalize() {
     ensure_string /PROJECT/ARTIFACTS_DIR ""
     ensure_string /PROJECT/OUTPUT_DIR ""
     ensure_string /PROJECT/PACKAGE_NAME '${NAME}_${VERSION}.pkg'
-    ensure_string /COMPONENTS/0/IDENTIFIER ""
-    ensure_string /COMPONENTS/0/INSTALL_LOCATION "/"
-    ensure_string /COMPONENTS/0/PREINSTALL ""
-    ensure_string /COMPONENTS/0/POSTINSTALL ""
-    ensure_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS 0
-    ensure_bool /COMPONENTS/0/RELOCATABLE 0
     ensure_string /DISTRIBUTION/TITLE ""
     ensure_string /DISTRIBUTION/RESOURCES/README ""
     ensure_string /DISTRIBUTION/RESOURCES/LICENSE ""
@@ -503,22 +496,51 @@ model_normalize() {
     ensure_bool /SIGNING/ENABLED 1
     ensure_string /SIGNING/INSTALLER_IDENTITY ""
 
-    # Enum fields feed Pickers whose value channel is the option tag. A value
-    # with no matching tag leaves the Picker on its previous selection, fires no
-    # action, and survives into the Distribution XML - so an out-of-range value
-    # is replaced by the default here. The planned .pkgproj import produces
-    # exactly this case: its AUTHENTICATION is the integer 1, not "Root".
-    case "$(model_get /COMPONENTS/0/AUTH)" in
-        Root|User) ;;
-        1) model_set /COMPONENTS/0/AUTH Root ;;
-        *) model_set /COMPONENTS/0/AUTH Root ;;
-    esac
     case "$(model_get /DISTRIBUTION/CUSTOMIZE)" in
         never|allow|always) ;;
         *) model_set /DISTRIBUTION/CUSTOMIZE never ;;
     esac
 
-    normalize_payload_entries
+    normalize_components
+    return 0
+}
+
+# Give every component the keys the window reads and the build writes, for each
+# element the document actually has rather than for element 0 alone. Same
+# contract as the rest of model_normalize: absent keys get a default, present
+# keys are left exactly as the document has them.
+normalize_components() {
+    local total="$(component_count)"
+    local component_index=0
+    while [ "$component_index" -lt "$total" ]; do
+        ensure_container "/COMPONENTS/$component_index" PAYLOAD array
+        ensure_string "/COMPONENTS/$component_index/IDENTIFIER" ""
+        ensure_string "/COMPONENTS/$component_index/INSTALL_LOCATION" "/"
+        ensure_string "/COMPONENTS/$component_index/PREINSTALL" ""
+        ensure_string "/COMPONENTS/$component_index/POSTINSTALL" ""
+        ensure_string "/COMPONENTS/$component_index/TITLE" ""
+        ensure_string "/COMPONENTS/$component_index/DESCRIPTION" ""
+        ensure_bool "/COMPONENTS/$component_index/OVERWRITE_PERMISSIONS" 0
+        ensure_bool "/COMPONENTS/$component_index/RELOCATABLE" 0
+        # SELECTED defaults to on. A component the document does not speak about
+        # is one the installer must still install: defaulting it off would make
+        # adding CUSTOMIZE="allow" to a working project silently stop shipping
+        # every part of it.
+        ensure_bool "/COMPONENTS/$component_index/SELECTED" 1
+
+        # Enum fields feed Pickers whose value channel is the option tag. A value
+        # with no matching tag leaves the Picker on its previous selection, fires
+        # no action, and survives into the Distribution XML - so an out-of-range
+        # value is replaced by the default here. The .pkgproj import produces
+        # exactly this case: its AUTHENTICATION is the integer 1, not "Root".
+        case "$(model_get "/COMPONENTS/$component_index/AUTH")" in
+            Root|User) ;;
+            *) model_set "/COMPONENTS/$component_index/AUTH" Root ;;
+        esac
+
+        normalize_payload_entries "$component_index"
+        component_index=$((component_index + 1))
+    done
     return 0
 }
 
@@ -534,15 +556,19 @@ model_normalize() {
 # executable or a bundle. A plain data file added through the UI gets 0644 from
 # guess_mode at the moment it is added, so this default is only ever seen by
 # hand-written documents.
+# Arguments: optional component index, defaulting to the current one.
 normalize_payload_entries() {
-    local entry_count="$(model_count /COMPONENTS/0/PAYLOAD)"
+    local component_index="$1"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local base="/COMPONENTS/$component_index/PAYLOAD"
+    local entry_count="$(model_count "$base")"
     local index=0
     while [ "$index" -lt "$entry_count" ]; do
-        ensure_string "/COMPONENTS/0/PAYLOAD/$index/SOURCE" ""
-        ensure_string "/COMPONENTS/0/PAYLOAD/$index/DESTINATION" ""
-        ensure_string "/COMPONENTS/0/PAYLOAD/$index/OWNER" root
-        ensure_string "/COMPONENTS/0/PAYLOAD/$index/GROUP" wheel
-        ensure_string "/COMPONENTS/0/PAYLOAD/$index/MODE" 0755
+        ensure_string "$base/$index/SOURCE" ""
+        ensure_string "$base/$index/DESTINATION" ""
+        ensure_string "$base/$index/OWNER" root
+        ensure_string "$base/$index/GROUP" wheel
+        ensure_string "$base/$index/MODE" 0755
         index=$((index + 1))
     done
     return 0
@@ -629,6 +655,13 @@ document_name() {
 # Start a new empty document in this window's state directory.
 new_document() {
     /bin/cp "$new_document_template" "$(model_file)" || return 1
+    # The template is meant to be complete, and normalizing it should therefore
+    # change nothing. It runs anyway because an opened document gets this and a
+    # new one did not, so the two could drift - and they did: the three keys a
+    # component gained for the choice list were added to normalize and not to
+    # the template, and every File > New document went without them until a
+    # build read one back as false.
+    model_normalize
     set_doc_path ""
     printf '' > "$(state_dir)/doc_hash.txt"
     mark_clean
@@ -735,14 +768,14 @@ push_model_to_window() {
 
     set_value "$ARTIFACTS_DIR_ID" "$(model_get /PROJECT/ARTIFACTS_DIR)"
     set_value "$NAME_ID" "$(model_get /PROJECT/NAME)"
-    set_value "$IDENTIFIER_ID" "$(model_get /COMPONENTS/0/IDENTIFIER)"
+    set_value "$IDENTIFIER_ID" "$(component_get IDENTIFIER)"
     set_value "$VERSION_ID" "$(model_get /PROJECT/VERSION)"
-    set_value "$INSTALL_LOCATION_ID" "$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
-    set_value "$AUTH_ID" "$(model_get /COMPONENTS/0/AUTH)"
-    set_value "$OVERWRITE_ID" "$(model_get_bool_str /COMPONENTS/0/OVERWRITE_PERMISSIONS)"
-    set_value "$RELOCATABLE_ID" "$(model_get_bool_str /COMPONENTS/0/RELOCATABLE)"
-    set_value "$PREINSTALL_ID" "$(model_get /COMPONENTS/0/PREINSTALL)"
-    set_value "$POSTINSTALL_ID" "$(model_get /COMPONENTS/0/POSTINSTALL)"
+    set_value "$INSTALL_LOCATION_ID" "$(component_get INSTALL_LOCATION)"
+    set_value "$AUTH_ID" "$(component_get AUTH)"
+    set_value "$OVERWRITE_ID" "$(component_get_bool_str OVERWRITE_PERMISSIONS)"
+    set_value "$RELOCATABLE_ID" "$(component_get_bool_str RELOCATABLE)"
+    set_value "$PREINSTALL_ID" "$(component_get PREINSTALL)"
+    set_value "$POSTINSTALL_ID" "$(component_get POSTINSTALL)"
 
     set_value "$TITLE_ID" "$(model_get /DISTRIBUTION/TITLE)"
     set_value "$MIN_OS_ID" "$(model_get /PROJECT/MIN_OS_VERSION)"
@@ -837,7 +870,8 @@ set_architectures() {
 }
 
 # Fill the payload table from the model. Three visible columns plus a hidden
-# fourth carrying the item's index into COMPONENTS/0/PAYLOAD, per design 5.2.
+# fourth carrying the item's index into the current component's PAYLOAD, per
+# design 5.2.
 # getElementColumnCount counts the data columns, hidden ones included, so the
 # index comes back as $OMC_ACTIONUI_TABLE_100_COLUMN_4_VALUE on selection.
 # Flatten one value for one table cell.
@@ -854,15 +888,15 @@ table_cell() {
 }
 
 populate_payload_table() {
-    local entry_count="$(model_count /COMPONENTS/0/PAYLOAD)"
+    local entry_count="$(payload_count)"
     local index=0
     # Set once per iteration, so they carry their own "local" up here.
     local source destination mode
     {
         while [ "$index" -lt "$entry_count" ]; do
-            source="$(table_cell "$(model_get "/COMPONENTS/0/PAYLOAD/$index/SOURCE")")"
-            destination="$(table_cell "$(model_get "/COMPONENTS/0/PAYLOAD/$index/DESTINATION")")"
-            mode="$(table_cell "$(model_get "/COMPONENTS/0/PAYLOAD/$index/MODE")")"
+            source="$(table_cell "$(payload_get "$index" SOURCE)")"
+            destination="$(table_cell "$(payload_get "$index" DESTINATION)")"
+            mode="$(table_cell "$(payload_get "$index" MODE)")"
             printf '%s\t%s\t%s\t%s\n' "$source" "$destination" "$mode" "$index"
             index=$((index + 1))
         done
@@ -870,32 +904,176 @@ populate_payload_table() {
 }
 
 # ==============================================================================
+# Components (design section 4.5)
+# ==============================================================================
+# A document holds an array of components, and every accessor here and in the
+# payload section below takes the component index as an OPTIONAL trailing
+# argument. Omitted, it means "the current component".
+#
+# That default is the whole reason this seam exists. Every caller written while a
+# document held exactly one component keeps addressing the same field it always
+# did, unchanged, because the current component of a one-component document is
+# element 0. Only the code that genuinely has to touch every component in turn -
+# the build pipeline, the schema verifier, the exporter, the importer - passes an
+# index, and it is obvious at those call sites that it does.
+
+# The component the accessors address when they are not given one.
+#
+# A plain shell variable rather than a pasteboard read, because these are called
+# several times per payload entry and a pasteboard round trip is a process spawn.
+# The persisted selection is resolved into it once per handler by
+# load_current_component_index; the build pipeline and the CLI set it or pass an
+# index explicitly.
+PB_COMPONENT_INDEX=0
+
+# How many components the document has, never less than one.
+#
+# The floor is here rather than at each call site so that two callers cannot
+# disagree about what an empty COMPONENTS array means. It is only ever reachable
+# before model_normalize has run - which scaffolds element 0 - and answering 1
+# there keeps a loop addressing the element normalize is about to create, which
+# is what the single-component code did before there were loops at all.
+component_count() {
+    local total="$(model_count /COMPONENTS)"
+    case "$total" in
+        ''|*[!0-9]*|0) total=1 ;;
+    esac
+    printf '%s' "$total"
+}
+
+# Print the model key path of one field of one component.
+# Arguments: field (may itself contain a slash), optional component index
+component_key() {
+    local field="$1" component_index="$2"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    printf '/COMPONENTS/%s/%s' "$component_index" "$field"
+}
+
+component_get() {
+    local field="$1" component_index="$2"
+    model_get "$(component_key "$field" "$component_index")"
+}
+
+component_set() {
+    local field="$1" new_value="$2" component_index="$3"
+    model_set "$(component_key "$field" "$component_index")" "$new_value"
+}
+
+component_get_bool() {
+    local field="$1" component_index="$2"
+    model_get_bool "$(component_key "$field" "$component_index")"
+}
+
+component_get_bool_str() {
+    local field="$1" component_index="$2"
+    model_get_bool_str "$(component_key "$field" "$component_index")"
+}
+
+component_set_bool() {
+    local field="$1" new_value="$2" component_index="$3"
+    model_set_bool "$(component_key "$field" "$component_index")" "$new_value"
+}
+
+# The title a Distribution choice carries for this component, which is not
+# allowed to be empty: productbuild renders an unnamed row in the choice list.
+#
+# The component's own TITLE when it has one. Otherwise it depends on how many
+# components there are, because the honest answer does:
+#
+# - With one, the distribution title has always labeled the single choice and is
+#   still the best name for it. There is nothing to tell apart, and every
+#   document written before this key existed reads the same way it always did.
+# - With several, one shared title cannot name them all, and the identifier's
+#   last element is the closest thing to a name the document is guaranteed to
+#   hold.
+component_title() {
+    local component_index="$1"
+    local title="$(component_get TITLE "$component_index")"
+    if [ -n "$title" ]; then
+        printf '%s' "$title"
+        return 0
+    fi
+    if [ "$(component_count)" -le 1 ]; then
+        title="$(model_get /DISTRIBUTION/TITLE)"
+        [ -n "$title" ] || title="$(model_get /PROJECT/NAME)"
+        printf '%s' "$title"
+        return 0
+    fi
+    local identifier="$(component_get IDENTIFIER "$component_index")"
+    case "$identifier" in
+        *.*) printf '%s' "${identifier##*.}" ;;
+        '')  printf '%s' "$(model_get /PROJECT/NAME)" ;;
+        *)   printf '%s' "$identifier" ;;
+    esac
+}
+
+# --- Which component the window is editing ------------------------------------
+# Persisted per document, the same way the payload selection is, and re-checked
+# against the current count on every read: a reload or a removal can shrink the
+# array under a selection that was valid when it was made, and every caller
+# would otherwise address a component that is no longer there.
+#
+# There is no component picker in the window yet, so this resolves to 0 for every
+# document. It is written now because the alternative is for the field map and
+# the window projection to hardcode 0 a second time and have to be found again.
+stored_component_index() {
+    local component_index="$(pb_get pb_current_component_index)"
+    case "$component_index" in
+        ''|*[!0-9]*) printf '0'; return 0 ;;
+    esac
+    [ "$component_index" -lt "$(component_count)" ] || component_index=0
+    printf '%s' "$component_index"
+}
+
+set_current_component_index() {
+    local component_index="$1"
+    case "$component_index" in
+        ''|*[!0-9]*) component_index=0 ;;
+    esac
+    PB_COMPONENT_INDEX="$component_index"
+    pb_set pb_current_component_index "$component_index"
+}
+
+# Resolve the persisted selection into PB_COMPONENT_INDEX for this handler.
+# Called once at the top of the handlers that read or write component fields,
+# never per accessor.
+load_current_component_index() {
+    PB_COMPONENT_INDEX="$(stored_component_index)"
+    return 0
+}
+
+# ==============================================================================
 # Payload (design sections 4.1 to 4.4 and 5.3)
 # ==============================================================================
 
 payload_count() {
-    model_count /COMPONENTS/0/PAYLOAD
+    local component_index="$1"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    model_count "/COMPONENTS/$component_index/PAYLOAD"
 }
 
 # Print the model key path of one field of one payload entry.
-# Arguments: index, field (may itself contain a slash, e.g. VERIFY/SIGNED_BY)
+# Arguments: index, field (may itself contain a slash, e.g. VERIFY/SIGNED_BY),
+# optional component index
 payload_key() {
-    local entry_index="$1" field="$2"
-    printf '/COMPONENTS/0/PAYLOAD/%s/%s' "$entry_index" "$field"
+    local entry_index="$1" field="$2" component_index="$3"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    printf '/COMPONENTS/%s/PAYLOAD/%s/%s' "$component_index" "$entry_index" "$field"
 }
 
 payload_get() {
-    local entry_index="$1" field="$2"
-    model_get "$(payload_key "$entry_index" "$field")"
+    local entry_index="$1" field="$2" component_index="$3"
+    model_get "$(payload_key "$entry_index" "$field" "$component_index")"
 }
 
 payload_set() {
-    local entry_index="$1" field="$2" new_value="$3"
-    model_set "$(payload_key "$entry_index" "$field")" "$new_value"
+    local entry_index="$1" field="$2" new_value="$3" component_index="$4"
+    model_set "$(payload_key "$entry_index" "$field" "$component_index")" "$new_value"
 }
 
 # --- Selection ----------------------------------------------------------------
-# Which row the inspector is showing, as an index into COMPONENTS/0/PAYLOAD.
+# Which row the inspector is showing, as an index into the current component's
+# PAYLOAD.
 # Prints nothing when there is no selection. The stored value is re-checked
 # against the current count on every read: a remove or an external reload can
 # shrink the array under a selection that was valid when it was made, and every
@@ -1450,7 +1628,7 @@ guess_mode() {
 last_destination_dir() {
     local entry_count="$(payload_count)"
     [ "$entry_count" -gt 0 ] || return 0
-    local destination="$(model_get "/COMPONENTS/0/PAYLOAD/$((entry_count - 1))/DESTINATION")"
+    local destination="$(payload_get "$((entry_count - 1))" DESTINATION)"
     [ -n "$destination" ] || return 0
     case "$destination" in
         /*) ;;
@@ -1626,20 +1804,21 @@ artifact_minos() {
 # create an intermediate container (design 12.3), so every write below VERIFY
 # has to be preceded by this.
 ensure_payload_verify() {
-    local entry_index="$1"
-    if [ -z "$(model_type "$(payload_key "$entry_index" VERIFY)")" ]; then
-        "$plister" insert VERIFY dict "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index" || return 1
+    local entry_index="$1" component_index="$2"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    if [ -z "$(model_type "$(payload_key "$entry_index" VERIFY "$component_index")")" ]; then
+        "$plister" insert VERIFY dict "$(model_file)" "/COMPONENTS/$component_index/PAYLOAD/$entry_index" || return 1
     fi
     return 0
 }
 
 # Print an entry's architecture list, one name per line.
 payload_archs_get() {
-    local entry_index="$1"
-    local arch_count="$(model_count "$(payload_key "$entry_index" VERIFY/ARCHITECTURES)")"
+    local entry_index="$1" component_index="$2"
+    local arch_count="$(model_count "$(payload_key "$entry_index" VERIFY/ARCHITECTURES "$component_index")")"
     local index=0
     while [ "$index" -lt "$arch_count" ]; do
-        printf '%s\n' "$(payload_get "$entry_index" "VERIFY/ARCHITECTURES/$index")"
+        printf '%s\n' "$(payload_get "$entry_index" "VERIFY/ARCHITECTURES/$index" "$component_index")"
         index=$((index + 1))
     done
     return 0
@@ -1649,12 +1828,12 @@ payload_archs_get() {
 # is rewritten wholesale rather than edited, so a removed name cannot survive as
 # a stale element.
 payload_archs_set() {
-    local entry_index="$1" arch_list="$2"
+    local entry_index="$1" arch_list="$2" component_index="$3"
     # Set by the "for" below.
     local arch
     local model="$(model_file)"
-    local key="$(payload_key "$entry_index" VERIFY/ARCHITECTURES)"
-    ensure_payload_verify "$entry_index" || return 1
+    local key="$(payload_key "$entry_index" VERIFY/ARCHITECTURES "$component_index")"
+    ensure_payload_verify "$entry_index" "$component_index" || return 1
     "$plister" remove "$model" "$key" 2>/dev/null
     "$plister" set array "$model" "$key" || return 1
     [ -n "$arch_list" ] || return 0
@@ -1741,17 +1920,17 @@ payload_signed_set() {
 }
 
 payload_bool_get() {
-    local entry_index="$1" field="$2"
-    case "$(payload_get "$entry_index" "$field")" in
+    local entry_index="$1" field="$2" component_index="$3"
+    case "$(payload_get "$entry_index" "$field" "$component_index")" in
         1|true|TRUE|YES) printf '1' ;;
         *) printf '0' ;;
     esac
 }
 
 payload_bool_set() {
-    local entry_index="$1" field="$2" flag="$3"
-    ensure_payload_verify "$entry_index" || return 1
-    model_set_bool "$(payload_key "$entry_index" "$field")" "$flag"
+    local entry_index="$1" field="$2" flag="$3" component_index="$4"
+    ensure_payload_verify "$entry_index" "$component_index" || return 1
+    model_set_bool "$(payload_key "$entry_index" "$field" "$component_index")" "$flag"
 }
 
 # Append a payload entry for an artifact and print its index.
@@ -1774,7 +1953,7 @@ payload_append_from_path() {
     if [ -n "$executable" ]; then verify_flag=1; else verify_flag=0; fi
 
     local entry_index="$(payload_count)"
-    "$plister" insert "$entry_index" dict "$(model_file)" /COMPONENTS/0/PAYLOAD || return 1
+    "$plister" insert "$entry_index" dict "$(model_file)" "/COMPONENTS/$PB_COMPONENT_INDEX/PAYLOAD" || return 1
 
     # The dict exists from here on, so anything that fails below leaves a
     # half-built entry the window never learns about - the model and the window
@@ -1802,7 +1981,7 @@ payload_append_from_path() {
 
 payload_remove_at() {
     local entry_index="$1"
-    "$plister" remove "$(model_file)" "/COMPONENTS/0/PAYLOAD/$entry_index"
+    "$plister" remove "$(model_file)" "/COMPONENTS/$PB_COMPONENT_INDEX/PAYLOAD/$entry_index"
 }
 
 # Move an entry one place toward the front or the back of the list.
@@ -2170,14 +2349,14 @@ field_key_path() {
     case "$view_id" in
         "$ARTIFACTS_DIR_ID")     printf '/PROJECT/ARTIFACTS_DIR' ;;
         "$NAME_ID")              printf '/PROJECT/NAME' ;;
-        "$IDENTIFIER_ID")        printf '/COMPONENTS/0/IDENTIFIER' ;;
+        "$IDENTIFIER_ID")        component_key IDENTIFIER ;;
         "$VERSION_ID")           printf '/PROJECT/VERSION' ;;
-        "$INSTALL_LOCATION_ID")  printf '/COMPONENTS/0/INSTALL_LOCATION' ;;
-        "$AUTH_ID")              printf '/COMPONENTS/0/AUTH' ;;
-        "$OVERWRITE_ID")         printf '/COMPONENTS/0/OVERWRITE_PERMISSIONS' ;;
-        "$RELOCATABLE_ID")       printf '/COMPONENTS/0/RELOCATABLE' ;;
-        "$PREINSTALL_ID")        printf '/COMPONENTS/0/PREINSTALL' ;;
-        "$POSTINSTALL_ID")       printf '/COMPONENTS/0/POSTINSTALL' ;;
+        "$INSTALL_LOCATION_ID")  component_key INSTALL_LOCATION ;;
+        "$AUTH_ID")              component_key AUTH ;;
+        "$OVERWRITE_ID")         component_key OVERWRITE_PERMISSIONS ;;
+        "$RELOCATABLE_ID")       component_key RELOCATABLE ;;
+        "$PREINSTALL_ID")        component_key PREINSTALL ;;
+        "$POSTINSTALL_ID")       component_key POSTINSTALL ;;
         "$TITLE_ID")             printf '/DISTRIBUTION/TITLE' ;;
         "$MIN_OS_ID")            printf '/PROJECT/MIN_OS_VERSION' ;;
         "$CUSTOMIZE_ID")         printf '/DISTRIBUTION/CUSTOMIZE' ;;

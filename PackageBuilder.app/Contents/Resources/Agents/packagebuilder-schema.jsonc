@@ -37,11 +37,44 @@
                                            // when absent.
   },
 
-  "COMPONENTS": [                          // array. Only the first element is
-                                           // read; a second one is reported and
-                                           // ignored (design section 14).
+  "COMPONENTS": [                          // array. Every element is built: one
+                                           // pkgbuild run and one Distribution
+                                           // choice each. Most projects need
+                                           // one - with INSTALL_LOCATION "/" and
+                                           // absolute destinations, a single
+                                           // component already spans
+                                           // /usr/local/bin, /Applications and
+                                           // /Library/Frameworks. Reach for a
+                                           // second when a part has to be
+                                           // separately selectable, or needs its
+                                           // own install scripts, AUTH or
+                                           // RELOCATABLE.
+                                           // Two components may not share an
+                                           // IDENTIFIER, nor have identifiers
+                                           // differing only in punctuation
+                                           // ("a-b" and "a_b"): both collapse to
+                                           // one choice id and one package file
+                                           // name. Nor may two of them install
+                                           // to the same path, or one inside
+                                           // another. All four are refused
+                                           // before anything is built.
+                                           // The window edits the first; the CLI
+                                           // reaches the rest by key path and by
+                                           // "add-component".
     {
       "IDENTIFIER": "com.example.pkg.widget", // string, required. Reverse-DNS.
+      "TITLE": "",                         // string. The Distribution choice's
+                                           // title. Empty means: the
+                                           // DISTRIBUTION TITLE when there is
+                                           // one component, and the identifier's
+                                           // last element when there are more.
+      "DESCRIPTION": "",                   // string. The choice's description,
+                                           // shown under its title when
+                                           // CUSTOMIZE is not "never".
+      "SELECTED": true,                    // bool. Whether the choice starts
+                                           // ticked. Only visible when CUSTOMIZE
+                                           // is "allow" or "always"; false
+                                           // writes start_selected="false".
       "INSTALL_LOCATION": "/",             // string. Absolute. Every payload
                                            // DESTINATION must be under it.
       "OVERWRITE_PERMISSIONS": false,      // bool. Keep false. True tells

@@ -165,6 +165,22 @@ valid_mode() {
 # when the distribution and signing stages arrive.
 precondition_failures=0
 
+# How a component is named inside a diagnostic.
+#
+# Empty when the document holds one component: with nothing to distinguish, a
+# prefix would only be noise, and every message below then reads exactly the way
+# it read when a document could not hold more than one. With several components
+# the same message without this would send the reader to the wrong payload.
+#
+# It is a prefix rather than part of the item label because the messages refer
+# back to an item by a bare lowercase number ("installs inside item 1"), and that
+# back-reference has to stay a number.
+component_prefix() {
+    if [ "$(component_count)" -gt 1 ]; then
+        printf 'Component %s: ' "$((PB_COMPONENT_INDEX + 1))"
+    fi
+}
+
 fail_precondition() {
     local message="$1"
     append_log "  ! $message"
@@ -239,28 +255,42 @@ check_preconditions() {
 
     local name="$(model_get /PROJECT/NAME)"
     local version="$(model_get /PROJECT/VERSION)"
-    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
-    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
-    [ -n "$install_location" ] || install_location="/"
+    local identifier install_location entry_count index
+    local component_index total_components saved_component
 
     valid_name "$name" || fail_precondition \
         "Project name \"$name\" is not usable in a filename - use letters, digits, dot, underscore or hyphen"
     valid_version "$version" || fail_precondition \
         "Version \"$version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
+
+    # Every accessor in the body below reads the current component, so the loop
+    # moves the whole check from one component to the next by setting one
+    # variable rather than by threading an index through thirty calls. The
+    # previous value is restored afterwards because this runs inside a handler
+    # that may go on to touch the component the window is editing.
+    total_components="$(component_count)"
+    saved_component="$PB_COMPONENT_INDEX"
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+    PB_COMPONENT_INDEX="$component_index"
+    identifier="$(component_get IDENTIFIER)"
+    install_location="$(component_get INSTALL_LOCATION)"
+    [ -n "$install_location" ] || install_location="/"
+
     valid_identifier "$identifier" || fail_precondition \
-        "Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+        "$(component_prefix)Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
 
     case "$install_location" in
         /*) ;;
-        *) fail_precondition "Install location \"$install_location\" must be an absolute path" ;;
+        *) fail_precondition "$(component_prefix)Install location \"$install_location\" must be an absolute path" ;;
     esac
 
-    local entry_count="$(payload_count)"
+    entry_count="$(payload_count)"
     if [ "$entry_count" = "0" ]; then
-        fail_precondition "The payload is empty - add at least one artifact"
+        fail_precondition "$(component_prefix)The payload is empty - add at least one artifact"
     fi
 
-    local index=0
+    index=0
     while [ "$index" -lt "$entry_count" ]; do
         item_number=$((index + 1))
         stored_source="$(payload_get "$index" SOURCE)"
@@ -272,28 +302,28 @@ check_preconditions() {
         # Reported here specifically, because resolve_stored_path refuses it
         # without saying why.
         if uses_unset_artifacts_dir "$stored_source"; then
-            fail_precondition "Item $item_number uses \${ARTIFACTS_DIR} but no artifacts folder is set"
+            fail_precondition "$(component_prefix)Item $item_number uses \${ARTIFACTS_DIR} but no artifacts folder is set"
             source=""
         elif [ -z "$stored_source" ]; then
-            fail_precondition "Item $item_number has no source"
+            fail_precondition "$(component_prefix)Item $item_number has no source"
             source=""
         else
             source="$(resolve_stored_path "$stored_source")"
             if [ -z "$source" ]; then
-                fail_precondition "Item $item_number: \"$stored_source\" could not be resolved to a path"
+                fail_precondition "$(component_prefix)Item $item_number: \"$stored_source\" could not be resolved to a path"
             elif [ ! -e "$source" ]; then
-                fail_precondition "Item $item_number: $source is not there"
+                fail_precondition "$(component_prefix)Item $item_number: $source is not there"
             elif [ ! -r "$source" ]; then
-                fail_precondition "Item $item_number: $source cannot be read"
+                fail_precondition "$(component_prefix)Item $item_number: $source cannot be read"
             fi
         fi
 
         if [ -z "$destination" ]; then
-            fail_precondition "Item $item_number has no destination"
+            fail_precondition "$(component_prefix)Item $item_number has no destination"
         else
             case "$destination" in
                 /*) ;;
-                *) fail_precondition "Item $item_number: destination \"$destination\" must be an absolute path" ;;
+                *) fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" must be an absolute path" ;;
             esac
             # A ".." component escapes the staging root, and the install-location
             # test below cannot see it: that test is a literal prefix match, so
@@ -303,7 +333,7 @@ check_preconditions() {
             # anything already there. Refused here, where the message can name
             # the real objection, and again in stage_payload_root.
             if path_has_dotdot "$destination"; then
-                fail_precondition "Item $item_number: destination \"$destination\" must not contain \"..\""
+                fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" must not contain \"..\""
             else
                 # Every test below compares strings, so they are given the one
                 # spelling. "/opt/a/./b" and "/opt/a//b" name a path under
@@ -313,13 +343,13 @@ check_preconditions() {
                 # straight out of the staging root.
                 destination="$(normalize_path "$destination")"
                 if ! path_is_under "$destination" "$install_location"; then
-                    fail_precondition "Item $item_number: destination \"$destination\" is not under the install location \"$install_location\""
+                    fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" is not under the install location \"$install_location\""
                 fi
             fi
         fi
 
         valid_mode "$mode" || fail_precondition \
-            "Item $item_number: mode \"$mode\" is not three or four octal digits"
+            "$(component_prefix)Item $item_number: mode \"$mode\" is not three or four octal digits"
 
         # Two destinations in one component may not be equal, and one may not be
         # a strict prefix of another: the second entry's ditto would race the
@@ -343,11 +373,11 @@ check_preconditions() {
                     folded_other="$other_destination"
                 fi
                 if [ "$folded_destination" = "$folded_other" ]; then
-                    fail_precondition "Items $item_number and $((other_index + 1)) install to the same path: $destination"
+                    fail_precondition "$(component_prefix)Items $item_number and $((other_index + 1)) install to the same path: $destination"
                 elif path_is_under "$folded_other" "$folded_destination"; then
-                    fail_precondition "Item $((other_index + 1)) installs inside item $item_number: $other_destination is under $destination"
+                    fail_precondition "$(component_prefix)Item $((other_index + 1)) installs inside item $item_number: $other_destination is under $destination"
                 elif path_is_under "$folded_destination" "$folded_other"; then
-                    fail_precondition "Item $item_number installs inside item $((other_index + 1)): $destination is under $other_destination"
+                    fail_precondition "$(component_prefix)Item $item_number installs inside item $((other_index + 1)): $destination is under $other_destination"
                 fi
             fi
             other_index=$((other_index + 1))
@@ -356,9 +386,89 @@ check_preconditions() {
         index=$((index + 1))
     done
 
+    component_index=$((component_index + 1))
+    done
+    PB_COMPONENT_INDEX="$saved_component"
+
+    check_cross_component_destinations "$probe_root"
+
     [ -z "$probe_root" ] || /bin/rm -rf "$probe_root"
 
     [ "$precondition_failures" -eq 0 ]
+}
+
+# Refuse two components that install to the same path, or one inside another.
+#
+# The loop above compares destinations pairwise within one component, which is
+# where a clash could arise when a document held only one. Splitting a payload
+# across components is exactly the moment a path gets duplicated by accident -
+# the same artifact left behind in the component it was moved out of - and
+# nothing in pkgbuild or productbuild objects: the two component packages are
+# built independently and the later one silently wins at install time.
+#
+# Only pairs of DIFFERENT components are compared here; a component against
+# itself is the loop above, and repeating it would report every clash twice.
+#
+# Arguments: the probe root for case folding, which may be empty.
+check_cross_component_destinations() {
+    local probe_root="$1"
+    local total_components="$(component_count)"
+    [ "$total_components" -gt 1 ] || return 0
+
+    # Set once per iteration of the four loops below.
+    local first second first_index second_index first_count second_count
+    local first_destination second_destination folded_first folded_second
+
+    first=0
+    while [ "$first" -lt "$total_components" ]; do
+        first_count="$(payload_count "$first")"
+        second=$((first + 1))
+        while [ "$second" -lt "$total_components" ]; do
+            second_count="$(payload_count "$second")"
+            first_index=0
+            while [ "$first_index" -lt "$first_count" ]; do
+                # Read from the model rather than from a list collected up front:
+                # a destination may hold any character a path may hold, and a
+                # list in a file or a variable would have to pick a separator
+                # that one of them could be.
+                first_destination="$(normalize_path "$(expand_tokens "$(payload_get "$first_index" DESTINATION "$first")")")"
+                if [ -z "$first_destination" ]; then
+                    first_index=$((first_index + 1))
+                    continue
+                fi
+                if [ -n "$probe_root" ]; then
+                    folded_first="$(fold_install_path "$probe_root" "$first_destination")"
+                else
+                    folded_first="$first_destination"
+                fi
+                second_index=0
+                while [ "$second_index" -lt "$second_count" ]; do
+                    second_destination="$(normalize_path "$(expand_tokens "$(payload_get "$second_index" DESTINATION "$second")")")"
+                    if [ -z "$second_destination" ]; then
+                        second_index=$((second_index + 1))
+                        continue
+                    fi
+                    if [ -n "$probe_root" ]; then
+                        folded_second="$(fold_install_path "$probe_root" "$second_destination")"
+                    else
+                        folded_second="$second_destination"
+                    fi
+                    if [ "$folded_first" = "$folded_second" ]; then
+                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) and component $((second + 1)) item $((second_index + 1)) install to the same path: $first_destination"
+                    elif path_is_under "$folded_second" "$folded_first"; then
+                        fail_precondition "Component $((second + 1)) item $((second_index + 1)) installs inside component $((first + 1)) item $((first_index + 1)): $second_destination is under $first_destination"
+                    elif path_is_under "$folded_first" "$folded_second"; then
+                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) installs inside component $((second + 1)) item $((second_index + 1)): $first_destination is under $second_destination"
+                    fi
+                    second_index=$((second_index + 1))
+                done
+                first_index=$((first_index + 1))
+            done
+            second=$((second + 1))
+        done
+        first=$((first + 1))
+    done
+    return 0
 }
 
 # Preconditions for the distribution stage. Separate from the component stage's
@@ -370,16 +480,28 @@ check_distribution_preconditions() {
 
     precondition_failures=0
 
-    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
     local version="$(model_get /PROJECT/VERSION)"
     local name="$(model_get /PROJECT/NAME)"
+    local identifier component_index total_components saved_component
 
     valid_name "$name" || fail_precondition \
         "Project name \"$name\" is not usable in a filename - use letters, digits, dot, underscore or hyphen"
     valid_version "$version" || fail_precondition \
         "Version \"$version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
-    valid_identifier "$identifier" || fail_precondition \
-        "Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+
+    total_components="$(component_count)"
+    saved_component="$PB_COMPONENT_INDEX"
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+        PB_COMPONENT_INDEX="$component_index"
+        identifier="$(component_get IDENTIFIER "$component_index")"
+        valid_identifier "$identifier" || fail_precondition \
+            "$(component_prefix)Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+        component_index=$((component_index + 1))
+    done
+    PB_COMPONENT_INDEX="$saved_component"
+
+    check_component_identifier_collisions
 
     # An empty hostArchitectures attribute makes productbuild refuse the
     # document, and both toggles off is the only way to reach it.
@@ -480,6 +602,41 @@ check_distribution_preconditions() {
 
 # A verify failure. Distinct from fail_precondition, which counts: nothing counts
 # here, because the first one ends the stage.
+# Refuse a set of components whose identifiers cannot be told apart downstream.
+#
+# Two distinct failures with one cause. Two components sharing an identifier
+# collide in the choices-outline and give productbuild two pkg-refs with the
+# same id. And two identifiers that merely sanitize the same - "com.example.a-b"
+# and "com.example.a_b" both become "com_example_a_b" - collide in the choice
+# id and, because component_package_basename uses the same sanitizer, write over
+# each other's file in the directory productbuild scans. The second is the
+# nastier of the two: nothing fails, and the product ships with one component
+# silently replaced by the other.
+check_component_identifier_collisions() {
+    local total_components="$(component_count)"
+    [ "$total_components" -gt 1 ] || return 0
+
+    local first second first_identifier second_identifier
+
+    first=0
+    while [ "$first" -lt "$total_components" ]; do
+        first_identifier="$(component_get IDENTIFIER "$first")"
+        second=$((first + 1))
+        while [ "$second" -lt "$total_components" ]; do
+            second_identifier="$(component_get IDENTIFIER "$second")"
+            if [ "$first_identifier" = "$second_identifier" ]; then
+                fail_precondition "Components $((first + 1)) and $((second + 1)) have the same identifier \"$first_identifier\" - each component needs its own"
+            elif [ "$(sanitize_component_token "$first_identifier")" = \
+                   "$(sanitize_component_token "$second_identifier")" ]; then
+                fail_precondition "Components $((first + 1)) and $((second + 1)) have identifiers that differ only in punctuation (\"$first_identifier\" and \"$second_identifier\") - they would share one choice and overwrite each other's package file"
+            fi
+            second=$((second + 1))
+        done
+        first=$((first + 1))
+    done
+    return 0
+}
+
 verify_fail() {
     local message="$1"
     append_log "  ! $message"
@@ -609,8 +766,12 @@ verify_payload_entry() {
 
     local stored_source="$(payload_get "$entry_index" SOURCE)"
     local source="$(resolve_stored_path "$stored_source")"
-    local label="item $item_number"
-    [ -z "$source" ] || label="item $item_number ($(/usr/bin/basename "$source"))"
+    # With one component the label reads exactly as it always did; with several,
+    # "item 2" alone does not say which payload it is in.
+    local in_component=""
+    [ "$(component_count)" -le 1 ] || in_component="component $((PB_COMPONENT_INDEX + 1)) "
+    local label="${in_component}item $item_number"
+    [ -z "$source" ] || label="${in_component}item $item_number ($(/usr/bin/basename "$source"))"
 
     if [ -z "$source" ] || [ ! -e "$source" ]; then
         verify_fail "$label: \"$stored_source\" is not on disk"
@@ -759,26 +920,69 @@ verify_payload_entry() {
 
 # Verify every payload entry in order, stopping at the first one that fails.
 verify_payload() {
-    # Set by the loop below.
-    local index
-    local entry_count="$(payload_count)"
-    if [ "$entry_count" = "0" ]; then
-        verify_fail "the payload is empty - there is nothing to verify"
-        return 1
-    fi
-    index=0
-    while [ "$index" -lt "$entry_count" ]; do
-        # Between two entries there is no tool running for Stop to signal, so
-        # the flag is the only thing that can end the stage. On a large payload
-        # the alternative is a click that is ignored for the rest of it.
-        stop_was_requested && return 1
-        verify_payload_entry "$index" || return 1
-        index=$((index + 1))
+    # Set by the loops below.
+    local index entry_count component_index
+    local total_components="$(component_count)"
+    local saved_component="$PB_COMPONENT_INDEX"
+
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+        # verify_payload_entry reads the current component, like every other
+        # payload reader. Restored on every exit below, including the failing
+        # ones, so a refused build leaves the window editing the component it
+        # was editing before.
+        PB_COMPONENT_INDEX="$component_index"
+        entry_count="$(payload_count)"
+        if [ "$entry_count" = "0" ]; then
+            if [ "$total_components" -le 1 ]; then
+                verify_fail "the payload is empty - there is nothing to verify"
+            else
+                verify_fail "component $((component_index + 1)) has an empty payload - there is nothing to verify"
+            fi
+            PB_COMPONENT_INDEX="$saved_component"
+            return 1
+        fi
+        index=0
+        while [ "$index" -lt "$entry_count" ]; do
+            # Between two entries there is no tool running for Stop to signal,
+            # so the flag is the only thing that can end the stage. On a large
+            # payload the alternative is a click that is ignored for the rest
+            # of it.
+            if stop_was_requested; then
+                PB_COMPONENT_INDEX="$saved_component"
+                return 1
+            fi
+            if ! verify_payload_entry "$index"; then
+                PB_COMPONENT_INDEX="$saved_component"
+                return 1
+            fi
+            index=$((index + 1))
+        done
+        component_index=$((component_index + 1))
     done
+    PB_COMPONENT_INDEX="$saved_component"
     return 0
 }
 
 # --- Staging (design 7 step 2, 8.5) -------------------------------------------
+# A scratch path belonging to one component.
+#
+# Component 0 keeps the unsuffixed name, so a single component's build lays out
+# its scratch directory exactly as it always did. That is not only tidiness:
+# three assertions elsewhere prove a stage did NOT run by looking for the
+# absence of "root", and renaming it out from under them would make them pass
+# whatever the build did.
+#
+# Arguments: base name, component index, optional extension
+component_scratch() {
+    local base="$1" component_index="$2" extension="$3"
+    if [ "$component_index" = "0" ]; then
+        printf '%s/%s%s' "$(state_dir)" "$base" "$extension"
+    else
+        printf '%s/%s-%s%s' "$(state_dir)" "$base" "$component_index" "$extension"
+    fi
+}
+
 # Build state_dir/root from the payload list.
 #
 # The root is removed and recreated every time, so an entry deleted from the
@@ -789,8 +993,10 @@ stage_payload_root() {
     local source destination relative target owner group
     local target_parent real_parent real_root ancestor ancestor_next
 
-    local root="$(state_dir)/root"
-    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
+    local component_index="$1"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local root="$(component_scratch root "$component_index")"
+    local install_location="$(component_get INSTALL_LOCATION "$component_index")"
     [ -n "$install_location" ] || install_location="/"
 
     /bin/rm -rf "$root"
@@ -800,15 +1006,15 @@ stage_payload_root() {
     }
 
     local warned_ownership=0
-    local entry_count="$(payload_count)"
+    local entry_count="$(payload_count "$component_index")"
     local index=0
     while [ "$index" -lt "$entry_count" ]; do
-        source="$(resolve_stored_path "$(payload_get "$index" SOURCE)")"
+        source="$(resolve_stored_path "$(payload_get "$index" SOURCE "$component_index")")"
         if [ -z "$source" ]; then
             append_log "  ! Item $((index + 1)) has no resolvable source"
             return 1
         fi
-        destination="$(expand_tokens "$(payload_get "$index" DESTINATION)")"
+        destination="$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")"
         # Second line of defense. The preconditions already refused this, but
         # they read the model at the start of the run and this re-reads it, so
         # the same reasoning that makes sign_package re-check applies: the one
@@ -906,7 +1112,7 @@ stage_payload_root() {
             append_log "  ! Could not copy $source"
             return 1
         fi
-        if ! /bin/chmod "$(payload_get "$index" MODE)" "$target"; then
+        if ! /bin/chmod "$(payload_get "$index" MODE "$component_index")" "$target"; then
             append_log "  ! Could not set the mode of $relative"
             return 1
         fi
@@ -916,8 +1122,8 @@ stage_payload_root() {
         # whoever runs the build, so no sudo is involved anywhere (design 7
         # step 2). An entry asking for something else is saying something the
         # build cannot honor, so it is said out loud rather than ignored.
-        owner="$(payload_get "$index" OWNER)"
-        group="$(payload_get "$index" GROUP)"
+        owner="$(payload_get "$index" OWNER "$component_index")"
+        group="$(payload_get "$index" GROUP "$component_index")"
         if [ "$warned_ownership" = "0" ]; then
             if { [ -n "$owner" ] && [ "$owner" != "root" ]; } || \
                { [ -n "$group" ] && [ "$group" != "wheel" ]; }; then
@@ -937,11 +1143,13 @@ stage_payload_root() {
 # takes a directory and the document holds two file paths. Prints the directory
 # when there is one, nothing when the document has no scripts.
 stage_component_scripts() {
-    local preinstall="$(resolve_stored_path "$(model_get /COMPONENTS/0/PREINSTALL)")"
-    local postinstall="$(resolve_stored_path "$(model_get /COMPONENTS/0/POSTINSTALL)")"
+    local component_index="$1"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local preinstall="$(resolve_stored_path "$(component_get PREINSTALL "$component_index")")"
+    local postinstall="$(resolve_stored_path "$(component_get POSTINSTALL "$component_index")")"
     [ -n "$preinstall" ] || [ -n "$postinstall" ] || return 0
 
-    local scripts_dir="$(state_dir)/scripts"
+    local scripts_dir="$(component_scratch scripts "$component_index")"
     /bin/rm -rf "$scripts_dir"
     /bin/mkdir -p "$scripts_dir" || return 1
 
@@ -968,8 +1176,9 @@ stage_component_scripts() {
 # Spotlight and install there instead. A stale copy in ~/Downloads silently
 # becomes the install target.
 component_plist_no_relocate() {
-    local root="$1"
-    local plist="$(state_dir)/component.plist"
+    local root="$1" component_index="$2"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local plist="$(component_scratch component "$component_index" .plist)"
     /bin/rm -f "$plist"
     "$pkgbuild_tool" --analyze --root "$root" "$plist" >/dev/null 2>&1 || return 1
     [ -f "$plist" ] || return 0
@@ -1003,8 +1212,9 @@ component_plist_no_relocate() {
 #
 # Arguments: package path, wanted value ("true"/"false")
 patch_overwrite_permissions() {
-    local package_path="$1" wanted="$2"
-    local expand_dir="$(state_dir)/expand"
+    local package_path="$1" wanted="$2" component_index="$3"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local expand_dir="$(component_scratch expand "$component_index")"
     /bin/rm -rf "$expand_dir"
     if ! run_tool "$pkgutil_tool" --expand "$package_path" "$expand_dir"; then
         append_log "  ! Could not expand the component package"
@@ -1048,7 +1258,76 @@ patch_overwrite_permissions() {
     return 0
 }
 
-# Build the component package from the staged root and print its path.
+# Stage and build every component, in document order.
+#
+# Shared by the whole-pipeline build and by Actions > Build Component Only. The
+# two ran the same pair of steps side by side back when there was one component
+# to run them for, and would have drifted apart the moment one of them learned
+# to loop and the other did not.
+#
+# Returns 0 when every component was built. On failure it returns 1 and leaves
+# the reason in pb_component_stage_failure: the two callers word their own
+# epilogues, and both need to know which of the two steps gave up.
+pb_component_stage_failure=""
+build_all_components() {
+    pb_component_stage_failure=""
+    # Set once per iteration of the loop below.
+    local component_index component
+    local total_components="$(component_count)"
+
+    # The directory is cleared once, here, rather than inside the per-component
+    # build: productbuild picks up every .pkg in it, so a package left behind by
+    # a previous run would ship, and a rm -rf inside the loop would delete the
+    # components this run had already built.
+    /bin/rm -rf "$(state_dir)/component"
+    if ! /bin/mkdir -p "$(state_dir)/component"; then
+        append_log "  ! Could not create the component directory"
+        pb_component_stage_failure=stage
+        return 1
+    fi
+    : > "$(state_dir)/built_component.txt"
+
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+        # Named only when there is more than one, so a single-component build
+        # reads exactly as it always did.
+        if [ "$total_components" -gt 1 ]; then
+            append_log "Component $((component_index + 1)) of $total_components - $(component_get IDENTIFIER "$component_index"):"
+        fi
+        set_status "Staging the payload..."
+        append_log "Staging the payload root:"
+        if ! stage_payload_root "$component_index"; then
+            pb_component_stage_failure=stage
+            return 1
+        fi
+
+        append_log ""
+        set_status "Running pkgbuild..."
+        append_log "Building the component package:"
+        component="$(build_component_package "$component_index")"
+        if [ -z "$component" ] || [ ! -f "$component" ]; then
+            pb_component_stage_failure=pkgbuild
+            return 1
+        fi
+        # One path per line, in build order.
+        printf '%s\n' "$component" >> "$(state_dir)/built_component.txt"
+
+        component_index=$((component_index + 1))
+        if [ "$component_index" -lt "$total_components" ]; then
+            append_log ""
+        fi
+    done
+    return 0
+}
+
+# Build one component package from its staged root and print its path.
+#
+# The directory it writes into is shared by every component, because
+# productbuild --package-path takes a directory and picks up every .pkg in it.
+# Clearing that directory is therefore the caller's job, not this function's: a
+# rm -rf here would delete the components built before this one.
+#
+# Arguments: optional component index, defaulting to the current one
 build_component_package() {
     # "scripts_dir" is declared apart from its assignment because the
     # "|| return 1" has to test stage_component_scripts and not local.
@@ -1056,22 +1335,22 @@ build_component_package() {
     # Set only when relocation is being turned off.
     local component_plist=""
 
-    local root="$(state_dir)/root"
+    local component_index="$1"
+    [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
+    local root="$(component_scratch root "$component_index")"
     local component_dir="$(state_dir)/component"
-    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
+    local identifier="$(component_get IDENTIFIER "$component_index")"
     local version="$(model_get /PROJECT/VERSION)"
-    local name="$(model_get /PROJECT/NAME)"
-    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
+    local install_location="$(component_get INSTALL_LOCATION "$component_index")"
     [ -n "$install_location" ] || install_location="/"
 
-    /bin/rm -rf "$component_dir"
     /bin/mkdir -p "$component_dir" || return 1
-    local package_path="$component_dir/$name.pkg"
+    local package_path="$component_dir/$(component_package_basename "$component_index").pkg"
 
-    scripts_dir="$(stage_component_scripts)" || return 1
+    scripts_dir="$(stage_component_scripts "$component_index")" || return 1
 
-    if [ "$(model_get_bool /COMPONENTS/0/RELOCATABLE)" != "1" ]; then
-        component_plist="$(component_plist_no_relocate "$root")" || {
+    if [ "$(component_get_bool RELOCATABLE "$component_index")" != "1" ]; then
+        component_plist="$(component_plist_no_relocate "$root" "$component_index")" || {
             append_log "  ! Could not analyze the staged root for bundles"
             return 1
         }
@@ -1116,7 +1395,8 @@ build_component_package() {
     fi
 
     patch_overwrite_permissions "$package_path" \
-        "$(bool_str "$(model_get_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS)")" || return 1
+        "$(bool_str "$(component_get_bool OVERWRITE_PERMISSIONS "$component_index")")" \
+        "$component_index" || return 1
 
     printf '%s' "$package_path"
     return 0
@@ -1145,9 +1425,38 @@ xml_escape() {
 # Print a choice id derived from a component identifier. The identifier is a
 # reverse-DNS string and a choice id is referenced by <line choice="...">, so
 # the dots become underscores.
+# Reduce an identifier to the characters a choice id and a file name may both
+# hold. One function rather than two, so that the collision check in
+# check_distribution_preconditions covers the choice ids and the component
+# package file names at the same time - they cannot disagree about which pairs
+# of identifiers collapse together.
+sanitize_component_token() {
+    printf '%s' "$1" | /usr/bin/tr -c 'A-Za-z0-9' '_'
+}
+
 distribution_choice_id() {
     local identifier="$1"
-    printf '%s_choice' "$(printf '%s' "$identifier" | /usr/bin/tr -c 'A-Za-z0-9' '_')"
+    printf '%s_choice' "$(sanitize_component_token "$identifier")"
+}
+
+# The file name, without ".pkg", of one component's package inside the directory
+# productbuild scans.
+#
+# One component keeps the project's own name. That is not a preference: the name
+# lands in the Distribution as "#<name>.pkg", the shipped reference package this
+# suite compares against carries it, and three assertions look for it - so
+# changing it for the case that has always worked would change the contents of
+# every package built so far and buy nothing.
+#
+# With several components the project name cannot name them all, and the
+# identifier is the only thing a component is guaranteed to have that is its own.
+component_package_basename() {
+    local component_index="$1"
+    if [ "$(component_count)" -le 1 ]; then
+        model_get /PROJECT/NAME
+        return 0
+    fi
+    sanitize_component_token "$(component_get IDENTIFIER "$component_index")"
 }
 
 # Print DISTRIBUTION/HOST_ARCHITECTURES as productbuild wants it: one
@@ -1239,20 +1548,18 @@ stage_distribution_resources() {
 generate_distribution_xml() {
     local xml_path="$(state_dir)/Distribution.xml"
     local name="$(model_get /PROJECT/NAME)"
-    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
     local version="$(model_get /PROJECT/VERSION)"
     local title="$(model_get /DISTRIBUTION/TITLE)"
     local min_os="$(model_get /PROJECT/MIN_OS_VERSION)"
     local customize="$(model_get /DISTRIBUTION/CUSTOMIZE)"
-    local auth="$(model_get /COMPONENTS/0/AUTH)"
     local architectures="$(host_architectures_attr)"
-    local choice_id="$(distribution_choice_id "$identifier")"
-    # Set once per iteration of the resource loop below.
+    local total_components="$(component_count)"
+    # Set once per iteration of the resource and component loops below.
     local pair model_key element source base
+    local component_index identifier auth choice_id choice_title
 
     [ -n "$title" ] || title="$name"
     [ -n "$customize" ] || customize="never"
-    [ -n "$auth" ] || auth="Root"
 
     local require_scripts=false
     if [ "$(model_get_bool /DISTRIBUTION/REQUIRE_SCRIPTS)" = "1" ]; then
@@ -1289,21 +1596,57 @@ generate_distribution_xml() {
             printf '    <%s file="%s"/>\n' "$element" "$(xml_escape "$base")"
         done
 
+        # One line, one choice and one terminal pkg-ref per component, in
+        # document order, which is the order they appear in the installer.
         printf '%s\n' '    <choices-outline>'
-        printf '        <line choice="%s"/>\n' "$(xml_escape "$choice_id")"
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            printf '        <line choice="%s"/>\n' \
+                "$(xml_escape "$(distribution_choice_id "$(component_get IDENTIFIER "$component_index")")")"
+            component_index=$((component_index + 1))
+        done
         printf '%s\n' '    </choices-outline>'
-        printf '    <choice id="%s" title="%s" description="">\n' \
-            "$(xml_escape "$choice_id")" "$(xml_escape "$title")"
-        printf '        <pkg-ref id="%s"/>\n' "$(xml_escape "$identifier")"
-        printf '%s\n' '    </choice>'
+
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            identifier="$(component_get IDENTIFIER "$component_index")"
+            choice_id="$(distribution_choice_id "$identifier")"
+            choice_title="$(component_title "$component_index")"
+            printf '    <choice id="%s" title="%s" description="%s"' \
+                "$(xml_escape "$choice_id")" "$(xml_escape "$choice_title")" \
+                "$(xml_escape "$(component_get DESCRIPTION "$component_index")")"
+            # Written only when it is false. productbuild starts a choice
+            # selected, so emitting the default would add an attribute to every
+            # document that has never asked for one - including every document
+            # written before the key existed - and change the bytes of packages
+            # that are meant to be unaffected by this.
+            if [ "$(component_get_bool SELECTED "$component_index")" = "0" ]; then
+                printf ' start_selected="false"'
+            fi
+            printf '>\n'
+            printf '        <pkg-ref id="%s"/>\n' "$(xml_escape "$identifier")"
+            printf '%s\n' '    </choice>'
+            component_index=$((component_index + 1))
+        done
 
         # auth on the pkg-ref, not in PackageInfo: pkgbuild has no flag for it
         # and always writes auth="root" into the component regardless, so the
         # Distribution XML is the only place the document's value can land
         # (design section 4).
-        printf '    <pkg-ref id="%s" version="%s" auth="%s">#%s.pkg</pkg-ref>\n' \
-            "$(xml_escape "$identifier")" "$(xml_escape "$version")" \
-            "$(xml_escape "$auth")" "$(xml_escape "$name")"
+        #
+        # The file name has to be the one build_component_package wrote, or
+        # productbuild resolves the reference to nothing.
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            identifier="$(component_get IDENTIFIER "$component_index")"
+            auth="$(component_get AUTH "$component_index")"
+            [ -n "$auth" ] || auth="Root"
+            printf '    <pkg-ref id="%s" version="%s" auth="%s">#%s.pkg</pkg-ref>\n' \
+                "$(xml_escape "$identifier")" "$(xml_escape "$version")" \
+                "$(xml_escape "$auth")" \
+                "$(xml_escape "$(component_package_basename "$component_index")")"
+            component_index=$((component_index + 1))
+        done
 
         printf '%s\n' '</installer-gui-script>'
     } > "$xml_path" || return 1
@@ -1588,13 +1931,27 @@ build_is_running() {
 
 # Print the component package the last component build produced, or nothing when
 # there is none on disk any more.
+# The first component package the last component build produced.
+#
+# The record holds one path per line since a build can produce several. The first
+# is printed because that is the whole record for a single-component project and
+# because Inspect has to open one package: for a multi-component project the
+# thing worth inspecting is the distribution package, which holds them all, and
+# built_distribution_path is what the caller reaches for then.
 built_component_path() {
     local record="$(state_dir)/built_component.txt"
     [ -f "$record" ] || return 0
-    local package_path="$(/bin/cat "$record")"
+    local package_path="$(/usr/bin/head -n 1 "$record")"
     [ -n "$package_path" ] || return 0
     [ -f "$package_path" ] || return 0
     printf '%s' "$package_path"
+}
+
+# Every component package the last component build produced, one per line.
+built_component_paths() {
+    local record="$(state_dir)/built_component.txt"
+    [ -f "$record" ] || return 0
+    /bin/cat "$record"
 }
 
 # Print the unsigned distribution package the last distribution build produced.
@@ -1828,32 +2185,21 @@ run_pipeline() {
 
     # --- Stage 2: component ---------------------------------------------------
     rail_set "$RAIL_COMPONENT_ID" running
-    set_status "Staging the payload..."
-    append_log "Staging the payload root:"
-    if ! stage_payload_root; then
+    if ! build_all_components; then
         stop_here "$RAIL_COMPONENT_ID" && return 0
         append_log ""
-        append_log "Stopped while staging. Nothing outside the scratch directory was touched."
-        rail_set "$RAIL_COMPONENT_ID" failed
-        set_status "Could not stage the payload"
+        if [ "$pb_component_stage_failure" = "pkgbuild" ]; then
+            append_log "Stopped. pkgbuild did not produce a component package."
+            rail_set "$RAIL_COMPONENT_ID" failed
+            set_status "The component package was not built"
+        else
+            append_log "Stopped while staging. Nothing outside the scratch directory was touched."
+            rail_set "$RAIL_COMPONENT_ID" failed
+            set_status "Could not stage the payload"
+        fi
         build_end
         return 1
     fi
-
-    append_log ""
-    set_status "Running pkgbuild..."
-    append_log "Building the component package:"
-    component="$(build_component_package)"
-    if [ -z "$component" ] || [ ! -f "$component" ]; then
-        stop_here "$RAIL_COMPONENT_ID" && return 0
-        append_log ""
-        append_log "Stopped. pkgbuild did not produce a component package."
-        rail_set "$RAIL_COMPONENT_ID" failed
-        set_status "The component package was not built"
-        build_end
-        return 1
-    fi
-    printf '%s' "$component" > "$(state_dir)/built_component.txt"
     rail_set "$RAIL_COMPONENT_ID" done
     stop_here "$RAIL_DISTRIBUTION_ID" && return 0
 

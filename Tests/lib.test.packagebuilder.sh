@@ -50,7 +50,12 @@ pl() { "$OMC_OMC_SUPPORT_PATH/plister" "$@"; }
 
 model() { pl get value "$(model_file)" "$1" 2>/dev/null; }
 count() { pl get count "$(model_file)" "$1" 2>/dev/null; }
-payload_field() { model "/COMPONENTS/0/PAYLOAD/$1/$2"; }
+# <entry> <field> [<component>] - the component defaults to the first, so every
+# assertion written while a document held one keeps reading what it read.
+payload_field() { model "/COMPONENTS/${3:-0}/PAYLOAD/$1/$2"; }
+component_field() { model "/COMPONENTS/${2:-0}/$1"; }
+component_total() { count /COMPONENTS; }
+payload_total() { count "/COMPONENTS/${1:-0}/PAYLOAD"; }
 # How many payload sources contain a substring. Written as a count so a check
 # can assert zero: the folder-scan tests are mostly about what did NOT get
 # added, and "no entry mentions Contents/MacOS" is the readable way to say it.
@@ -355,7 +360,17 @@ selected_index() { pb_get selected_payload_index; }
 log_says() {
     if /usr/bin/grep -q -- "$1" "$(state_dir)/run.log" 2>/dev/null; then echo 1; else echo 0; fi
 }
-built_pkg() { /bin/cat "$(state_dir)/built_component.txt" 2>/dev/null; }
+# The first component package built. The record holds one path per line since a
+# build can produce several; built_pkgs prints them all.
+built_pkg() { /usr/bin/head -n 1 "$(state_dir)/built_component.txt" 2>/dev/null; }
+built_pkgs() { /bin/cat "$(state_dir)/built_component.txt" 2>/dev/null; }
+built_pkg_count() {
+    # 0, not empty, when the record is not there: a refused build leaves no
+    # file at all, and "expected 0, actual []" reads like a broken assertion
+    # rather than like the refusal it is proving.
+    [ -f "$(state_dir)/built_component.txt" ] || { printf '0'; return 0; }
+    /usr/bin/grep -c . "$(state_dir)/built_component.txt" 2>/dev/null | /usr/bin/tr -d ' '
+}
 built_dist() { /bin/cat "$(state_dir)/built_distribution.txt" 2>/dev/null; }
 built_signed() { /bin/cat "$(state_dir)/built_package.txt" 2>/dev/null; }
 dist_xml() { /bin/cat "$(state_dir)/Distribution.xml" 2>/dev/null; }

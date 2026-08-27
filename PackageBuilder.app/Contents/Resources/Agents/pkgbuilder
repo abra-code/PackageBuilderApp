@@ -205,9 +205,6 @@ key_type_of() {
     case "$key_path" in
         /PROJECT/NAME|/PROJECT/VERSION|/PROJECT/MIN_OS_VERSION|/PROJECT/ARTIFACTS_DIR|\
 /PROJECT/OUTPUT_DIR|/PROJECT/PACKAGE_NAME) printf 'string' ;;
-        /COMPONENTS/0/IDENTIFIER|/COMPONENTS/0/INSTALL_LOCATION|/COMPONENTS/0/AUTH|\
-/COMPONENTS/0/PREINSTALL|/COMPONENTS/0/POSTINSTALL) printf 'string' ;;
-        /COMPONENTS/0/OVERWRITE_PERMISSIONS|/COMPONENTS/0/RELOCATABLE) printf 'bool' ;;
         /DISTRIBUTION/TITLE|/DISTRIBUTION/CUSTOMIZE) printf 'string' ;;
         /DISTRIBUTION/REQUIRE_SCRIPTS) printf 'bool' ;;
         /DISTRIBUTION/RESOURCES/README|/DISTRIBUTION/RESOURCES/LICENSE|\
@@ -215,19 +212,30 @@ key_type_of() {
 /DISTRIBUTION/RESOURCES/BACKGROUND) printf 'string' ;;
         /SIGNING/ENABLED) printf 'bool' ;;
         /SIGNING/INSTALLER_IDENTITY) printf 'string' ;;
-        # Payload scalars, whatever the index.
-        /COMPONENTS/0/PAYLOAD/*/SOURCE|/COMPONENTS/0/PAYLOAD/*/DESTINATION|\
-/COMPONENTS/0/PAYLOAD/*/OWNER|/COMPONENTS/0/PAYLOAD/*/GROUP|\
-/COMPONENTS/0/PAYLOAD/*/MODE|/COMPONENTS/0/PAYLOAD/*/VERIFY/SIGNED_BY|\
-/COMPONENTS/0/PAYLOAD/*/VERIFY/VERSION_FLAG) printf 'string' ;;
-        /COMPONENTS/0/PAYLOAD/*/VERIFY/HARDENED_RUNTIME|\
-/COMPONENTS/0/PAYLOAD/*/VERIFY/SECURE_TIMESTAMP) printf 'bool' ;;
+        # Payload scalars, whatever the component and whatever the entry.
+        /COMPONENTS/*/PAYLOAD/*/SOURCE|/COMPONENTS/*/PAYLOAD/*/DESTINATION|\
+/COMPONENTS/*/PAYLOAD/*/OWNER|/COMPONENTS/*/PAYLOAD/*/GROUP|\
+/COMPONENTS/*/PAYLOAD/*/MODE|/COMPONENTS/*/PAYLOAD/*/VERIFY/SIGNED_BY|\
+/COMPONENTS/*/PAYLOAD/*/VERIFY/VERSION_FLAG) printf 'string' ;;
+        /COMPONENTS/*/PAYLOAD/*/VERIFY/HARDENED_RUNTIME|\
+/COMPONENTS/*/PAYLOAD/*/VERIFY/SECURE_TIMESTAMP) printf 'bool' ;;
         # The two architecture lists, written from a comma-separated value.
         # They are the only arrays worth setting from a command line, and both
         # have a library function that rewrites the array wholesale rather than
         # editing it, so a removed name cannot survive as a stale element.
-        /COMPONENTS/0/PAYLOAD/*/VERIFY/ARCHITECTURES|\
+        /COMPONENTS/*/PAYLOAD/*/VERIFY/ARCHITECTURES|\
 /DISTRIBUTION/HOST_ARCHITECTURES) printf 'archlist' ;;
+        # Any other payload key path names a field a payload entry does not
+        # have. This arm has to come before the component scalars below, because
+        # a "*" in a case pattern spans slashes: without it,
+        # /COMPONENTS/0/PAYLOAD/1/IDENTIFIER would match /COMPONENTS/*/IDENTIFIER
+        # and be written into the payload entry as though it were a component's.
+        /COMPONENTS/*/PAYLOAD/*) printf '' ;;
+        /COMPONENTS/*/IDENTIFIER|/COMPONENTS/*/INSTALL_LOCATION|/COMPONENTS/*/AUTH|\
+/COMPONENTS/*/PREINSTALL|/COMPONENTS/*/POSTINSTALL|\
+/COMPONENTS/*/TITLE|/COMPONENTS/*/DESCRIPTION) printf 'string' ;;
+        /COMPONENTS/*/OVERWRITE_PERMISSIONS|/COMPONENTS/*/RELOCATABLE|\
+/COMPONENTS/*/SELECTED) printf 'bool' ;;
         *) printf '' ;;
     esac
 }
@@ -248,7 +256,10 @@ Usage:
                  [--output-dir <D>] [--install-location <L>] [--title <T>]
                  [--identity <I>] [--no-signing] [--force]
   pkgbuilder add-payload <doc> <artifact> [--destination <P>] [--mode <M>]
-                 [--owner <O>] [--group <G>] [--no-verify]
+                 [--owner <O>] [--group <G>] [--component <N>] [--no-verify]
+  pkgbuilder add-component <doc> --identifier <ID> [--install-location <L>]
+                 [--title <T>] [--description <D>]
+  pkgbuilder remove-component <doc> <N>
   pkgbuilder set <doc> <keypath> <value>
   pkgbuilder get <doc> [<keypath>]
   pkgbuilder validate <doc> [--strict]
@@ -353,13 +364,16 @@ cmd_add_payload() {
     case "$artifact" in
         ''|-*) fail_usage "add-payload: <doc> and <artifact> are required"; return 2 ;;
     esac
-    local destination="" mode="" owner="" group="" no_verify="0"
+    # 1, not 0: the value is a component number as a person writes it, and the
+    # default has to be a valid one of those.
+    local destination="" mode="" owner="" group="" no_verify="0" component="1"
     while [ $# -gt 0 ]; do
         case "$1" in
             --destination) need_value "$1" $# "$2" || return 2; destination="$2"; shift 2 ;;
             --mode)        need_value "$1" $# "$2" || return 2; mode="$2"; shift 2 ;;
             --owner)       need_value "$1" $# "$2" || return 2; owner="$2"; shift 2 ;;
             --group)       need_value "$1" $# "$2" || return 2; group="$2"; shift 2 ;;
+            --component)   need_value "$1" $# "$2" || return 2; component="$2"; shift 2 ;;
             --no-verify)   no_verify="1"; shift ;;
             -h|--help)     usage; return 2 ;;
             *) fail_usage "add-payload: unknown option: $1"; return 2 ;;
@@ -367,6 +381,24 @@ cmd_add_payload() {
     done
 
     require_document "$document_path" || return $?
+
+    # 1-based on the command line, like every other component number a person
+    # reads in this app's output, and 0-based in the model. Converted once,
+    # here, so nothing below has to remember which convention it is holding.
+    case "$component" in
+        ''|*[!0-9]*|0)
+            printf 'pkgbuilder: --component takes a component number counting from 1; got "%s"\n' "$component" >&2
+            return 1
+            ;;
+    esac
+    if [ "$component" -gt "$(component_count)" ]; then
+        printf 'pkgbuilder: there is no component %s in this document (it has %s)\n' \
+            "$component" "$(component_count)" >&2
+        return 1
+    fi
+    # Every payload accessor below reads the current component, so selecting it
+    # once here is the whole of what --component has to do.
+    PB_COMPONENT_INDEX=$((component - 1))
 
     # An absolute path, so store_path can decide whether it sits under the
     # artifacts folder or the document's own. canonical_path resolves what is
@@ -407,12 +439,194 @@ cmd_add_payload() {
     local stored_destination="$(payload_get "$entry_index" DESTINATION)"
     if [ -z "$stored_destination" ]; then
         printf 'pkgbuilder: added entry %s with no destination - set one with:\n' "$((entry_index + 1))" >&2
-        printf '  pkgbuilder set %s /COMPONENTS/0/PAYLOAD/%s/DESTINATION /usr/local/bin/name\n' "$document_path" "$entry_index" >&2
+        printf '  pkgbuilder set %s /COMPONENTS/%s/PAYLOAD/%s/DESTINATION /usr/local/bin/name\n' \
+            "$document_path" "$PB_COMPONENT_INDEX" "$entry_index" >&2
     else
         printf 'Added entry %s: %s -> %s\n' "$((entry_index + 1))" \
             "$(payload_get "$entry_index" SOURCE)" "$stored_destination" >&2
     fi
     printf '%s\n' "$entry_index"
+    return 0
+}
+
+# The component index a key path names, or nothing when it names no component.
+component_index_of_key() {
+    local key_path="$1"
+    case "$key_path" in
+        /COMPONENTS/*) ;;
+        *) return 0 ;;
+    esac
+    local rest="${key_path#/COMPONENTS/}"
+    printf '%s' "${rest%%/*}"
+}
+
+# Refuse a key path whose component or payload index does not name something the
+# document actually has.
+#
+# plister cannot create a key whose parent container is missing, so without this
+# the write is a silent no-op - and an agent building a document one command at
+# a time would get exit 0 from every one of them and a document with the fields
+# missing. The payload index has always been checked here; the component index
+# needs the same treatment now that it can be something other than zero.
+check_key_path_indices() {
+    local key_path="$1"
+    local component_index payload_index
+
+    component_index="$(component_index_of_key "$key_path")"
+    [ -n "$component_index" ] || return 0
+
+    case "$component_index" in
+        *[!0-9]*)
+            printf 'pkgbuilder: %s does not name a component index\n' "$key_path" >&2
+            return 1
+            ;;
+        # All digits, but more of them than an integer comparison can take: "["
+        # would print its own complaint about the expression onto an agent's
+        # stderr and skip the bounds test.
+        ??????????*)
+            printf 'pkgbuilder: %s names component %s, which is not a number of components a document has\n' \
+                "$key_path" "$component_index" >&2
+            return 1
+            ;;
+    esac
+    if [ "$component_index" -ge "$(component_count)" ]; then
+        printf 'pkgbuilder: there is no component %s in this document (it has %s)\n' \
+            "$((component_index + 1))" "$(component_count)" >&2
+        return 1
+    fi
+
+    case "$key_path" in
+        /COMPONENTS/*/PAYLOAD/*) ;;
+        *) return 0 ;;
+    esac
+    # The shortest match, so the "*" stops at the component index.
+    payload_index="${key_path#/COMPONENTS/*/PAYLOAD/}"
+    payload_index="${payload_index%%/*}"
+    case "$payload_index" in
+        ''|*[!0-9]*)
+            printf 'pkgbuilder: %s does not name a payload entry index\n' "$key_path" >&2
+            return 1
+            ;;
+        ??????????*)
+            printf 'pkgbuilder: %s names payload entry %s, which is not a number of entries a document has\n' \
+                "$key_path" "$payload_index" >&2
+            return 1
+            ;;
+    esac
+    if [ "$payload_index" -ge "$(payload_count "$component_index")" ]; then
+        printf 'pkgbuilder: there is no payload entry %s in this document (it has %s)\n' \
+            "$((payload_index + 1))" "$(payload_count "$component_index")" >&2
+        return 1
+    fi
+    return 0
+}
+
+# --- add-component / remove-component ------------------------------------------
+# The only way to give a document a second component until the window grows a
+# component list. A document written by "new" has exactly one, and every other
+# command addresses components that already exist.
+cmd_add_component() {
+    local document_path="$1"
+    shift 1 2>/dev/null
+    local identifier="" install_location="" title="" description=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --identifier)       need_value "$1" $# "$2" || return 2; identifier="$2"; shift 2 ;;
+            --install-location) need_value "$1" $# "$2" || return 2; install_location="$2"; shift 2 ;;
+            --title)            need_value "$1" $# "$2" || return 2; title="$2"; shift 2 ;;
+            --description)      need_value "$1" $# "$2" || return 2; description="$2"; shift 2 ;;
+            -h|--help)          usage; return 2 ;;
+            *) fail_usage "add-component: unknown option: $1"; return 2 ;;
+        esac
+    done
+
+    if [ -z "$identifier" ]; then
+        fail_usage "add-component: --identifier is required"
+        return 2
+    fi
+    require_document "$document_path" || return $?
+
+    if ! valid_identifier "$identifier"; then
+        printf 'pkgbuilder: "%s" does not look like a reverse-DNS identifier, for example com.example.pkg.tool\n' \
+            "$identifier" >&2
+        return 1
+    fi
+
+    # Refused here rather than at build time. The build refuses it too, but a
+    # document being assembled one command at a time should not accept a
+    # component it can never build, and the two identifiers that merely
+    # sanitize alike are the pair a person would not spot by reading.
+    local existing=0
+    local existing_total="$(component_count)"
+    while [ "$existing" -lt "$existing_total" ]; do
+        if [ "$(component_get IDENTIFIER "$existing")" = "$identifier" ]; then
+            printf 'pkgbuilder: component %s already has the identifier "%s"\n' \
+                "$((existing + 1))" "$identifier" >&2
+            return 1
+        fi
+        if [ "$(sanitize_component_token "$(component_get IDENTIFIER "$existing")")" = \
+             "$(sanitize_component_token "$identifier")" ]; then
+            printf 'pkgbuilder: "%s" differs from component %s only in punctuation - they would share one choice and overwrite one another in the component directory\n' \
+                "$identifier" "$((existing + 1))" >&2
+            return 1
+        fi
+        existing=$((existing + 1))
+    done
+
+    # model_count, not component_count: the append index has to be the real
+    # length of the array, and component_count answers 1 for an empty one.
+    local new_index="$(model_count /COMPONENTS)"
+    "$plister" insert "$new_index" dict "$(model_file)" /COMPONENTS || {
+        printf 'pkgbuilder: could not add a component to the document\n' >&2
+        return 1
+    }
+    model_set "/COMPONENTS/$new_index/IDENTIFIER" "$identifier"
+    [ -z "$install_location" ] || model_set "/COMPONENTS/$new_index/INSTALL_LOCATION" "$install_location"
+    [ -z "$title" ] || model_set "/COMPONENTS/$new_index/TITLE" "$title"
+    [ -z "$description" ] || model_set "/COMPONENTS/$new_index/DESCRIPTION" "$description"
+    # Fills in every key the new component does not have yet, including its
+    # empty PAYLOAD array, so the document that lands is one the schema accepts.
+    model_normalize
+
+    write_document "$document_path" || return 1
+
+    printf 'Added component %s: %s\n' "$((new_index + 1))" "$identifier" >&2
+    # The 1-based number on stdout, which is what --component takes.
+    printf '%s\n' "$((new_index + 1))"
+    return 0
+}
+
+cmd_remove_component() {
+    local document_path="$1" component="$2"
+    if [ -z "$component" ]; then
+        fail_usage "remove-component: <doc> <n> are both required"
+        return 2
+    fi
+    require_document "$document_path" || return $?
+
+    case "$component" in
+        ''|*[!0-9]*|0)
+            printf 'pkgbuilder: remove-component takes a component number counting from 1; got "%s"\n' "$component" >&2
+            return 1
+            ;;
+    esac
+    local total="$(component_count)"
+    if [ "$component" -gt "$total" ]; then
+        printf 'pkgbuilder: there is no component %s in this document (it has %s)\n' "$component" "$total" >&2
+        return 1
+    fi
+    if [ "$total" -le 1 ]; then
+        printf 'pkgbuilder: a project needs one component; this is the only one\n' >&2
+        return 1
+    fi
+
+    local identifier="$(component_get IDENTIFIER "$((component - 1))")"
+    "$plister" remove "$(model_file)" "/COMPONENTS/$((component - 1))" || {
+        printf 'pkgbuilder: could not remove component %s\n' "$component" >&2
+        return 1
+    }
+    write_document "$document_path" || return 1
+    printf 'Removed component %s: %s\n' "$component" "$identifier" >&2
     return 0
 }
 
@@ -433,38 +647,7 @@ cmd_set() {
         return 1
     fi
 
-    # A key path naming a payload entry has to name one that is there. plister
-    # cannot create a key whose parent container is missing, so without this the
-    # write below is a silent no-op - and an agent building a document one
-    # command at a time would get exit 0 from every one of them and a document
-    # with the fields missing. The archlist branch has always checked this; the
-    # check belongs here, where every type passes.
-    case "$key_path" in
-        /COMPONENTS/0/PAYLOAD/*)
-            local payload_index="${key_path#/COMPONENTS/0/PAYLOAD/}"
-            payload_index="${payload_index%%/*}"
-            case "$payload_index" in
-                ''|*[!0-9]*)
-                    printf 'pkgbuilder: %s does not name a payload entry index\n' "$key_path" >&2
-                    return 1
-                    ;;
-                # All digits, but more of them than an integer comparison can
-                # take: "[" would print its own complaint about the expression
-                # onto an agent's stderr and skip the bounds test. Ten digits is
-                # already four billion entries.
-                ??????????*)
-                    printf 'pkgbuilder: %s names payload entry %s, which is not a number of entries a document has\n' \
-                        "$key_path" "$payload_index" >&2
-                    return 1
-                    ;;
-            esac
-            if [ "$payload_index" -ge "$(payload_count)" ]; then
-                printf 'pkgbuilder: there is no payload entry %s in this document (it has %s)\n' \
-                    "$((payload_index + 1))" "$(payload_count)" >&2
-                return 1
-            fi
-            ;;
-    esac
+    check_key_path_indices "$key_path" || return 1
 
     case "$wanted_type" in
         archlist)
@@ -497,20 +680,12 @@ cmd_set() {
                     done
                     ;;
                 *)
-                    # /COMPONENTS/0/PAYLOAD/<n>/VERIFY/ARCHITECTURES
-                    local entry_index="${key_path#/COMPONENTS/0/PAYLOAD/}"
+                    # /COMPONENTS/<c>/PAYLOAD/<n>/VERIFY/ARCHITECTURES. Both
+                    # indices were bounds-checked above, for every type.
+                    local entry_component="$(component_index_of_key "$key_path")"
+                    local entry_index="${key_path#/COMPONENTS/*/PAYLOAD/}"
                     entry_index="${entry_index%%/*}"
-                    case "$entry_index" in
-                        ''|*[!0-9]*)
-                            printf 'pkgbuilder: %s does not name a payload entry index\n' "$key_path" >&2
-                            return 1
-                            ;;
-                    esac
-                    if [ "$entry_index" -ge "$(payload_count)" ]; then
-                        printf 'pkgbuilder: there is no payload entry %s in this document\n' "$((entry_index + 1))" >&2
-                        return 1
-                    fi
-                    payload_archs_set "$entry_index" "$(arch_lines "$new_value")" || return 1
+                    payload_archs_set "$entry_index" "$(arch_lines "$new_value")" "$entry_component" || return 1
                     ;;
             esac
             ;;
@@ -531,7 +706,21 @@ cmd_set() {
             # An enum is caught here rather than at build time, where "Rooot"
             # becomes a Distribution XML the installer rejects.
             case "$key_path" in
-                /COMPONENTS/0/AUTH)
+                /COMPONENTS/*/IDENTIFIER)
+                    # Caught here rather than at build time, for the same reason
+                    # the enums below are and the payload bounds check above is:
+                    # an agent assembling a document one command at a time should
+                    # hear about a mistake at the command that made it, not three
+                    # commands later. "add-component" has always validated this;
+                    # "set" writes the same field and did not, which left the two
+                    # routes to one key disagreeing about what it accepts.
+                    if ! valid_identifier "$new_value"; then
+                        printf 'pkgbuilder: "%s" does not look like a reverse-DNS identifier, for example com.example.pkg.tool\n' \
+                            "$new_value" >&2
+                        return 1
+                    fi
+                    ;;
+                /COMPONENTS/*/AUTH)
                     case "$new_value" in
                         Root|User) ;;
                         *) printf 'pkgbuilder: AUTH is "%s"; it must be Root or User.\n' "$new_value" >&2; return 1 ;;
@@ -683,24 +872,37 @@ build_dry_run() {
 
     # The staging plan, from the same two functions the component stage uses to
     # place files, so what is printed is what would be staged.
-    printf 'Would stage into the payload root:\n' >&2
-    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
-    [ -n "$install_location" ] || install_location="/"
-    local entry_count="$(payload_count)"
-    local index=0
-    # Set by the loop below.
+    local total_components="$(component_count)"
+    # Set by the loops below.
+    local component_index install_location entry_count index
     local source destination relative
-    while [ "$index" -lt "$entry_count" ]; do
-        source="$(resolve_stored_path "$(payload_get "$index" SOURCE)")"
-        destination="$(expand_tokens "$(payload_get "$index" DESTINATION)")"
-        # Normalized first, exactly as stage_payload_root does before it builds
-        # the write path. Without this a destination carrying "." or a doubled
-        # slash prints one path here and stages to another, which makes the
-        # dry run a plan of a build that will not happen.
-        destination="$(normalize_path "$destination")"
-        relative="$(staged_relative_path "$destination" "$install_location")"
-        printf '  %s -> %s (%s)\n' "$source" "$relative" "$(payload_get "$index" MODE)" >&2
-        index=$((index + 1))
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+        if [ "$total_components" -gt 1 ]; then
+            printf 'Would stage component %s of %s (%s) into its payload root:\n' \
+                "$((component_index + 1))" "$total_components" \
+                "$(component_get IDENTIFIER "$component_index")" >&2
+        else
+            printf 'Would stage into the payload root:\n' >&2
+        fi
+        install_location="$(component_get INSTALL_LOCATION "$component_index")"
+        [ -n "$install_location" ] || install_location="/"
+        entry_count="$(payload_count "$component_index")"
+        index=0
+        while [ "$index" -lt "$entry_count" ]; do
+            source="$(resolve_stored_path "$(payload_get "$index" SOURCE "$component_index")")"
+            destination="$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")"
+            # Normalized first, exactly as stage_payload_root does before it
+            # builds the write path. Without this a destination carrying "." or
+            # a doubled slash prints one path here and stages to another, which
+            # makes the dry run a plan of a build that will not happen.
+            destination="$(normalize_path "$destination")"
+            relative="$(staged_relative_path "$destination" "$install_location")"
+            printf '  %s -> %s (%s)\n' "$source" "$relative" \
+                "$(payload_get "$index" MODE "$component_index")" >&2
+            index=$((index + 1))
+        done
+        component_index=$((component_index + 1))
     done
 
     local xml_path
@@ -982,6 +1184,8 @@ subcommand="$1"
 case "$subcommand" in
     new)            cmd_new "$@" ;;
     add-payload)    cmd_add_payload "$@" ;;
+    add-component)  cmd_add_component "$@" ;;
+    remove-component) cmd_remove_component "$@" ;;
     set)            cmd_set "$@" ;;
     get)            cmd_get "$@" ;;
     validate)       cmd_validate "$@" ;;

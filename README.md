@@ -116,9 +116,16 @@ Phase 5 is now complete: Actions > Inspect Built Package takes the package apart
 and reports what is actually in it, and the two app-wide defaults are
 remembered.
 
-A document holds one component. A multi-component package imports its first and
-names the rest in the log; `Private/Multi_Component_Support.md` records what
-lifting that limit would take, and why it has not been.
+A document holds an array of components and builds every one of them: one
+`pkgbuild` run and one Distribution choice each. Most projects need one - with
+`INSTALL_LOCATION` `/` and absolute destinations, a single component already
+spans `/usr/local/bin`, `/Applications` and `/Library/Frameworks`. A second earns
+its keep when a part has to be separately selectable in the installer, or needs
+its own install scripts, `auth` or relocatability.
+
+The window edits the first component; there is no component list in it yet, so
+adding and selecting one is the CLI's `add-component` and `--component`.
+`Private/Multi_Component_Support.md` records what the window would take.
 
 See `Private/Design.md` for the full specification and the phasing plan.
 
@@ -212,7 +219,7 @@ To trace handler execution, `touch /tmp/packagebuilder_debug` and read
 "$AB" test PackageBuilder.app --tests Tests
 ```
 
-Eight files, around 730 checks. They drive the handler scripts under a
+Eight files, around 930 checks. They drive the handler scripts under a
 simulated OMC environment and assert on the model file and the window calls the
 handlers produce, so the whole app is testable headlessly.
 

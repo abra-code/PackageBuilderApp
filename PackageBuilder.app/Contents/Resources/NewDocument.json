@@ -11,6 +11,9 @@
   "COMPONENTS": [
     {
       "IDENTIFIER": "",
+      "TITLE": "",
+      "DESCRIPTION": "",
+      "SELECTED": true,
       "INSTALL_LOCATION": "/",
       "OVERWRITE_PERMISSIONS": false,
       "RELOCATABLE": false,

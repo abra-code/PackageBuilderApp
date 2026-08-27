@@ -468,6 +468,71 @@ check "the count is exact"       "1"                         "$(log_says 'Payloa
 check "the listing is capped"    "1"                         "$(log_says 'and 9 more, not listed')"
 check "200 rows were listed"     "200"                       "$(/usr/bin/grep -c "^    \..*	" "$(state_dir)/run.log" | /usr/bin/tr -d ' ')"
 
+# =============================================================================
+# Several components through the whole pipeline: pkgbuild twice, one
+# Distribution with two choices, and productbuild over the directory holding
+# both component packages.
+# =============================================================================
+
+section "95. a two-component product is built end to end"
+reset_state
+artifacts2="$(make_artifacts)"
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Two.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts2"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts2/Widget.app"
+omc_run PackageBuilder.payload.drop
+pl set string "Two" "$(model_file)" /PROJECT/NAME
+pl set string "1.0" "$(model_file)" /PROJECT/VERSION
+pl set string "com.example.pkg.app" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+pl set string "The App" "$(model_file)" /COMPONENTS/0/TITLE
+two_index="$(count /COMPONENTS)"
+pl insert "$two_index" dict "$(model_file)" /COMPONENTS
+pl set string "com.example.pkg.cli" "$(model_file)" "/COMPONENTS/$two_index/IDENTIFIER"
+pl set string "The CLI" "$(model_file)" "/COMPONENTS/$two_index/TITLE"
+pl set string "/" "$(model_file)" "/COMPONENTS/$two_index/INSTALL_LOCATION"
+pl set bool false "$(model_file)" "/COMPONENTS/$two_index/SELECTED"
+pl set array "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD"
+pl insert 0 dict "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD"
+pl set string '${ARTIFACTS_DIR}/mytool' "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD/0/SOURCE"
+pl set string "/usr/local/bin/mytool" "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD/0/DESTINATION"
+pl set string "0755" "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD/0/MODE"
+pl set string "root" "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD/0/OWNER"
+pl set string "wheel" "$(model_file)" "/COMPONENTS/$two_index/PAYLOAD/0/GROUP"
+pl set string "allow" "$(model_file)" /DISTRIBUTION/CUSTOMIZE
+clear_payload_assertions
+omc_run PackageBuilder.step.component
+omc_run PackageBuilder.step.distribution
+check "a package was written"    "yes"                       "$([ -n "$(built_dist)" ] && [ -f "$(built_dist)" ] && echo yes || echo no)"
+
+section "96. the Distribution XML carries one choice per component"
+check "two lines, two choices"   "2 2"                       "$(/usr/bin/grep -c '<line choice=' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ') $(/usr/bin/grep -c '<choice id=' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ')"
+check "two terminal pkg-refs"    "2"                         "$(/usr/bin/grep -c '</pkg-ref>' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ')"
+# The choice ids are the sanitized identifiers, and the file names the pkg-refs
+# resolve to are what build_component_package actually wrote. A mismatch here is
+# a product productbuild accepts and an installer then finds empty.
+check "the first choice id"      "1"                         "$(xml_has 'id="com_example_pkg_app_choice"')"
+check "the second choice id"     "1"                         "$(xml_has 'id="com_example_pkg_cli_choice"')"
+check "the first package ref"    "1"                         "$(xml_has '#com_example_pkg_app.pkg')"
+check "the second package ref"   "1"                         "$(xml_has '#com_example_pkg_cli.pkg')"
+# Per-component titles, which a single-component document has no way to carry.
+check "the first title"          "1"                         "$(xml_has 'title="The App"')"
+check "the second title"         "1"                         "$(xml_has 'title="The CLI"')"
+# start_selected is written only when it is false, so a document that has never
+# asked for anything else produces the bytes it always produced.
+check "only the off one says so" "1"                         "$(/usr/bin/grep -c 'start_selected="false"' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ')"
+
+section "97. productbuild accepted it and both components are inside"
+/bin/rm -rf "$OMCTEST_WORK/two-expanded"
+/usr/sbin/pkgutil --expand "$(built_dist)" "$OMCTEST_WORK/two-expanded" >/dev/null 2>&1
+check "the first is in the product"  "yes"                   "$([ -d "$OMCTEST_WORK/two-expanded/com_example_pkg_app.pkg" ] && echo yes || echo no)"
+check "and so is the second"     "yes"                       "$([ -d "$OMCTEST_WORK/two-expanded/com_example_pkg_cli.pkg" ] && echo yes || echo no)"
+check "each holds its own payload" "1"                       "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/two-expanded/com_example_pkg_cli.pkg/Bom" | /usr/bin/grep -c 'usr/local/bin/mytool')"
+check "and not the other's"      "0"                         "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/two-expanded/com_example_pkg_cli.pkg/Bom" | /usr/bin/grep -c 'Widget.app')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 

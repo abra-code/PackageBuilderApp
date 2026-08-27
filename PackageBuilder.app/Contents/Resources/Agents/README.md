@@ -32,8 +32,11 @@ pseudo-JSON giving every key with its type, default and constraint, which
 
 - `PROJECT` - name, version, minimum macOS, the artifacts folder, the output
   folder, the package file name pattern.
-- `COMPONENTS[0]` - identifier, install location, the two safety flags, and the
-  `PAYLOAD` array. Only the first component is read (design section 14).
+- `COMPONENTS[n]` - identifier, choice title, install location, the two safety
+  flags, and the `PAYLOAD` array. Every component is built: one `pkgbuild` run
+  and one Distribution choice each. Most projects need one, because a single
+  component with `INSTALL_LOCATION` `/` and absolute destinations already spans
+  `/usr/local/bin`, `/Applications` and `/Library/Frameworks`.
 - Each payload entry - `SOURCE`, `DESTINATION`, `MODE`, and a `VERIFY` block
   saying what must be true of that artifact.
 - `DISTRIBUTION` - installer presentation and host architectures.
@@ -75,8 +78,10 @@ DOC=$(pkgbuilder new ~/widget --name widget --identifier com.example.pkg.widget)
 
 ```
 pkgbuilder add-payload <doc> <artifact> [--destination <P>] [--mode <M>]
-                       [--owner <O>] [--group <G>] [--no-verify]
+                       [--owner <O>] [--group <G>] [--component <N>] [--no-verify]
 ```
+
+`--component` takes a component number counting from 1 and defaults to 1.
 
 Runs the same logic as dropping a file on the payload table: it guesses the
 destination from the artifact's kind (`.app` to `/Applications`, a bare executable
@@ -90,6 +95,38 @@ still added, asserts nothing, and a note says so - that is the normal case when 
 document is written before the build machine has run.
 
 Prints the new entry's 0-based index on stdout, for use in `set` key paths.
+
+### add-component / remove-component - more than one part
+
+```
+pkgbuilder add-component <doc> --identifier <ID> [--install-location <L>]
+                         [--title <T>] [--description <D>]
+pkgbuilder remove-component <doc> <N>
+```
+
+`add-component` prints the new component's number on stdout, counting from 1,
+which is what `add-payload --component` takes. It fills in the rest of the keys,
+so the document that lands is one `validate` accepts.
+
+It refuses an identifier another component already has, and one differing from
+another only in punctuation: `com.example.a-b` and `com.example.a_b` both reduce
+to a single choice id and a single package file name, so one component would
+quietly overwrite the other in the directory `productbuild` scans.
+
+`remove-component` refuses to remove the last one - a project needs a component.
+
+Reach for a second component when a part has to be separately selectable in the
+installer, or needs its own install scripts, `AUTH` or `RELOCATABLE`. Splitting a
+payload that needs none of those buys nothing and adds a way to get it wrong:
+two components installing to the same path, or one inside another, are refused
+before anything is built, and that is the mistake this makes possible.
+
+```sh
+DOC=$(pkgbuilder new ~/suite --name suite --identifier com.example.pkg.app)
+pkgbuilder add-payload "$DOC" ~/build/Suite.app
+N=$(pkgbuilder add-component "$DOC" --identifier com.example.pkg.cli --title "Command line tools")
+pkgbuilder add-payload "$DOC" ~/build/suitectl --component "$N"
+```
 
 ### set / get - edit and read
 
@@ -107,6 +144,7 @@ The two architecture arrays take a comma-separated value:
 
 ```
 pkgbuilder set doc.pkgbld /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES arm64,x86_64
+pkgbuilder set doc.pkgbld /COMPONENTS/1/INSTALL_LOCATION /Library/Frameworks
 pkgbuilder set doc.pkgbld /DISTRIBUTION/HOST_ARCHITECTURES arm64,x86_64
 ```
 

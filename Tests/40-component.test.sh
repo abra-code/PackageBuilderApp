@@ -316,6 +316,134 @@ check "tab becomes a space"      "a b"                       "$(pb_call table_ce
 check "newline becomes a space"  "a b"                       "$(pb_call table_cell "$(printf 'a\nb')")"
 check "ordinary text untouched"  '${ARTIFACTS_DIR}/x'        "$(pb_call table_cell '${ARTIFACTS_DIR}/x')"
 
+# =============================================================================
+# Several components. Everything above this line builds one, which is what a
+# document held until the component array was made real; these drive the loop.
+# =============================================================================
+
+# Give the current document a second component with its own payload entry.
+# Written through the model rather than through a handler, because the window
+# has no component list yet - the CLI's add-component is the supported route and
+# is exercised in 80-cli; this is the same thing done in-process.
+add_second_component() { # <identifier> <destination>
+    local new_index="$(count /COMPONENTS)"
+    pl insert "$new_index" dict "$(model_file)" /COMPONENTS
+    pl set string "$1" "$(model_file)" "/COMPONENTS/$new_index/IDENTIFIER"
+    pl set string "/" "$(model_file)" "/COMPONENTS/$new_index/INSTALL_LOCATION"
+    pl set array "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD"
+    pl insert 0 dict "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD"
+    pl set string '${ARTIFACTS_DIR}/mytool' "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD/0/SOURCE"
+    pl set string "$2" "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD/0/DESTINATION"
+    pl set string "0755" "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD/0/MODE"
+    pl set string "root" "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD/0/OWNER"
+    pl set string "wheel" "$(model_file)" "/COMPONENTS/$new_index/PAYLOAD/0/GROUP"
+}
+
+section "74. two components build two component packages"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Multi.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts/Widget.app"
+omc_run PackageBuilder.payload.drop
+pl set string "com.example.pkg.widget" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+add_second_component "com.example.pkg.tools" "/usr/local/bin/mytool"
+clear_payload_assertions
+omc_run PackageBuilder.step.component
+check "preconditions passed"     "1"                         "$(log_says 'all clear')"
+check "two packages were built"  "2"                         "$(built_pkg_count)"
+# The project name cannot name them both, so each is named from its own
+# identifier through the same sanitizer the choice id uses.
+check "the first is named for its identifier" "com_example_pkg_widget.pkg" "$(/usr/bin/basename "$(built_pkg)")"
+check "and the second for its own" "1"                       "$(built_pkgs | /usr/bin/grep -c 'com_example_pkg_tools\.pkg')"
+check "both are really there"    "2"                         "$(built_pkgs | while IFS= read -r p; do [ -f "$p" ] && echo x; done | /usr/bin/grep -c x)"
+# Both land in the one directory productbuild scans, and nothing else does.
+check "and nothing else is in the component dir" "2"         "$(/bin/ls "$(state_dir)/component" | /usr/bin/grep -c '\.pkg$')"
+check "the log names each one"   "1"                         "$(log_says 'Component 2 of 2')"
+
+section "75. each component gets its own staging root"
+check "the first keeps the plain name" "yes"                 "$([ -d "$(state_dir)/root/Applications/Widget.app" ] && echo yes || echo no)"
+check "the second is suffixed"   "yes"                       "$([ -f "$(state_dir)/root-1/usr/local/bin/mytool" ] && echo yes || echo no)"
+# The staging roots must not bleed into each other: the second component's
+# payload has no business in the first component's package.
+check "the first has no tool"    "no"                        "$([ -e "$(state_dir)/root/usr/local/bin/mytool" ] && echo yes || echo no)"
+check "the second has no bundle" "no"                        "$([ -e "$(state_dir)/root-1/Applications/Widget.app" ] && echo yes || echo no)"
+
+section "76. each component package carries only its own payload"
+/bin/rm -rf "$OMCTEST_WORK/exp-c1" "$OMCTEST_WORK/exp-c2"
+/usr/sbin/pkgutil --expand "$(built_pkg)" "$OMCTEST_WORK/exp-c1" >/dev/null 2>&1
+/usr/sbin/pkgutil --expand "$(built_pkgs | /usr/bin/sed -n '2p')" "$OMCTEST_WORK/exp-c2" >/dev/null 2>&1
+check "the first identifies itself" "1"                      "$(/usr/bin/grep -c 'identifier="com.example.pkg.widget"' "$OMCTEST_WORK/exp-c1/PackageInfo" | /usr/bin/tr -d ' ')"
+check "the second too"           "1"                         "$(/usr/bin/grep -c 'identifier="com.example.pkg.tools"' "$OMCTEST_WORK/exp-c2/PackageInfo" | /usr/bin/tr -d ' ')"
+check "the first holds the bundle" "1"                       "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/exp-c1/Bom" | /usr/bin/grep -c '^\./Applications/Widget\.app$')"
+check "and not the tool"         "0"                         "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/exp-c2/Bom" | /usr/bin/grep -c 'Widget.app')"
+check "the second holds the tool" "1"                        "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/exp-c2/Bom" | /usr/bin/grep -c 'usr/local/bin/mytool')"
+# The 8.1 correction is per component, not applied once to the first.
+check "overwrite-permissions patched on both" "2"            "$(/usr/bin/grep -h -c 'overwrite-permissions="false"' "$OMCTEST_WORK/exp-c1/PackageInfo" "$OMCTEST_WORK/exp-c2/PackageInfo" | /usr/bin/paste -sd+ - | /usr/bin/bc)"
+
+section "77. two components installing to the same path are refused"
+# The failure that cannot exist with one component and is the likeliest with
+# several: an artifact left behind in the component it was moved out of. Nothing
+# downstream objects - the two component packages are built independently and
+# the later one just wins at install time.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Clash.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts/mytool"
+omc_run PackageBuilder.payload.drop
+pl set string "com.example.pkg.a" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+add_second_component "com.example.pkg.b" "$(payload_field 0 DESTINATION)"
+clear_payload_assertions
+omc_run PackageBuilder.step.component
+check "the build refused it"     "1"                         "$(log_says 'install to the same path')"
+check "and named both components" "1"                        "$(log_says 'Component 1 item 1 and component 2 item 1')"
+check "nothing was built"        "0"                         "$(built_pkg_count)"
+
+section "78. one component installing inside another is refused"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Nest.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts/Widget.app"
+omc_run PackageBuilder.payload.drop
+pl set string "com.example.pkg.a" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+pl set string "/Applications/Widget.app" "$(model_file)" /COMPONENTS/0/PAYLOAD/0/DESTINATION
+add_second_component "com.example.pkg.b" "/Applications/Widget.app/Contents/Extra"
+clear_payload_assertions
+omc_run PackageBuilder.step.component
+check "the nesting is caught"    "1"                         "$(log_says 'installs inside component')"
+check "and nothing was built"    "0"                         "$(built_pkg_count)"
+
+section "79. two components that cannot be told apart are refused"
+# Two failures with one cause. The punctuation case is the nastier: nothing
+# fails, and the product ships with one component silently replaced by the
+# other, because the file names collide in the directory productbuild scans.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Same.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts/mytool"
+omc_run PackageBuilder.payload.drop
+pl set string "com.example.pkg.a-b" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+add_second_component "com.example.pkg.a_b" "/usr/local/bin/other"
+clear_payload_assertions
+omc_run PackageBuilder.build
+check "the punctuation clash is caught" "1"                  "$(log_says 'differ only in punctuation')"
+check "and nothing was built"    "0"                         "$(built_pkg_count)"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                          "$(ui_unknown_writes)"
 

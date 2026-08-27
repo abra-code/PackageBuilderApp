@@ -124,37 +124,26 @@ write_packaging_script() {
 
     local name="$(model_get /PROJECT/NAME)"
     local version="$(model_get /PROJECT/VERSION)"
-    local identifier="$(model_get /COMPONENTS/0/IDENTIFIER)"
-    local install_location="$(model_get /COMPONENTS/0/INSTALL_LOCATION)"
-    [ -n "$install_location" ] || install_location="/"
     local min_os="$(model_get /PROJECT/MIN_OS_VERSION)"
     local title="$(model_get /DISTRIBUTION/TITLE)"
     [ -n "$title" ] || title="$name"
     local customize="$(model_get /DISTRIBUTION/CUSTOMIZE)"
     [ -n "$customize" ] || customize="never"
-    local auth="$(model_get /COMPONENTS/0/AUTH)"
-    [ -n "$auth" ] || auth="Root"
     local architectures="$(host_architectures_attr)"
-    local choice_id="$(distribution_choice_id "$identifier")"
     local require_scripts=false
     [ "$(model_get_bool /DISTRIBUTION/REQUIRE_SCRIPTS)" != "1" ] || require_scripts=true
-    local overwrite="$(bool_str "$(model_get_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS)")"
-    local relocatable="$(model_get_bool /COMPONENTS/0/RELOCATABLE)"
     local signing_on="$(model_get_bool /SIGNING/ENABLED)"
+
+    # Set once per iteration of the component loops below.
+    local component_index identifier install_location auth choice_id
+    local overwrite relocatable preinstall postinstall entry_count
+    local component_root component_basename component_label
+    local total_components="$(component_count)"
     local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
     local artifacts="$(artifacts_dir_abs)"
     local output_dir="$(output_dir_abs)"
     local name_pattern="$(model_get /PROJECT/PACKAGE_NAME)"
     [ -n "$name_pattern" ] || name_pattern='${NAME}_${VERSION}.pkg'
-    # The stored values, not the resolved ones: these go through
-    # emit_runtime_path like every other path, so a script kept beside the
-    # artifacts follows --artifacts-dir instead of being frozen to this
-    # machine. Resolving them here also lost them entirely when the artifacts
-    # folder was unset - resolve_stored_path returns empty, and the whole
-    # scripts block silently disappeared from the exported build. Found in
-    # review, 2026-08-07.
-    local preinstall="$(model_get /COMPONENTS/0/PREINSTALL)"
-    local postinstall="$(model_get /COMPONENTS/0/POSTINSTALL)"
 
     # Whether any stored path leans on the artifacts folder, so the emitted
     # script can insist on --artifacts-dir instead of collapsing the token to
@@ -163,13 +152,23 @@ write_packaging_script() {
     local needs_artifacts=0
     # Set once per iteration of the loops below.
     local index stored pair model_key
-    local entry_count="$(payload_count)"
-    index=0
-    while [ "$index" -lt "$entry_count" ]; do
-        case "$(payload_get "$index" SOURCE)" in
+    component_index=0
+    while [ "$component_index" -lt "$total_components" ]; do
+        entry_count="$(payload_count "$component_index")"
+        index=0
+        while [ "$index" -lt "$entry_count" ]; do
+            case "$(payload_get "$index" SOURCE "$component_index")" in
+                *'${ARTIFACTS_DIR}'*) needs_artifacts=1 ;;
+            esac
+            index=$((index + 1))
+        done
+        # A component script may lean on it too, and a document whose only
+        # ${ARTIFACTS_DIR} use was a preinstall path exported a script that
+        # collapsed the token instead of insisting on the folder.
+        case "$(component_get PREINSTALL "$component_index")$(component_get POSTINSTALL "$component_index")" in
             *'${ARTIFACTS_DIR}'*) needs_artifacts=1 ;;
         esac
-        index=$((index + 1))
+        component_index=$((component_index + 1))
     done
     for pair in $DISTRIBUTION_RESOURCE_KINDS; do
         model_key="${pair%%:*}"
@@ -177,10 +176,6 @@ write_packaging_script() {
             *'${ARTIFACTS_DIR}'*) needs_artifacts=1 ;;
         esac
     done
-    case "$preinstall$postinstall" in
-        *'${ARTIFACTS_DIR}'*) needs_artifacts=1 ;;
-    esac
-
     {
         # --- Header and configuration -----------------------------------------
         printf '#!/bin/sh\n'
@@ -211,13 +206,10 @@ write_packaging_script() {
         printf '# --- The document, frozen at export time --------------------------------------\n'
         printf 'project_name=%s\n' "$(sh_quote "$name")"
         printf 'package_version=%s\n' "$(sh_quote "$version")"
-        printf 'identifier=%s\n' "$(sh_quote "$identifier")"
-        printf 'install_location=%s\n' "$(sh_quote "$install_location")"
         printf 'installer_identity=%s\n' "$(sh_quote "$identity")"
         printf 'artifacts_dir=%s\n' "$(sh_quote "$artifacts")"
         printf 'output_dir=%s\n' "$(sh_quote "$output_dir")"
         printf 'project_dir=%s\n' "$(sh_quote "$(document_dir)")"
-        printf 'overwrite_permissions=%s\n' "$(sh_quote "$overwrite")"
         printf 'do_codesign=%s\n' "$(sh_quote "$signing_on")"
         printf 'needs_artifacts=%s\n' "$needs_artifacts"
         printf 'build_date="$(/bin/date +%%Y-%%m-%%d)"\n'
@@ -295,12 +287,15 @@ staging_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/makepkg-XXXXXXXX")" || fail "
 cleanup() { /bin/rm -rf "$staging_dir"; }
 trap cleanup EXIT
 
-payload_root="$staging_dir/root"
 component_dir="$staging_dir/component"
 # Every destination staged so far, normalized - read back by stage_entry's
 # nesting check. Inside the scratch, so it goes away with the trap.
+# Shared by every component, deliberately: two components installing to one
+# path, or one inside another, is refused here for the same reason it is refused
+# within a single component. The two component packages are built independently
+# and nothing downstream objects - the later one just wins at install time.
 staged_destinations="$staging_dir/staged_destinations"
-/bin/mkdir -p "$payload_root" "$component_dir" || fail "Could not create the staging directories"
+/bin/mkdir -p "$component_dir" || fail "Could not create the staging directory"
 
 # --- Verify -------------------------------------------------------------------
 # The checks the document asserts about each artifact, transcribed from the
@@ -601,17 +596,59 @@ stage_entry() {
 PB_HELPERS
         printf '\n'
 
+        # --- One block per component ------------------------------------------
+        # Unrolled here at generation time, the same way the payload entries
+        # are. The emitted script has no loop of its own, so what it does to
+        # each component is readable in the order it happens - and a reader
+        # comparing it against the app's own build sees the same steps.
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+        identifier="$(component_get IDENTIFIER "$component_index")"
+        install_location="$(component_get INSTALL_LOCATION "$component_index")"
+        [ -n "$install_location" ] || install_location="/"
+        overwrite="$(bool_str "$(component_get_bool OVERWRITE_PERMISSIONS "$component_index")")"
+        relocatable="$(component_get_bool RELOCATABLE "$component_index")"
+        # The stored values, not the resolved ones: these go through
+        # emit_runtime_path like every other path, so a script kept beside the
+        # artifacts follows --artifacts-dir instead of being frozen to this
+        # machine. Resolving them here also lost them entirely when the
+        # artifacts folder was unset - resolve_stored_path returns empty, and
+        # the whole scripts block silently disappeared from the exported build.
+        # Found in review, 2026-08-07.
+        preinstall="$(component_get PREINSTALL "$component_index")"
+        postinstall="$(component_get POSTINSTALL "$component_index")"
+        entry_count="$(payload_count "$component_index")"
+        component_basename="$(component_package_basename "$component_index")"
+        # Component 0 keeps the unsuffixed staging root, so a single-component
+        # export produces the script it always produced.
+        if [ "$component_index" = "0" ]; then
+            component_root="root"
+        else
+            component_root="root-$component_index"
+        fi
+
+        if [ "$total_components" -gt 1 ]; then
+            printf '# --- Component %s of %s: %s ---\n' \
+                "$((component_index + 1))" "$total_components" "$(comment_safe "$identifier")"
+        fi
+        printf 'identifier=%s\n' "$(sh_quote "$identifier")"
+        printf 'install_location=%s\n' "$(sh_quote "$install_location")"
+        printf 'overwrite_permissions=%s\n' "$(sh_quote "$overwrite")"
+        printf 'payload_root="$staging_dir"/%s\n' "$(sh_quote "$component_root")"
+        printf '/bin/mkdir -p "$payload_root" || fail "Could not create the staging directory"\n'
+        printf '\n'
+
         # --- The payload, one call per entry ----------------------------------
         printf 'announce "VERIFY the payload against what the document asserts"\n'
         index=0
         while [ "$index" -lt "$entry_count" ]; do
             printf 'verify_entry %s %s %s %s %s %s\n' \
-                "$(emit_runtime_path "$(payload_get "$index" SOURCE)")" \
-                "$(sh_quote "$(payload_archs_get "$index" | /usr/bin/tr '\n' ' ')")" \
-                "$(sh_quote "$(payload_get "$index" VERIFY/SIGNED_BY)")" \
-                "$(sh_quote "$(payload_bool_get "$index" VERIFY/HARDENED_RUNTIME)")" \
-                "$(sh_quote "$(payload_bool_get "$index" VERIFY/SECURE_TIMESTAMP)")" \
-                "$(sh_quote "$(payload_get "$index" VERIFY/VERSION_FLAG)")"
+                "$(emit_runtime_path "$(payload_get "$index" SOURCE "$component_index")")" \
+                "$(sh_quote "$(payload_archs_get "$index" "$component_index" | /usr/bin/tr '\n' ' ')")" \
+                "$(sh_quote "$(payload_get "$index" VERIFY/SIGNED_BY "$component_index")")" \
+                "$(sh_quote "$(payload_bool_get "$index" VERIFY/HARDENED_RUNTIME "$component_index")")" \
+                "$(sh_quote "$(payload_bool_get "$index" VERIFY/SECURE_TIMESTAMP "$component_index")")" \
+                "$(sh_quote "$(payload_get "$index" VERIFY/VERSION_FLAG "$component_index")")"
             index=$((index + 1))
         done
         printf '\n'
@@ -623,9 +660,9 @@ PB_HELPERS
             # not a file on the machine running the build, so resolving it
             # against the document's folder would be meaningless.
             printf 'stage_entry %s %s %s\n' \
-                "$(emit_runtime_path "$(payload_get "$index" SOURCE)")" \
-                "$(emit_runtime_text "$(payload_get "$index" DESTINATION)")" \
-                "$(sh_quote "$(payload_get "$index" MODE)")"
+                "$(emit_runtime_path "$(payload_get "$index" SOURCE "$component_index")")" \
+                "$(emit_runtime_text "$(payload_get "$index" DESTINATION "$component_index")")" \
+                "$(sh_quote "$(payload_get "$index" MODE "$component_index")")"
             index=$((index + 1))
         done
         printf '\n'
@@ -653,7 +690,7 @@ PB_HELPERS
 
         # --- pkgbuild and the PackageInfo patch -------------------------------
         printf 'announce "PKGBUILD component package"\n'
-        printf 'component_package="$component_dir/$project_name.pkg"\n'
+        printf 'component_package="$component_dir"/%s\n' "$(sh_quote "$component_basename.pkg")"
         if [ "$relocatable" != "1" ]; then
             /bin/cat <<'PB_RELOCATE'
 # Bundles must not be relocatable (the app's design 8.2): pkgbuild marks them
@@ -720,6 +757,10 @@ PB_PKGBUILD_PLAIN
 # expand/flatten round trip; --expand keeps Payload and Bom opaque. The grep is
 # not decoration: a silently failed sed would ship the harmful package.
 expand_dir="$staging_dir/expand"
+# Removed first. pkgutil --expand refuses a directory that already exists, and
+# with several components this block runs once per component into the same
+# scratch path - so the second one failed outright until this line was here.
+/bin/rm -rf "$expand_dir"
 /usr/sbin/pkgutil --expand "$component_package" "$expand_dir" || fail "pkgutil --expand failed"
 [ -f "$expand_dir/PackageInfo" ] || fail "The component package has no PackageInfo"
 /usr/bin/sed -i '' "s/overwrite-permissions=\"[a-z]*\"/overwrite-permissions=\"$overwrite_permissions\"/" "$expand_dir/PackageInfo"
@@ -730,6 +771,9 @@ expand_dir="$staging_dir/expand"
 printf 'overwrite-permissions set to %s\n' "$overwrite_permissions"
 PB_PATCH
         printf '\n'
+
+        component_index=$((component_index + 1))
+        done
 
         # --- Distribution.xml --------------------------------------------------
         # Emitted as quoted printf lines rather than a heredoc. A heredoc is
@@ -776,20 +820,51 @@ PB_PATCH
             esac
             emit_xml_line "    <$element file=\"$(xml_escape "$base")\"/>"
         done
+        # One line, one choice and one terminal pkg-ref per component, in the
+        # same order the app's own generator writes them - the exported script
+        # is compared against it byte for byte by the test suite.
         emit_xml_line '    <choices-outline>'
-        emit_xml_line "        <line choice=\"$(xml_escape "$choice_id")\"/>"
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            choice_id="$(distribution_choice_id "$(component_get IDENTIFIER "$component_index")")"
+            emit_xml_line "        <line choice=\"$(xml_escape "$choice_id")\"/>"
+            component_index=$((component_index + 1))
+        done
         emit_xml_line '    </choices-outline>'
-        emit_xml_line "    <choice id=\"$(xml_escape "$choice_id")\" title=\"$(xml_escape "$title")\" description=\"\">"
-        emit_xml_line "        <pkg-ref id=\"$(xml_escape "$identifier")\"/>"
-        emit_xml_line '    </choice>'
+
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            identifier="$(component_get IDENTIFIER "$component_index")"
+            choice_id="$(distribution_choice_id "$identifier")"
+            local choice_open="    <choice id=\"$(xml_escape "$choice_id")\" title=\"$(xml_escape "$(component_title "$component_index")")\" description=\"$(xml_escape "$(component_get DESCRIPTION "$component_index")")\""
+            # Written only when it is false, for the same reason the app writes
+            # it only then: productbuild starts a choice selected, so emitting
+            # the default would change the bytes of every package that has never
+            # asked for anything else.
+            if [ "$(component_get_bool SELECTED "$component_index")" = "0" ]; then
+                choice_open="$choice_open start_selected=\"false\""
+            fi
+            emit_xml_line "$choice_open>"
+            emit_xml_line "        <pkg-ref id=\"$(xml_escape "$identifier")\"/>"
+            emit_xml_line '    </choice>'
+            component_index=$((component_index + 1))
+        done
+
         # The one line carrying a runtime value. Three %s and three arguments,
         # so neither the quoted text around the version nor the version itself
         # is ever read as a format.
-        printf 'printf %s %s "$package_version" %s >> "$dist_xml"\n' \
-            "'%s%s%s'" \
-            "$(sh_quote "    <pkg-ref id=\"$(xml_escape "$identifier")\" version=\"")" \
-            "$(sh_quote "\" auth=\"$(xml_escape "$auth")\">#$(xml_escape "$name").pkg</pkg-ref>
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            identifier="$(component_get IDENTIFIER "$component_index")"
+            auth="$(component_get AUTH "$component_index")"
+            [ -n "$auth" ] || auth="Root"
+            printf 'printf %s %s "$package_version" %s >> "$dist_xml"\n' \
+                "'%s%s%s'" \
+                "$(sh_quote "    <pkg-ref id=\"$(xml_escape "$identifier")\" version=\"")" \
+                "$(sh_quote "\" auth=\"$(xml_escape "$auth")\">#$(xml_escape "$(component_package_basename "$component_index")").pkg</pkg-ref>
 ")"
+            component_index=$((component_index + 1))
+        done
         emit_xml_line '</installer-gui-script>'
         printf '\n'
 
@@ -877,7 +952,25 @@ fi
 announce "DONE"
 printf 'Package:    %s\n' "$final_package"
 printf 'Version:    %s\n' "$package_version"
-printf 'Identifier: %s\n' "$identifier"
+PB_SIGN
+        # Frozen at export time rather than read back from "$identifier", which
+        # by now holds whatever the LAST component set it to: the summary would
+        # name one component and present it as the package's. The version above
+        # stays a runtime value because --version can change it; an identifier
+        # cannot.
+        if [ "$total_components" -le 1 ]; then
+            printf 'printf %s %s\n' "'Identifier: %s\n'" \
+                "$(sh_quote "$(component_get IDENTIFIER 0)")"
+        else
+            printf 'printf %s %s\n' "'Components: %s\n'" "$(sh_quote "$total_components")"
+            component_index=0
+            while [ "$component_index" -lt "$total_components" ]; do
+                printf 'printf %s %s\n' "'  %s\n'" \
+                    "$(sh_quote "$(component_get IDENTIFIER "$component_index")")"
+                component_index=$((component_index + 1))
+            done
+        fi
+        /bin/cat <<'PB_SIGN'
 printf '\n'
 if [ "$do_codesign" = "1" ]; then
     printf 'This package is signed but NOT notarized. Notarize and staple it with:\n'

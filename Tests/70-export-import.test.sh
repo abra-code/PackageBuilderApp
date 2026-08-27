@@ -29,6 +29,8 @@ omc_run PackageBuilder.export.script
 check "the script was written"   "yes"                        "$([ -f "$exported" ] && echo yes || echo no)"
 check "and is executable"        "yes"                        "$([ -x "$exported" ] && echo yes || echo no)"
 check "and sh accepts it"        "0"                          "$(/bin/sh -n "$exported" 2>/dev/null; echo $?)"
+# One component keeps the summary line it always had.
+check "the summary names the identifier" "1"                  "$(/usr/bin/grep -c "printf 'Identifier: %s\\\\n' 'com.abracode.pkg.replay'" "$exported" | /usr/bin/tr -d ' ')"
 
 section "122. the exported script reproduces the package"
 # The acceptance test for the whole feature: the script's package and the app's
@@ -584,11 +586,10 @@ check "source names the bundle"  '${ARTIFACTS_DIR}/Foo.framework' "$(payload_fie
 # default has to stand rather than being read from PackageInfo's always-root.
 check "auth left at the default" "Root"                       "$(model /COMPONENTS/0/AUTH)"
 
-section "138. a multi-component package imports the first and names the rest"
-# Design section 14 decision 2: the document holds one component. The others are
-# reported by identifier and install location rather than dropped quietly, and
-# the FIRST is the Distribution's first pkg-ref, not the alphabetically first
-# directory - a glob would pick the wrong one for any real installer.
+section "138. a multi-component package imports every component"
+# The order is the Distribution's, not the glob's: "aaaextras.pkg" sorts first
+# on disk and is deliberately named to prove that a glob would have picked the
+# wrong component to be number one.
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
@@ -616,10 +617,85 @@ DISTXML
     --package-path "$OMCTEST_WORK/multiin/comp" "$OMCTEST_WORK/multiin/out/Multi_4.2.pkg" >/dev/null 2>&1
 omc_dialog_answer choose_file "$OMCTEST_WORK/multiin/out/Multi_4.2.pkg"
 omc_run PackageBuilder.import.pkg
-check "the Distribution's first, not the glob's" "com.example.pkg.demo" "$(model /COMPONENTS/0/IDENTIFIER)"
-check "with its own payload"     "4"                          "$(count /COMPONENTS/0/PAYLOAD)"
-check "the dropped one is named" "1"                          "$(log_says 'com.example.pkg.aaaextras')"
-check "and counted"              "1"                          "$(log_says '1 further component')"
+check "both components landed"   "2"                          "$(component_total)"
+check "the Distribution's first, not the glob's" "com.example.pkg.demo" "$(component_field IDENTIFIER 0)"
+check "and the second is second" "com.example.pkg.aaaextras"  "$(component_field IDENTIFIER 1)"
+check "the first keeps its payload" "4"                       "$(payload_total 0)"
+check "the second has its own"   "1"                          "$(payload_total 1)"
+check "and it is the right file" "/Library/Extras/extra.txt"  "$(payload_field 0 DESTINATION 1)"
+# The choice titles are per component. A single-component document borrows the
+# distribution title, so this is the only shape that can carry them.
+check "the first choice title"   "Tools"                      "$(component_field TITLE 0)"
+check "and the second"           "Extras"                     "$(component_field TITLE 1)"
+# Each component's auth comes from its own pkg-ref. Reading the first pkg-ref
+# for all of them is the plausible-looking bug this proves is not there.
+check "auth per component"       "Root"                       "$(component_field AUTH 1)"
+check "the count is reported"    "1"                          "$(log_says '2 components were imported')"
+check "and nothing was dropped"  "0"                          "$(log_says 'further component')"
+
+section "138b. the second import resizes the component list to the new package"
+# A document that held two components and is then given a one-component package
+# must end up with one. Leaving the second behind would describe a project the
+# imported package knows nothing about, and the build would happily produce it.
+check "the fixture starts with two" "2"                       "$(component_total)"
+/bin/mkdir -p "$OMCTEST_WORK/multiin/comp1"
+/bin/cp "$OMCTEST_WORK/multiin/comp/tools.pkg" "$OMCTEST_WORK/multiin/comp1/tools.pkg"
+/bin/cat > "$OMCTEST_WORK/multiin/Distribution-one.xml" <<'ONEXML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<installer-gui-script minSpecVersion="2">
+    <options hostArchitectures="arm64,x86_64" customize="never" require-scripts="false"/>
+    <title>One</title>
+    <choices-outline><line choice="c0"/></choices-outline>
+    <choice id="c0" title="Tools"><pkg-ref id="com.example.pkg.demo"/></choice>
+    <pkg-ref id="com.example.pkg.demo" version="4.2" auth="Root">#tools.pkg</pkg-ref>
+</installer-gui-script>
+ONEXML
+/usr/bin/productbuild --distribution "$OMCTEST_WORK/multiin/Distribution-one.xml" \
+    --package-path "$OMCTEST_WORK/multiin/comp1" "$OMCTEST_WORK/multiin/out/One_4.2.pkg" >/dev/null 2>&1
+omc_dialog_answer choose_file "$OMCTEST_WORK/multiin/out/One_4.2.pkg"
+omc_run PackageBuilder.import.pkg
+check "now it holds one"         "1"                          "$(component_total)"
+check "and it is the new one"    "com.example.pkg.demo"       "$(component_field IDENTIFIER 0)"
+check "with no stale second"     ""                           "$(component_field IDENTIFIER 1)"
+
+section "138c. a deselected choice is imported as SELECTED false"
+# start_selected="false" is the only thing in a Distribution that says a
+# component ships turned off. Read faithfully: a document that silently turned
+# it back on would build an installer that installs something the original did
+# not.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/FromOptional.pkgbld"
+omc_run PackageBuilder.save.as
+make_import_pkg "$OMCTEST_WORK/optin"
+/bin/mkdir -p "$OMCTEST_WORK/optin/root2/Library/Opt"
+printf 'o\n' > "$OMCTEST_WORK/optin/root2/Library/Opt/opt.txt"
+/usr/bin/pkgbuild --root "$OMCTEST_WORK/optin/root2" --identifier com.example.pkg.optional \
+    --version 4.2 --install-location / --ownership recommended \
+    "$OMCTEST_WORK/optin/comp/optional.pkg" >/dev/null 2>&1
+/bin/cat > "$OMCTEST_WORK/optin/Distribution.xml" <<'OPTXML'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<installer-gui-script minSpecVersion="2">
+    <options hostArchitectures="arm64,x86_64" customize="allow" require-scripts="false"/>
+    <title>Optional</title>
+    <choices-outline><line choice="c0"/><line choice="c1"/></choices-outline>
+    <choice id="c0" title="Tools"><pkg-ref id="com.example.pkg.demo"/></choice>
+    <choice id="c1" title="Extras" start_selected="false"><pkg-ref id="com.example.pkg.optional"/></choice>
+    <pkg-ref id="com.example.pkg.demo" version="4.2" auth="Root">#tools.pkg</pkg-ref>
+    <pkg-ref id="com.example.pkg.optional" version="4.2" auth="User">#optional.pkg</pkg-ref>
+</installer-gui-script>
+OPTXML
+/usr/bin/productbuild --distribution "$OMCTEST_WORK/optin/Distribution.xml" \
+    --package-path "$OMCTEST_WORK/optin/comp" "$OMCTEST_WORK/optin/out/Optional_4.2.pkg" >/dev/null 2>&1
+omc_dialog_answer choose_file "$OMCTEST_WORK/optin/out/Optional_4.2.pkg"
+omc_run PackageBuilder.import.pkg
+check "the selected one stays on" "true"                      "$(component_field SELECTED 0)"
+check "the deselected one is off" "false"                     "$(component_field SELECTED 1)"
+# auth="User" on the second pkg-ref and auth="Root" on the first. This is the
+# assertion that fails if every component is given the first pkg-ref's auth.
+check "auth is read per pkg-ref"  "Root"                      "$(component_field AUTH 0)"
+check "not from the first one"    "User"                      "$(component_field AUTH 1)"
 
 section "139. what cannot be read is refused, and changes nothing"
 # Two refusals: a canceled panel and a file that is not a package at all. The
@@ -860,6 +936,75 @@ check "and says the artifacts folder is unset" "1"            "$(/usr/bin/grep -
 # An import that quietly "fixed" it would describe a package that was never
 # built, and this check is what would catch that.
 check "the safety warning survived the import" "1"            "$(/usr/bin/grep -c 'OVERWRITE_PERMISSIONS is true' "$OMCTEST_WORK/clivalidate.txt" | /usr/bin/tr -d ' ')"
+
+section "142. a two-component document exports a script that builds the same product"
+# The exporter unrolls the document at generation time - one block per component,
+# the same way it unrolls the payload - so this is where a loop that lost the
+# second component would show up. The byte-comparison of the two Distribution
+# files at the end is the real assertion: it fails if the app and the script
+# disagree about a single choice, file name or auth value.
+reset_state
+mc_artifacts="$(make_artifacts)"
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/ExpTwo.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$mc_artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$mc_artifacts/Widget.app"
+omc_run PackageBuilder.payload.drop
+pl set string "ExpTwo" "$(model_file)" /PROJECT/NAME
+pl set string "1.0" "$(model_file)" /PROJECT/VERSION
+pl set string "com.example.pkg.app" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+exp_index="$(count /COMPONENTS)"
+pl insert "$exp_index" dict "$(model_file)" /COMPONENTS
+pl set string "com.example.pkg.cli" "$(model_file)" "/COMPONENTS/$exp_index/IDENTIFIER"
+pl set string "The CLI" "$(model_file)" "/COMPONENTS/$exp_index/TITLE"
+pl set string "/" "$(model_file)" "/COMPONENTS/$exp_index/INSTALL_LOCATION"
+pl set string "User" "$(model_file)" "/COMPONENTS/$exp_index/AUTH"
+pl set array "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD"
+pl insert 0 dict "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD"
+pl set string '${ARTIFACTS_DIR}/mytool' "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD/0/SOURCE"
+pl set string "/usr/local/bin/mytool" "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD/0/DESTINATION"
+pl set string "0755" "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD/0/MODE"
+pl set string "root" "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD/0/OWNER"
+pl set string "wheel" "$(model_file)" "/COMPONENTS/$exp_index/PAYLOAD/0/GROUP"
+pl set bool false "$(model_file)" /SIGNING/ENABLED
+clear_payload_assertions
+exp_two="$OMCTEST_WORK/makepkg.exptwo.sh"
+/bin/rm -f "$exp_two"
+omc_dialog_answer save_as "$exp_two"
+omc_run PackageBuilder.export.script
+check "the script was written"   "yes"                        "$([ -f "$exp_two" ] && echo yes || echo no)"
+check "and sh accepts it"        "0"                          "$(/bin/sh -n "$exp_two" 2>/dev/null; echo $?)"
+# One block per component, not one for the whole document.
+check "two component packages are named" "2"                  "$(/usr/bin/grep -c 'component_package="\$component_dir"/' "$exp_two" | /usr/bin/tr -d ' ')"
+check "with a staging root each"  "1"                         "$(/usr/bin/grep -c "payload_root=.\$staging_dir./'root-1'" "$exp_two" | /usr/bin/tr -d ' ')"
+# The PackageInfo patch expands into one scratch path, once per component.
+# pkgutil --expand refuses a directory that is already there.
+check "and the patch clears its scratch" "2"                  "$(/usr/bin/grep -c 'rm -rf "\$expand_dir"' "$exp_two" | /usr/bin/tr -d ' ')"
+# The closing summary is frozen at export time, not read back from the runtime
+# "identifier" variable - which by then holds whatever the LAST component set it
+# to, so the summary would name one component and present it as the package's.
+check "the summary counts them"  "1"                          "$(/usr/bin/grep -c "printf 'Components: %s\\\\n' '2'" "$exp_two" | /usr/bin/tr -d ' ')"
+check "and names both"           "2"                          "$(/usr/bin/grep -c "^printf '  %s\\\\n' 'com.example.pkg." "$exp_two" | /usr/bin/tr -d ' ')"
+
+/bin/rm -rf "$OMCTEST_WORK/exptwo-out"
+/bin/sh "$exp_two" --unsigned --output-dir "$OMCTEST_WORK/exptwo-out" > "$OMCTEST_WORK/exptwo-run.log" 2>&1
+check "the script succeeded"     "0"                          "$?"
+exptwo_pkg="$OMCTEST_WORK/exptwo-out/ExpTwo_1.0-unsigned.pkg"
+check "the package landed"       "yes"                        "$([ -f "$exptwo_pkg" ] && echo yes || echo no)"
+/bin/rm -rf "$OMCTEST_WORK/exptwo-expand"
+/usr/sbin/pkgutil --expand "$exptwo_pkg" "$OMCTEST_WORK/exptwo-expand" >/dev/null 2>&1
+check "both components are inside" "yes"                      "$([ -d "$OMCTEST_WORK/exptwo-expand/com_example_pkg_app.pkg" ] && [ -d "$OMCTEST_WORK/exptwo-expand/com_example_pkg_cli.pkg" ] && echo yes || echo no)"
+check "each carries its own payload" "1"                      "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/exptwo-expand/com_example_pkg_cli.pkg/Bom" | /usr/bin/grep -c 'usr/local/bin/mytool')"
+check "and not the other's"      "0"                          "$(/usr/bin/lsbom -p f "$OMCTEST_WORK/exptwo-expand/com_example_pkg_cli.pkg/Bom" | /usr/bin/grep -c 'Widget.app')"
+
+omc_run PackageBuilder.step.component
+omc_run PackageBuilder.step.distribution
+/bin/rm -rf "$OMCTEST_WORK/exptwo-app-expand"
+/usr/sbin/pkgutil --expand "$(built_dist)" "$OMCTEST_WORK/exptwo-app-expand" >/dev/null 2>&1
+check "XML identical to the app's" "yes"                      "$(/usr/bin/cmp -s "$OMCTEST_WORK/exptwo-expand/Distribution" "$OMCTEST_WORK/exptwo-app-expand/Distribution" && echo yes || echo no)"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"

@@ -104,6 +104,16 @@ passes has exercised everything except the four Apple tools that produce bytes.
    does not accept the other.
 9. **An unsigned package never reaches the output folder** (design 8.3). Only a
    signed, signature-checked package lands there.
+10. **One component covers more than it looks like it does.** With
+    `INSTALL_LOCATION` `/` and absolute destinations, a single component already
+    spans `/usr/local/bin`, `/Applications` and `/Library/Frameworks`. Add a
+    second only when a part has to be separately selectable in the installer, or
+    needs its own install scripts, `AUTH` or `RELOCATABLE`.
+11. **Two components may not share an identifier, nor have identifiers differing
+    only in punctuation.** `com.example.a-b` and `com.example.a_b` both reduce to
+    one choice id and one package file name, so one would quietly overwrite the
+    other. Rule 2 also holds across components: two of them may not install to
+    the same path, or one inside another.
 
 ## The verify block is the point
 
@@ -166,6 +176,25 @@ otherwise collapse to `/usr/local/bin/tool`, which very likely exists and is the
   the install location.
 - **"the code signature does not verify"** on a fat binary - data was appended past
   the signed region, which a per-slice check does not see.
+
+## More than one component
+
+A document holds an array of components, and every one of them is built: one
+`pkgbuild` run and one Distribution choice each. The window edits the first; the
+CLI reaches the rest.
+
+```sh
+# A second part, separately selectable in the installer.
+N=$("$PB" add-component "$DOC" --identifier com.example.pkg.cli --title "Command line tools")
+"$PB" add-payload "$DOC" ~/build/widgetctl --component "$N"
+"$PB" set "$DOC" /DISTRIBUTION/CUSTOMIZE allow          # or the choice list stays hidden
+"$PB" set "$DOC" "/COMPONENTS/$((N - 1))/SELECTED" false  # ships unticked
+```
+
+`add-component` prints the number counting from 1, which is what
+`--component` takes; key paths are 0-based, hence the `- 1`. `TITLE` and
+`SELECTED` only show up in the installer when `CUSTOMIZE` is `allow` or
+`always` - with the default `never` the choice list is not drawn at all.
 
 ## Other things it does
 

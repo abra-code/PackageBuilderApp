@@ -147,7 +147,7 @@ schema_check_enum() {
 # --- The document -------------------------------------------------------------
 SCHEMA_ROOT_KEYS="FORMAT_VERSION PROJECT COMPONENTS DISTRIBUTION SIGNING"
 SCHEMA_PROJECT_KEYS="NAME VERSION MIN_OS_VERSION ARTIFACTS_DIR OUTPUT_DIR PACKAGE_NAME"
-SCHEMA_COMPONENT_KEYS="IDENTIFIER INSTALL_LOCATION OVERWRITE_PERMISSIONS RELOCATABLE AUTH PREINSTALL POSTINSTALL PAYLOAD"
+SCHEMA_COMPONENT_KEYS="IDENTIFIER TITLE DESCRIPTION SELECTED INSTALL_LOCATION OVERWRITE_PERMISSIONS RELOCATABLE AUTH PREINSTALL POSTINSTALL PAYLOAD"
 SCHEMA_PAYLOAD_KEYS="SOURCE DESTINATION OWNER GROUP MODE VERIFY"
 SCHEMA_VERIFY_KEYS="ARCHITECTURES SIGNED_BY HARDENED_RUNTIME SECURE_TIMESTAMP VERSION_FLAG"
 SCHEMA_DISTRIBUTION_KEYS="TITLE HOST_ARCHITECTURES CUSTOMIZE REQUIRE_SCRIPTS RESOURCES"
@@ -159,10 +159,11 @@ SCHEMA_SIGNING_KEYS="ENABLED INSTALLER_IDENTITY"
 # way to find out what is actually wrong with it.
 SCHEMA_FORMAT_VERSION=1
 
+# Arguments: payload entry index, component index, label prefix for messages
 schema_check_payload_entry() {
-    local entry_index="$1"
-    local base="/COMPONENTS/0/PAYLOAD/$entry_index"
-    local label="payload entry $((entry_index + 1))"
+    local entry_index="$1" component_index="$2" prefix="$3"
+    local base="/COMPONENTS/$component_index/PAYLOAD/$entry_index"
+    local label="${prefix}payload entry $((entry_index + 1))"
 
     if [ "$(schema_type "$base")" != "dict" ]; then
         schema_error "$label is $(schema_type "$base"), expected dict"
@@ -295,51 +296,88 @@ schema_check_document() {
         component_count="$(schema_count /COMPONENTS)"
         if [ "$component_count" = "0" ]; then
             schema_error "COMPONENTS is empty - a project needs one component"
-        elif [ "$component_count" -gt 1 ]; then
-            # Design 14 decision 2: the schema stores an array, the app edits
-            # element 0 and the Distribution XML gets one choice.
-            schema_warn "COMPONENTS holds $component_count components; this app reads only the first one"
         fi
     else
         schema_error "COMPONENTS is missing or is not an array"
     fi
 
-    if [ "$(schema_type /COMPONENTS/0)" = "dict" ]; then
-        schema_check_keys /COMPONENTS/0 "COMPONENTS/0" "$SCHEMA_COMPONENT_KEYS"
-        schema_check_type /COMPONENTS/0/IDENTIFIER string "COMPONENTS/0/IDENTIFIER" 1
-        schema_check_type /COMPONENTS/0/INSTALL_LOCATION string "COMPONENTS/0/INSTALL_LOCATION" 0
-        schema_check_type /COMPONENTS/0/OVERWRITE_PERMISSIONS bool "COMPONENTS/0/OVERWRITE_PERMISSIONS" 0
-        schema_check_type /COMPONENTS/0/RELOCATABLE bool "COMPONENTS/0/RELOCATABLE" 0
-        schema_check_type /COMPONENTS/0/PREINSTALL string "COMPONENTS/0/PREINSTALL" 0
-        schema_check_type /COMPONENTS/0/POSTINSTALL string "COMPONENTS/0/POSTINSTALL" 0
-        schema_check_enum /COMPONENTS/0/AUTH "COMPONENTS/0/AUTH" "Root User"
+    # Set once per iteration of the loop below.
+    local component_index=0 base label payload_count entry_index
+    local identifier other_index other_identifier
+    while [ "$component_index" -lt "$component_count" ]; do
+        base="/COMPONENTS/$component_index"
+        label="COMPONENTS/$component_index"
+        if [ "$(schema_type "$base")" != "dict" ]; then
+            schema_error "$label is not a dict"
+            component_index=$((component_index + 1))
+            continue
+        fi
+
+        schema_check_keys "$base" "$label" "$SCHEMA_COMPONENT_KEYS"
+        schema_check_type "$base/IDENTIFIER" string "$label/IDENTIFIER" 1
+        schema_check_type "$base/TITLE" string "$label/TITLE" 0
+        schema_check_type "$base/DESCRIPTION" string "$label/DESCRIPTION" 0
+        schema_check_type "$base/SELECTED" bool "$label/SELECTED" 0
+        schema_check_type "$base/INSTALL_LOCATION" string "$label/INSTALL_LOCATION" 0
+        schema_check_type "$base/OVERWRITE_PERMISSIONS" bool "$label/OVERWRITE_PERMISSIONS" 0
+        schema_check_type "$base/RELOCATABLE" bool "$label/RELOCATABLE" 0
+        schema_check_type "$base/PREINSTALL" string "$label/PREINSTALL" 0
+        schema_check_type "$base/POSTINSTALL" string "$label/POSTINSTALL" 0
+        schema_check_enum "$base/AUTH" "$label/AUTH" "Root User"
 
         # Both defaults are safety decisions with a design section behind them,
         # so a document turning either on is told what it is asking for rather
         # than left to find out from an installed machine.
-        if [ "$(schema_value /COMPONENTS/0/OVERWRITE_PERMISSIONS)" = "true" ]; then
-            schema_warn "COMPONENTS/0/OVERWRITE_PERMISSIONS is true: installing will apply the payload's owner and mode to directories that already exist, which resets a Homebrew user's /usr/local when the payload lives there (design 8.1)"
+        if [ "$(schema_value "$base/OVERWRITE_PERMISSIONS")" = "true" ]; then
+            schema_warn "$label/OVERWRITE_PERMISSIONS is true: installing will apply the payload's owner and mode to directories that already exist, which resets a Homebrew user's /usr/local when the payload lives there (design 8.1)"
         fi
-        if [ "$(schema_value /COMPONENTS/0/RELOCATABLE)" = "true" ]; then
-            schema_warn "COMPONENTS/0/RELOCATABLE is true: Installer will follow Spotlight to any existing copy of a bundle in the payload and install there instead (design 8.2)"
+        if [ "$(schema_value "$base/RELOCATABLE")" = "true" ]; then
+            schema_warn "$label/RELOCATABLE is true: Installer will follow Spotlight to any existing copy of a bundle in the payload and install there instead (design 8.2)"
         fi
 
-        if [ "$(schema_type /COMPONENTS/0/PAYLOAD)" = "array" ]; then
-            local payload_count="$(schema_count /COMPONENTS/0/PAYLOAD)"
+        # Two components that cannot be told apart collide in the Distribution's
+        # choice list, and - because the component package file name comes from
+        # the same identifier - overwrite each other's package in the directory
+        # productbuild scans. The build refuses both cases; this says so at the
+        # point a document is being written rather than at the point it is built.
+        identifier="$(schema_value "$base/IDENTIFIER")"
+        if [ -n "$identifier" ]; then
+            other_index=$((component_index + 1))
+            while [ "$other_index" -lt "$component_count" ]; do
+                other_identifier="$(schema_value "/COMPONENTS/$other_index/IDENTIFIER")"
+                if [ -n "$other_identifier" ] && [ "$identifier" = "$other_identifier" ]; then
+                    schema_error "COMPONENTS/$component_index and COMPONENTS/$other_index have the same IDENTIFIER \"$identifier\" - each component needs its own"
+                fi
+                other_index=$((other_index + 1))
+            done
+        fi
+
+        if [ "$(schema_type "$base/PAYLOAD")" = "array" ]; then
+            payload_count="$(schema_count "$base/PAYLOAD")"
             if [ "$payload_count" = "0" ]; then
-                schema_warn "the payload is empty - the document is well-formed but builds nothing"
+                if [ "$component_count" -gt 1 ]; then
+                    schema_warn "$label has an empty payload - the document is well-formed but that component builds nothing"
+                else
+                    schema_warn "the payload is empty - the document is well-formed but builds nothing"
+                fi
             fi
-            local entry_index=0
+            entry_index=0
             while [ "$entry_index" -lt "$payload_count" ]; do
-                schema_check_payload_entry "$entry_index"
+                # A single-component document labels its entries the way it
+                # always did; only with several is the component worth naming.
+                if [ "$component_count" -gt 1 ]; then
+                    schema_check_payload_entry "$entry_index" "$component_index" "$label "
+                else
+                    schema_check_payload_entry "$entry_index" "$component_index" ""
+                fi
                 entry_index=$((entry_index + 1))
             done
         else
-            schema_error "COMPONENTS/0/PAYLOAD is missing or is not an array"
+            schema_error "$label/PAYLOAD is missing or is not an array"
         fi
-    elif [ "$component_count" != "0" ]; then
-        schema_error "COMPONENTS/0 is not a dict"
-    fi
+
+        component_index=$((component_index + 1))
+    done
 
     # --- DISTRIBUTION ---
     if [ "$(schema_type /DISTRIBUTION)" = "dict" ]; then

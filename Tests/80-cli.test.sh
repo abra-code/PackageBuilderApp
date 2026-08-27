@@ -742,6 +742,113 @@ check "a bare option is refused" "2"                          "$?"
 # "--force.pkgbld.pkgbuilder.<pid>" is left behind.
 check "and left nothing behind" ""                            "$(/bin/ls -A "$ext" | /usr/bin/grep '^--')"
 
+# =============================================================================
+# Components from the command line. With no component list in the window, the
+# CLI is the only supported way to give a document a second component, so these
+# cover the whole editing path rather than a convenience.
+# =============================================================================
+
+mc="$OMCTEST_WORK/cli/mc"
+/bin/rm -rf "$mc"; /bin/mkdir -p "$mc/build"
+/bin/cp /bin/echo "$mc/build/one"
+/bin/cp /bin/echo "$mc/build/two"
+
+section "150. add-component gives a document a second component"
+pbcli new "$mc/Two.pkgbld" --name Two --identifier com.example.pkg.one \
+    --version 1.0 --artifacts-dir "$mc/build" --output-dir "$mc" --no-signing >/dev/null 2>&1
+check "the document was written" "yes"                        "$([ -f "$mc/Two.pkgbld" ] && echo yes || echo no)"
+added="$(pbcli add-component "$mc/Two.pkgbld" --identifier com.example.pkg.two --title "The Second" 2>/dev/null)"
+check "it prints the new number" "2"                          "$added"
+check "the document has two"     "2"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS)"
+check "with the identifier"      "com.example.pkg.two"        "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/IDENTIFIER)"
+check "and the title"            "The Second"                 "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/TITLE)"
+# The keys normalize fills in, so the document that lands is one the schema
+# accepts rather than a half-built dict.
+check "and a payload array"      "0"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD)"
+check "and an install location"  "/"                          "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/INSTALL_LOCATION)"
+
+section "151. a component that cannot be told from another is refused"
+pbcli add-component "$mc/Two.pkgbld" --identifier com.example.pkg.two >/dev/null 2>"$mc/dup.txt"
+check "a duplicate exits 1"      "1"                          "$?"
+check "and says which"           "1"                          "$(/usr/bin/grep -c 'already has the identifier' "$mc/dup.txt" | /usr/bin/tr -d ' ')"
+pbcli add-component "$mc/Two.pkgbld" --identifier com.example.pkg-two >/dev/null 2>"$mc/punct.txt"
+check "a punctuation twin too"   "1"                          "$?"
+check "and names the reason"     "1"                          "$(/usr/bin/grep -c 'only in punctuation' "$mc/punct.txt" | /usr/bin/tr -d ' ')"
+check "neither one landed"       "2"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS)"
+
+section "152. add-payload --component puts the entry in the right one"
+# --no-verify because the fixture binaries are copies of whatever /bin/echo is
+# on this machine, and the architectures add-payload guesses from one are a fact
+# about the machine rather than about anything under test here.
+pbcli add-payload "$mc/Two.pkgbld" "$mc/build/one" --destination /usr/local/bin/one --no-verify >/dev/null 2>&1
+pbcli add-payload "$mc/Two.pkgbld" "$mc/build/two" --destination /usr/local/bin/two --component 2 --no-verify >/dev/null 2>&1
+check "the first has one entry"  "1"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS/0/PAYLOAD)"
+check "and so does the second"   "1"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD)"
+check "each holds its own"       "/usr/local/bin/two"         "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/DESTINATION)"
+check "and the source is tokenized" '${ARTIFACTS_DIR}/two'    "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/SOURCE)"
+pbcli add-payload "$mc/Two.pkgbld" "$mc/build/two" --component 9 --no-verify >/dev/null 2>"$mc/nocomp.txt"
+check "a component that is not there is refused" "1"          "$?"
+check "and says how many there are" "1"                       "$(/usr/bin/grep -c 'there is no component 9' "$mc/nocomp.txt" | /usr/bin/tr -d ' ')"
+
+section "153. set and get reach a second component by key path"
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/INSTALL_LOCATION /opt >/dev/null 2>&1
+check "the write succeeded"      "0"                          "$?"
+check "and it is there"          "/opt"                       "$(pbcli get "$mc/Two.pkgbld" /COMPONENTS/1/INSTALL_LOCATION 2>/dev/null)"
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/MODE 0644 >/dev/null 2>&1
+check "a payload field too"      "0644"                       "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/MODE)"
+# The other component must not have moved. A key path that reached the right
+# value by writing both would pass every check above this one.
+check "and the other is untouched" "0755"                     "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/0/PAYLOAD/0/MODE)"
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/VERIFY/ARCHITECTURES arm64,x86_64 >/dev/null 2>&1
+check "and an arch list"         "2"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/VERIFY/ARCHITECTURES)"
+check "written to the right one" "0"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES)"
+# The bounds check is what stops plister writing into a container that is not
+# there and reporting success.
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/7/IDENTIFIER com.example.x >/dev/null 2>"$mc/oob.txt"
+check "an absent component is refused" "1"                    "$?"
+check "and named"                "1"                          "$(/usr/bin/grep -c 'there is no component 8' "$mc/oob.txt" | /usr/bin/tr -d ' ')"
+# A "*" in a case pattern spans slashes, so without its own arm this key path
+# would match /COMPONENTS/*/IDENTIFIER and be written into the payload entry.
+# "add-component" has always validated the identifier; "set" writes the same
+# field, so the two routes to one key have to agree about what it accepts.
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/IDENTIFIER "not a dns name" >/dev/null 2>"$mc/badid.txt"
+check "a bad identifier is refused" "1"                       "$?"
+check "and named"                "1"                          "$(/usr/bin/grep -c 'does not look like a reverse-DNS identifier' "$mc/badid.txt" | /usr/bin/tr -d ' ')"
+check "and none of it landed"    "com.example.pkg.two"        "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/1/IDENTIFIER)"
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/IDENTIFIER x >/dev/null 2>"$mc/notakey.txt"
+check "a payload IDENTIFIER is not a key" "1"                 "$?"
+check "and says so"              "1"                          "$(/usr/bin/grep -c 'is not a key this app reads' "$mc/notakey.txt" | /usr/bin/tr -d ' ')"
+
+# Undone before the build below. The arch list above asserts something about a
+# copy of this machine's /bin/echo, and the install location above is /opt while
+# the entry installs under /usr/local - which the preconditions rightly refuse.
+# Both were set to prove the write landed on the right component, and neither is
+# what the build sections are about.
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/PAYLOAD/0/VERIFY/ARCHITECTURES "" >/dev/null 2>&1
+pbcli set "$mc/Two.pkgbld" /COMPONENTS/1/INSTALL_LOCATION / >/dev/null 2>&1
+
+section "154. the dry run plans every component"
+pbcli build "$mc/Two.pkgbld" --dry-run --unsigned >/dev/null 2>"$mc/dry.txt"
+check "the dry run succeeded"    "0"                          "$?"
+check "it names the first"       "1"                          "$(/usr/bin/grep -c 'component 1 of 2' "$mc/dry.txt" | /usr/bin/tr -d ' ')"
+check "and the second"           "1"                          "$(/usr/bin/grep -c 'component 2 of 2' "$mc/dry.txt" | /usr/bin/tr -d ' ')"
+check "both entries are planned" "2"                          "$(/usr/bin/grep -c ' -> ' "$mc/dry.txt" | /usr/bin/tr -d ' ')"
+check "two choices are generated" "2"                         "$(/usr/bin/grep -c '<line choice=' "$mc/dry.txt" | /usr/bin/tr -d ' ')"
+
+section "155. a two-component document builds from the CLI"
+pbcli build "$mc/Two.pkgbld" --unsigned >/dev/null 2>"$mc/build.txt"
+check "the build succeeded"      "0"                          "$?"
+check "validate is clean"        "1"                          "$(pbcli validate "$mc/Two.pkgbld" 2>&1 | /usr/bin/grep -c '0 error(s), 0 warning(s)')"
+
+section "156. remove-component takes one away but never the last"
+pbcli remove-component "$mc/Two.pkgbld" 2 >/dev/null 2>&1
+check "it went"                  "1"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS)"
+check "and the survivor is the first" "com.example.pkg.one"   "$(pl get value "$mc/Two.pkgbld" /COMPONENTS/0/IDENTIFIER)"
+pbcli remove-component "$mc/Two.pkgbld" 1 >/dev/null 2>"$mc/last.txt"
+check "the only one is refused"  "1"                          "$?"
+check "and says why"             "1"                          "$(/usr/bin/grep -c 'a project needs one component' "$mc/last.txt" | /usr/bin/tr -d ' ')"
+check "and it is still there"    "1"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS)"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 
