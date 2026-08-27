@@ -138,6 +138,7 @@ write_packaging_script() {
     local component_index identifier install_location auth choice_id
     local overwrite relocatable preinstall postinstall entry_count
     local component_root component_basename component_label
+    local component_own_version version_expression
     local total_components="$(component_count)"
     local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
     local artifacts="$(artifacts_dir_abs)"
@@ -448,9 +449,9 @@ verify_entry() {
             v_line="$("$v_source" "$v_version_flag" </dev/null 2>/dev/null | /usr/bin/head -n 1)" || v_line=""
             v_reported="$(printf '%s' "$v_line" | /usr/bin/grep -oE '[0-9]+(\.[0-9]+)+([0-9A-Za-z.+_-]*)?' 2>/dev/null | /usr/bin/head -n 1)" || v_reported=""
         fi
-        [ -n "$v_reported" ] || fail "$v_label: reports no version to compare against $package_version"
-        if [ "$v_reported" != "$package_version" ]; then
-            fail "$v_label: reports version $v_reported, but this is being built as $package_version. The artifacts folder may be stale."
+        [ -n "$v_reported" ] || fail "$v_label: reports no version to compare against $component_version"
+        if [ "$v_reported" != "$component_version" ]; then
+            fail "$v_label: reports version $v_reported, but this is being built as $component_version. The artifacts folder may be stale."
         fi
         printf '  %s: reports version %s\n' "$v_label" "$v_reported"
     fi
@@ -632,6 +633,29 @@ PB_HELPERS
                 "$((component_index + 1))" "$total_components" "$(comment_safe "$identifier")"
         fi
         printf 'identifier=%s\n' "$(sh_quote "$identifier")"
+        # A component that states its own version gets it as a literal; one that
+        # does not follows "$package_version", so --version on the command line
+        # still moves every component that never asked to differ. Writing the
+        # resolved value for both would have silently broken that option.
+        component_own_version="$(component_get VERSION "$component_index")"
+        if [ -n "$component_own_version" ]; then
+            printf 'component_version=%s\n' "$(sh_quote "$component_own_version")"
+            # The same two checks the script already runs on package_version,
+            # for the same reason: this value is spliced raw into the pkg-ref,
+            # and without them a version carrying an angle bracket produces a
+            # Distribution that productbuild rejects with an XML parse error
+            # after both components have already been built. The charset that
+            # passes cannot contain an XML metacharacter, which is why nothing
+            # downstream has to escape it.
+            printf '%s\n' 'case "$component_version" in'
+            printf '%s\n' "    ''|[!0-9]*) fail \"Component version '\$component_version' must start with a digit\" ;;"
+            printf '%s\n' 'esac'
+            printf '%s\n' 'case "$component_version" in'
+            printf '%s\n' "    *[!0-9A-Za-z.+_-]*) fail \"Component version '\$component_version' may hold only letters, digits, . + _ or -\" ;;"
+            printf '%s\n' 'esac'
+        else
+            printf 'component_version="$package_version"\n'
+        fi
         printf 'install_location=%s\n' "$(sh_quote "$install_location")"
         printf 'overwrite_permissions=%s\n' "$(sh_quote "$overwrite")"
         printf 'payload_root="$staging_dir"/%s\n' "$(sh_quote "$component_root")"
@@ -723,12 +747,12 @@ PB_RELOCATE
         if [ -n "$preinstall" ] || [ -n "$postinstall" ]; then
             /bin/cat <<'PB_PKGBUILD_SCRIPTS'
 if [ -n "$component_plist" ]; then
-    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$package_version" \
+    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$component_version" \
         --install-location "$install_location" --ownership recommended \
         --scripts "$scripts_dir" --component-plist "$component_plist" "$component_package" \
         || fail "pkgbuild failed"
 else
-    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$package_version" \
+    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$component_version" \
         --install-location "$install_location" --ownership recommended \
         --scripts "$scripts_dir" "$component_package" \
         || fail "pkgbuild failed"
@@ -737,12 +761,12 @@ PB_PKGBUILD_SCRIPTS
         else
             /bin/cat <<'PB_PKGBUILD_PLAIN'
 if [ -n "$component_plist" ]; then
-    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$package_version" \
+    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$component_version" \
         --install-location "$install_location" --ownership recommended \
         --component-plist "$component_plist" "$component_package" \
         || fail "pkgbuild failed"
 else
-    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$package_version" \
+    /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$component_version" \
         --install-location "$install_location" --ownership recommended "$component_package" \
         || fail "pkgbuild failed"
 fi
@@ -858,9 +882,25 @@ PB_PATCH
             identifier="$(component_get IDENTIFIER "$component_index")"
             auth="$(component_get AUTH "$component_index")"
             [ -n "$auth" ] || auth="Root"
-            printf 'printf %s %s "$package_version" %s >> "$dist_xml"\n' \
+            # Not "$component_version": the per-component regions all assign
+            # that one variable, so by the time the Distribution is written it
+            # holds the LAST component's value. What is chosen here is the
+            # EXPRESSION, not the value - a literal for a component that states
+            # its own version, and "$package_version" for one that inherits, so
+            # --version on the command line still moves the pkg-ref of every
+            # component that never asked to differ. Freezing the value instead
+            # would let --version change what pkgbuild stamps while the pkg-ref
+            # went on claiming the old number.
+            component_own_version="$(component_get VERSION "$component_index")"
+            if [ -n "$component_own_version" ]; then
+                version_expression="$(sh_quote "$component_own_version")"
+            else
+                version_expression='"$package_version"'
+            fi
+            printf 'printf %s %s %s %s >> "$dist_xml"\n' \
                 "'%s%s%s'" \
                 "$(sh_quote "    <pkg-ref id=\"$(xml_escape "$identifier")\" version=\"")" \
+                "$version_expression" \
                 "$(sh_quote "\" auth=\"$(xml_escape "$auth")\">#$(xml_escape "$(component_package_basename "$component_index")").pkg</pkg-ref>
 ")"
             component_index=$((component_index + 1))

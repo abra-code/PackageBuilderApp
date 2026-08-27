@@ -58,11 +58,24 @@
                                            // to the same path, or one inside
                                            // another. All four are refused
                                            // before anything is built.
-                                           // The window edits the first; the CLI
-                                           // reaches the rest by key path and by
+                                           // The window has a list of them down
+                                           // the left side; the CLI reaches the
+                                           // same ones by key path and by
                                            // "add-component".
     {
       "IDENTIFIER": "com.example.pkg.widget", // string, required. Reverse-DNS.
+      "VERSION": "",                       // string. This component's version,
+                                           // as pkgbuild --version and as the
+                                           // pkg-ref version. Empty means the
+                                           // PROJECT VERSION, which is what
+                                           // most projects want. Set it only
+                                           // when a part ships on its own
+                                           // schedule - a 1.0 helper tool
+                                           // beside a 2.4 app. macOS records a
+                                           // version per component in its
+                                           // receipt database, so two
+                                           // components may differ and nothing
+                                           // complains when they do.
       "TITLE": "",                         // string. The Distribution choice's
                                            // title. Empty means: the
                                            // DISTRIBUTION TITLE when there is

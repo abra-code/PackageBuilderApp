@@ -21,6 +21,8 @@
 # omc_dialog_control against a window UUID that does not exist.
 set_value() { :; }
 set_property() { :; }
+set_state() { :; }
+show_build_tab() { :; }
 enable_view() { :; }
 show_view() { :; }
 show_progress() { :; }

@@ -255,7 +255,10 @@ import_apply_payload() {
     done
     while IFS="$import_record_separator" read -r source_path destination mode_octal owner group; do
         entry_index="$(payload_count)"
-        "$plister" insert "$entry_index" dict "$(model_file)" /COMPONENTS/0/PAYLOAD || return 1
+        # The current component, not a literal 0. Every other accessor on these
+        # lines defaults to it, and the two disagreeing is what would split one
+        # import across two components.
+        "$plister" insert "$entry_index" dict "$(model_file)" "/COMPONENTS/$PB_COMPONENT_INDEX/PAYLOAD" || return 1
         # The same verify defaults a dropped artifact gets (design 5.3): a
         # Mach-O starts out asserting universal, signed, hardened and
         # timestamped; a plain file or a source that is not on this disk
@@ -285,6 +288,12 @@ import_apply_payload() {
 # Arguments: absolute path of the .pkgproj
 import_pkgproj() {
     local pkgproj_path="$1"
+    # A .pkgproj describes one component, and it lands in the first one. Pinned
+    # here, in the shell variable the accessors below default to, rather than
+    # left to whatever the window last selected - and rather than through
+    # set_current_component_index, which persists and would move the window's
+    # own state on an import that refuses and changes nothing.
+    PB_COMPONENT_INDEX=0
     import_project_dir="$(/usr/bin/dirname "$pkgproj_path")"
     # Read where it lies. This used to stage a copy under a .plist name, because
     # plister picked the format from the extension alone and .pkgproj is not an
@@ -342,21 +351,25 @@ import_pkgproj() {
 
     [ -z "$name" ] || model_set /PROJECT/NAME "$name"
     [ -z "$version" ] || model_set /PROJECT/VERSION "$version"
-    [ -z "$identifier" ] || model_set /COMPONENTS/0/IDENTIFIER "$identifier"
+    [ -z "$identifier" ] || model_set "/COMPONENTS/$PB_COMPONENT_INDEX/IDENTIFIER" "$identifier"
+    # A .pkgproj describes one component at one version, which lands in
+    # PROJECT/VERSION above. Any per-component override this document was
+    # carrying describes the project that was just replaced, so it goes with it.
+    model_set "/COMPONENTS/$PB_COMPONENT_INDEX/VERSION" ""
 
     # Booleans only when the key is present, so a sparse project does not
     # silently flip a safety default (design 8.1: overwrite-permissions).
-    [ -z "$overwrite_flag" ] || model_set_bool /COMPONENTS/0/OVERWRITE_PERMISSIONS "$overwrite_flag"
-    [ -z "$relocatable_flag" ] || model_set_bool /COMPONENTS/0/RELOCATABLE "$relocatable_flag"
+    [ -z "$overwrite_flag" ] || model_set_bool "/COMPONENTS/$PB_COMPONENT_INDEX/OVERWRITE_PERMISSIONS" "$overwrite_flag"
+    [ -z "$relocatable_flag" ] || model_set_bool "/COMPONENTS/$PB_COMPONENT_INDEX/RELOCATABLE" "$relocatable_flag"
 
     # Packages stores 1 for "requires administrator password".
     case "$authentication" in
-        1) model_set /COMPONENTS/0/AUTH "Root" ;;
+        1) model_set "/COMPONENTS/$PB_COMPONENT_INDEX/AUTH" "Root" ;;
         '') ;;
-        *) model_set /COMPONENTS/0/AUTH "User" ;;
+        *) model_set "/COMPONENTS/$PB_COMPONENT_INDEX/AUTH" "User" ;;
     esac
 
-    [ -z "$install_location" ] || model_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
+    [ -z "$install_location" ] || model_set "/COMPONENTS/$PB_COMPONENT_INDEX/INSTALL_LOCATION" "$install_location"
 
     # The artifacts folder first, then the entries: store_path tokenizes every
     # source under it as ${ARTIFACTS_DIR}/... on the way in, which is what

@@ -180,8 +180,11 @@ otherwise collapse to `/usr/local/bin/tool`, which very likely exists and is the
 ## More than one component
 
 A document holds an array of components, and every one of them is built: one
-`pkgbuild` run and one Distribution choice each. The window edits the first; the
-CLI reaches the rest.
+`pkgbuild` run and one Distribution choice each. The window's Components tab has
+a list of them; the CLI reaches the same ones from a script.
+
+Each may carry a `VERSION` of its own. Empty means the project's, which is what
+most projects want; set it when a part ships on its own schedule.
 
 ```sh
 # A second part, separately selectable in the installer.

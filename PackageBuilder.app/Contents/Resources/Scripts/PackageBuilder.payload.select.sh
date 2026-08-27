@@ -7,6 +7,10 @@ dbg_context "PackageBuilder.payload.select.sh"
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 # The rows carry the entry's index in a hidden column past the three visible
 # ones - source, destination and mode (design 5.2).
 idx="$(table_column_value "$PAYLOAD_TABLE_ID" "$PAYLOAD_INDEX_COLUMN")"

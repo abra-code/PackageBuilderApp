@@ -849,8 +849,17 @@ import_pkg() {
     local title min_os architectures customize require_scripts
     local identity project_name package_base payload_root
     local scripts_note resource_note component_index
-    local whole_bundle payload_total payload_readable
+    local whole_bundle payload_total payload_readable component_own_version
     local scripts_seen refused_any first_package_info
+
+    # The write loop below assigns this per component, so nothing that runs
+    # after it depends on the value coming in. The read pass does run first,
+    # though, and a line added there that touched the model would otherwise
+    # address whichever component the window happened to have selected. Pinned
+    # here rather than through set_current_component_index: that one persists
+    # and discards the payload selection, which would move the window's state
+    # on an import that refuses and changes nothing.
+    PB_COMPONENT_INDEX=0
 
     importpkg_file="$package_path"
     importpkg_slot=""
@@ -1040,6 +1049,18 @@ import_pkg() {
 
         [ -z "$identifier" ] || component_set IDENTIFIER "$identifier"
         component_set INSTALL_LOCATION "$install_location"
+        # A package records a version per component, and this change made a
+        # document able to say so. Written only when it differs from the one
+        # that became the project's, so an ordinary single-version package
+        # imports as it always did - and CLEARED otherwise, because an override
+        # left over from whatever this document held before would outlive the
+        # import and re-stamp the component on the next build.
+        component_own_version="$(xml_element_attribute "$package_info" pkg-info version)"
+        if [ -n "$component_own_version" ] && [ "$component_own_version" != "$version" ]; then
+            component_set VERSION "$component_own_version"
+        else
+            component_set VERSION ""
+        fi
 
         # The two safety-relevant flags. overwrite-permissions is written only
         # when the package actually states it, so a package missing the

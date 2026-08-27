@@ -11,6 +11,7 @@
   "COMPONENTS": [
     {
       "IDENTIFIER": "",
+      "VERSION": "",
       "TITLE": "",
       "DESCRIPTION": "",
       "SELECTED": true,
@@ -20,8 +21,7 @@
       "AUTH": "Root",
       "PREINSTALL": "",
       "POSTINSTALL": "",
-      "PAYLOAD": [
-      ]
+      "PAYLOAD": []
     }
   ],
   "DISTRIBUTION": {

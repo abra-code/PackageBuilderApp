@@ -16,9 +16,11 @@
 # quietly did nothing.
 #
 # The interface:
-#   set_value, set_property, enable_view, show_view, show_progress  - views
+#   set_value, set_property, set_state, enable_view, show_view,
+#       show_progress                                               - views
 #   set_status                                                      - one line
-#   clear_log, append_log, append_log_file                          - the log
+#   clear_log, append_log, append_log_file, show_build_tab          - the log,
+#       which is a tab now rather than a pane that is always on screen
 #   rail_set, rail_reset                                            - the rail
 #   report_next_step                                                - the one
 #       place the two frontends genuinely say different things, because what
@@ -47,6 +49,14 @@ enable_view() {
     fi
 }
 
+# A view's observable state, which is a different channel from its value: a
+# DisclosureGroup's open/closed is states["isExpanded"], not a value, and the
+# documented way to open one programmatically is to write that state.
+set_state() {
+    local view_id="$1" state_name="$2" state_value="$3"
+    "$dialog_tool" "$document_uuid" "$view_id" omc_set_state "$state_name" "$state_value"
+}
+
 show_view() {
     local view_id="$1" visible="$2"
     if [ "$visible" = "1" ]; then
@@ -69,8 +79,22 @@ show_progress() {
 # --- Log view -----------------------------------------------------------------
 # From lib.notarize.sh: append to the file, then mirror the whole file into the
 # view, because the TextEditor has no incremental append.
+# Bring the Build tab forward.
+#
+# The log used to be a pane that was always on screen, so a stage could start
+# reporting into it from any tab. It is a tab now, and a build whose progress is
+# behind a tab the user is not looking at reports to nobody. A TabView's value
+# is its 0-based selected index.
+show_build_tab() {
+    set_value "$TABVIEW_ID" "$BUILD_TAB_INDEX"
+}
+
+# Every stage that reports starts by clearing the log, which makes this the one
+# place that has to know the log has moved - rather than eight handlers that
+# each have to remember to switch to it.
 clear_log() {
     : > "$(state_dir)/run.log"
+    show_build_tab
     set_value "$LOG_ID" ""
 }
 

@@ -444,6 +444,57 @@ omc_run PackageBuilder.build
 check "the punctuation clash is caught" "1"                  "$(log_says 'differ only in punctuation')"
 check "and nothing was built"    "0"                         "$(built_pkg_count)"
 
+section "80. each component package carries its own version"
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Versions.pkgbld"
+omc_run PackageBuilder.save.as
+omc_dialog_answer choose_folder "$artifacts"
+omc_run PackageBuilder.choose.artifacts
+omc_drop "$artifacts/Widget.app"
+omc_run PackageBuilder.payload.drop
+pl set string "com.example.pkg.widget" "$(model_file)" /COMPONENTS/0/IDENTIFIER
+pl set string "MultiVersion" "$(model_file)" /PROJECT/NAME
+pl set string "2.4" "$(model_file)" /PROJECT/VERSION
+add_second_component "com.example.pkg.tools" "/usr/local/bin/mytool"
+# The first states its own; the second says nothing and takes the project's.
+pl set string "1.0" "$(model_file)" /COMPONENTS/0/VERSION
+clear_payload_assertions
+omc_run PackageBuilder.step.component
+check "two packages were built"  "2"                         "$(built_pkg_count)"
+first_pkg="$(built_pkgs | /usr/bin/sed -n 1p)"
+second_pkg="$(built_pkgs | /usr/bin/sed -n 2p)"
+/bin/rm -rf "$OMCTEST_WORK/xv1" "$OMCTEST_WORK/xv2"
+/usr/sbin/pkgutil --expand "$first_pkg" "$OMCTEST_WORK/xv1" >/dev/null 2>&1
+/usr/sbin/pkgutil --expand "$second_pkg" "$OMCTEST_WORK/xv2" >/dev/null 2>&1
+# Read out of the pkg-info ELEMENT, not out of the file. PackageInfo opens with
+# <?xml version="1.0"?> and pkg-info itself carries format-version="2", so both
+# a bare "version=" pattern and a leading-space one find the wrong number first
+# - and " version=\"1.0\"" from the XML declaration is a plausible-looking
+# answer that made this assertion pass while proving nothing.
+pkginfo_version() {
+    /usr/bin/grep -o '<pkg-info[^>]*' "$1/PackageInfo" \
+        | /usr/bin/grep -o ' version="[^"]*"' | /usr/bin/head -n 1
+}
+check "the override reached pkgbuild" ' version="1.0"'      "$(pkginfo_version "$OMCTEST_WORK/xv1")"
+check "and the other inherited"  ' version="2.4"'           "$(pkginfo_version "$OMCTEST_WORK/xv2")"
+omc_run PackageBuilder.step.distribution
+# macOS records a version per component in its receipt database, and the pkg-ref
+# is where the Distribution says which.
+check "the first pkg-ref carries it" "1"                    "$(xml_has 'id="com.example.pkg.widget" version="1.0"')"
+check "the second carries the project's" "1"                "$(xml_has 'id="com.example.pkg.tools" version="2.4"')"
+
+section "81. a component version that is not a version is refused"
+pl set string "1.0 or later" "$(model_file)" /COMPONENTS/0/VERSION
+omc_run PackageBuilder.build
+check "the build refuses it"     "1"                         "$(log_says 'Component 1: Version')"
+check "and nothing was built"    "0"                         "$(built_pkg_count)"
+# An empty component version is not a bad one - it is the project's.
+pl set string "" "$(model_file)" /COMPONENTS/0/VERSION
+omc_run PackageBuilder.step.component
+check "empty is accepted"        "2"                         "$(built_pkg_count)"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                          "$(ui_unknown_writes)"
 

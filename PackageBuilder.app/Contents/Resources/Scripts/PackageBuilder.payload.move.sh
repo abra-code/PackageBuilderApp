@@ -11,6 +11,10 @@ dbg_context "PackageBuilder.payload.move.sh"
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 case "$OMC_ACTIONUI_TRIGGER_VIEW_ID" in
     "$PAYLOAD_UP_ID") step=-1 ;;
     "$PAYLOAD_DOWN_ID") step=1 ;;

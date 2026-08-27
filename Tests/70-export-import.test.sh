@@ -598,8 +598,10 @@ omc_run PackageBuilder.save.as
 make_import_pkg "$OMCTEST_WORK/multiin"
 /bin/mkdir -p "$OMCTEST_WORK/multiin/root2/Library/Extras"
 printf 'e\n' > "$OMCTEST_WORK/multiin/root2/Library/Extras/extra.txt"
+# 5.1, not 4.2: a package records a version per component, and a fixture where
+# both agree cannot tell "carried it across" from "left it empty".
 /usr/bin/pkgbuild --root "$OMCTEST_WORK/multiin/root2" --identifier com.example.pkg.aaaextras \
-    --version 4.2 --install-location / --ownership recommended \
+    --version 5.1 --install-location / --ownership recommended \
     "$OMCTEST_WORK/multiin/comp/aaaextras.pkg" >/dev/null 2>&1
 /bin/cat > "$OMCTEST_WORK/multiin/Distribution.xml" <<'DISTXML'
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -610,12 +612,15 @@ printf 'e\n' > "$OMCTEST_WORK/multiin/root2/Library/Extras/extra.txt"
     <choice id="c0" title="Tools"><pkg-ref id="com.example.pkg.demo"/></choice>
     <choice id="c1" title="Extras"><pkg-ref id="com.example.pkg.aaaextras"/></choice>
     <pkg-ref id="com.example.pkg.demo" version="4.2" auth="Root">#tools.pkg</pkg-ref>
-    <pkg-ref id="com.example.pkg.aaaextras" version="4.2" auth="Root">#aaaextras.pkg</pkg-ref>
+    <pkg-ref id="com.example.pkg.aaaextras" version="5.1" auth="Root">#aaaextras.pkg</pkg-ref>
 </installer-gui-script>
 DISTXML
 /usr/bin/productbuild --distribution "$OMCTEST_WORK/multiin/Distribution.xml" \
     --package-path "$OMCTEST_WORK/multiin/comp" "$OMCTEST_WORK/multiin/out/Multi_4.2.pkg" >/dev/null 2>&1
 omc_dialog_answer choose_file "$OMCTEST_WORK/multiin/out/Multi_4.2.pkg"
+# An override the document was carrying before the import describes a project
+# that is about to be replaced, so it has to go with it.
+pl set string "9.9" "$(model_file)" /COMPONENTS/0/VERSION
 omc_run PackageBuilder.import.pkg
 check "both components landed"   "2"                          "$(component_total)"
 check "the Distribution's first, not the glob's" "com.example.pkg.demo" "$(component_field IDENTIFIER 0)"
@@ -630,6 +635,11 @@ check "and the second"           "Extras"                     "$(component_field
 # Each component's auth comes from its own pkg-ref. Reading the first pkg-ref
 # for all of them is the plausible-looking bug this proves is not there.
 check "auth per component"       "Root"                       "$(component_field AUTH 1)"
+# The project takes the first component's version; a component whose own
+# version differs keeps it, and one that matches carries nothing.
+check "the project version"      "4.2"                        "$(model /PROJECT/VERSION)"
+check "the stale override is gone" ""                         "$(component_field VERSION 0)"
+check "the second keeps its own" "5.1"                        "$(component_field VERSION 1)"
 check "the count is reported"    "1"                          "$(log_says '2 components were imported')"
 check "and nothing was dropped"  "0"                          "$(log_says 'further component')"
 
@@ -1005,6 +1015,29 @@ omc_run PackageBuilder.step.distribution
 /bin/rm -rf "$OMCTEST_WORK/exptwo-app-expand"
 /usr/sbin/pkgutil --expand "$(built_dist)" "$OMCTEST_WORK/exptwo-app-expand" >/dev/null 2>&1
 check "XML identical to the app's" "yes"                      "$(/usr/bin/cmp -s "$OMCTEST_WORK/exptwo-expand/Distribution" "$OMCTEST_WORK/exptwo-app-expand/Distribution" && echo yes || echo no)"
+
+section "143. an exported script keeps --version working per component"
+# The generated script takes --version on the command line. A component that
+# states its own version must NOT follow it; one that inherits must. Resolving
+# both at generation time would have silently broken the option, and freezing
+# only the pkg-ref would have let pkgbuild and the Distribution disagree.
+pl set string "3.5" "$(model_file)" "/COMPONENTS/0/VERSION"
+exp_ver="$OMCTEST_WORK/makepkg.expver.sh"
+/bin/rm -f "$exp_ver"
+omc_dialog_answer save_as "$exp_ver"
+omc_run PackageBuilder.export.script
+check "the script was written"   "yes"                        "$([ -f "$exp_ver" ] && echo yes || echo no)"
+check "and sh accepts it"        "0"                          "$(/bin/sh -n "$exp_ver" 2>/dev/null; echo $?)"
+check "the override is a literal" "1"                         "$(/usr/bin/grep -c "^component_version='3.5'\$" "$exp_ver")"
+check "the other follows the option" "1"                      "$(/usr/bin/grep -c '^component_version="\$package_version"$' "$exp_ver")"
+# pkgbuild is handed the per-component variable, never the project one.
+check "pkgbuild takes the component's" "0"                    "$(/usr/bin/grep -c -- '--version "\$package_version"' "$exp_ver")"
+check "and takes it every time"  "4"                          "$(/usr/bin/grep -c -- '--version "\$component_version"' "$exp_ver")"
+# The pkg-refs are written after every component region has run, so they cannot
+# read $component_version - it holds the last component's value by then.
+check "the overriding pkg-ref is frozen" "1"                  "$(/usr/bin/grep -c "pkg-ref id=\\\"com.example.pkg.app\\\" version=\\\"' '3.5'" "$exp_ver")"
+check "the literal is re-checked" "2"                          "$(/usr/bin/grep -c 'Component version' "$exp_ver")"
+check "the inheriting one is not" "1"                         "$(/usr/bin/grep -c "pkg-ref id=\\\"com.example.pkg.cli\\\" version=\\\"' \"\$package_version\"" "$exp_ver")"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"

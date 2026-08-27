@@ -232,7 +232,7 @@ key_type_of() {
         # and be written into the payload entry as though it were a component's.
         /COMPONENTS/*/PAYLOAD/*) printf '' ;;
         /COMPONENTS/*/IDENTIFIER|/COMPONENTS/*/INSTALL_LOCATION|/COMPONENTS/*/AUTH|\
-/COMPONENTS/*/PREINSTALL|/COMPONENTS/*/POSTINSTALL|\
+/COMPONENTS/*/PREINSTALL|/COMPONENTS/*/POSTINSTALL|/COMPONENTS/*/VERSION|\
 /COMPONENTS/*/TITLE|/COMPONENTS/*/DESCRIPTION) printf 'string' ;;
         /COMPONENTS/*/OVERWRITE_PERMISSIONS|/COMPONENTS/*/RELOCATABLE|\
 /COMPONENTS/*/SELECTED) printf 'bool' ;;
@@ -556,37 +556,19 @@ cmd_add_component() {
     # document being assembled one command at a time should not accept a
     # component it can never build, and the two identifiers that merely
     # sanitize alike are the pair a person would not spot by reading.
-    local existing=0
-    local existing_total="$(component_count)"
-    while [ "$existing" -lt "$existing_total" ]; do
-        if [ "$(component_get IDENTIFIER "$existing")" = "$identifier" ]; then
-            printf 'pkgbuilder: component %s already has the identifier "%s"\n' \
-                "$((existing + 1))" "$identifier" >&2
-            return 1
-        fi
-        if [ "$(sanitize_component_token "$(component_get IDENTIFIER "$existing")")" = \
-             "$(sanitize_component_token "$identifier")" ]; then
-            printf 'pkgbuilder: "%s" differs from component %s only in punctuation - they would share one choice and overwrite one another in the component directory\n' \
-                "$identifier" "$((existing + 1))" >&2
-            return 1
-        fi
-        existing=$((existing + 1))
-    done
+    local conflict="$(component_identifier_conflict "$identifier")"
+    if [ -n "$conflict" ]; then
+        printf 'pkgbuilder: %s\n' "$conflict" >&2
+        return 1
+    fi
 
-    # model_count, not component_count: the append index has to be the real
-    # length of the array, and component_count answers 1 for an empty one.
-    local new_index="$(model_count /COMPONENTS)"
-    "$plister" insert "$new_index" dict "$(model_file)" /COMPONENTS || {
+    local new_index="$(component_append "$identifier" "$install_location")"
+    if [ -z "$new_index" ]; then
         printf 'pkgbuilder: could not add a component to the document\n' >&2
         return 1
-    }
-    model_set "/COMPONENTS/$new_index/IDENTIFIER" "$identifier"
-    [ -z "$install_location" ] || model_set "/COMPONENTS/$new_index/INSTALL_LOCATION" "$install_location"
+    fi
     [ -z "$title" ] || model_set "/COMPONENTS/$new_index/TITLE" "$title"
     [ -z "$description" ] || model_set "/COMPONENTS/$new_index/DESCRIPTION" "$description"
-    # Fills in every key the new component does not have yet, including its
-    # empty PAYLOAD array, so the document that lands is one the schema accepts.
-    model_normalize
 
     write_document "$document_path" || return 1
 
@@ -621,7 +603,7 @@ cmd_remove_component() {
     fi
 
     local identifier="$(component_get IDENTIFIER "$((component - 1))")"
-    "$plister" remove "$(model_file)" "/COMPONENTS/$((component - 1))" || {
+    component_remove_at "$((component - 1))" || {
         printf 'pkgbuilder: could not remove component %s\n' "$component" >&2
         return 1
     }

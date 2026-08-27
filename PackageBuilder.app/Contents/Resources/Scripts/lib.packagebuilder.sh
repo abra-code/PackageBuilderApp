@@ -115,6 +115,7 @@ READ_MINOS_ID=152
 ARCH_ARM64_ID=153
 ARCH_X86_64_ID=154
 CUSTOMIZE_ID=155
+REQUIRE_SCRIPTS_ID=166
 README_ID=156
 LICENSE_ID=158
 WELCOME_ID=160
@@ -125,6 +126,37 @@ OUTPUT_DIR_ID=170
 PACKAGE_NAME_ID=172
 SIGN_ID=173
 IDENTITY_PICKER_ID=174
+
+# The component list in the sidebar and its button strip, plus the three
+# component fields that had no control before there was a list to tell one
+# component from another. 185 is deliberately unused: it is where a Duplicate
+# button belongs if the strip ever grows one, and keeping it beside its
+# neighbors is worth more than closing the gap.
+COMPONENT_TABLE_ID=180
+COMPONENT_ADD_ID=181
+COMPONENT_REMOVE_ID=182
+COMPONENT_UP_ID=183
+COMPONENT_DOWN_ID=184
+COMPONENT_TITLE_ID=186
+COMPONENT_DESCRIPTION_ID=187
+COMPONENT_SELECTED_ID=188
+COMPONENT_VERSION_ID=189
+# What the version field would inherit, shown beside it. Inheritance is the
+# common case and it is invisible in an empty field, which for a VERSION is not
+# a detail: it is the number the receipt database records.
+COMPONENT_VERSION_HINT_ID=190
+# The disclosure holding the settings most components never change, and the note
+# saying when the two installer-choice controls inside it have no effect.
+COMPONENT_OPTIONS_ID=191
+COMPONENT_CHOICE_NOTE_ID=192
+
+# The component table's hidden index column (1-based, past the two visible ones).
+COMPONENT_INDEX_COLUMN=3
+
+# The Build tab, by its 0-based index in the TabView. A stage that starts
+# reporting switches to it, because the log is no longer a pane that is always
+# on screen.
+BUILD_TAB_INDEX=3
 
 STATUS_ID=220
 PROGRESS_ID=221
@@ -515,6 +547,8 @@ normalize_components() {
     while [ "$component_index" -lt "$total" ]; do
         ensure_container "/COMPONENTS/$component_index" PAYLOAD array
         ensure_string "/COMPONENTS/$component_index/IDENTIFIER" ""
+        # Empty means "the project's version" - see component_version.
+        ensure_string "/COMPONENTS/$component_index/VERSION" ""
         ensure_string "/COMPONENTS/$component_index/INSTALL_LOCATION" "/"
         ensure_string "/COMPONENTS/$component_index/PREINSTALL" ""
         ensure_string "/COMPONENTS/$component_index/POSTINSTALL" ""
@@ -768,20 +802,14 @@ push_model_to_window() {
 
     set_value "$ARTIFACTS_DIR_ID" "$(model_get /PROJECT/ARTIFACTS_DIR)"
     set_value "$NAME_ID" "$(model_get /PROJECT/NAME)"
-    set_value "$IDENTIFIER_ID" "$(component_get IDENTIFIER)"
     set_value "$VERSION_ID" "$(model_get /PROJECT/VERSION)"
-    set_value "$INSTALL_LOCATION_ID" "$(component_get INSTALL_LOCATION)"
-    set_value "$AUTH_ID" "$(component_get AUTH)"
-    set_value "$OVERWRITE_ID" "$(component_get_bool_str OVERWRITE_PERMISSIONS)"
-    set_value "$RELOCATABLE_ID" "$(component_get_bool_str RELOCATABLE)"
-    set_value "$PREINSTALL_ID" "$(component_get PREINSTALL)"
-    set_value "$POSTINSTALL_ID" "$(component_get POSTINSTALL)"
 
     set_value "$TITLE_ID" "$(model_get /DISTRIBUTION/TITLE)"
     set_value "$MIN_OS_ID" "$(model_get /PROJECT/MIN_OS_VERSION)"
     set_value "$ARCH_ARM64_ID" "$(bool_str "$(has_architecture arm64)")"
     set_value "$ARCH_X86_64_ID" "$(bool_str "$(has_architecture x86_64)")"
     set_value "$CUSTOMIZE_ID" "$(model_get /DISTRIBUTION/CUSTOMIZE)"
+    set_value "$REQUIRE_SCRIPTS_ID" "$(model_get_bool_str /DISTRIBUTION/REQUIRE_SCRIPTS)"
     set_value "$README_ID" "$(model_get /DISTRIBUTION/RESOURCES/README)"
     set_value "$LICENSE_ID" "$(model_get /DISTRIBUTION/RESOURCES/LICENSE)"
     set_value "$WELCOME_ID" "$(model_get /DISTRIBUTION/RESOURCES/WELCOME)"
@@ -792,13 +820,12 @@ push_model_to_window() {
     set_value "$PACKAGE_NAME_ID" "$(model_get /PROJECT/PACKAGE_NAME)"
     set_value "$SIGN_ID" "$(model_get_bool_str /SIGNING/ENABLED)"
 
-    # A freshly opened document starts on its first payload row, so the
-    # inspector shows something rather than a column of disabled fields.
-    if [ "$(payload_count)" -gt 0 ]; then
-        repopulate_payload 0
-    else
-        repopulate_payload ""
-    fi
+    # The component list, the component fields and the payload table all follow
+    # from which component is current, so one call fills all three. A document
+    # reopened in the same session comes back to the component it was left on;
+    # anything else resolves to the first.
+    repopulate_components "$(stored_component_index)"
+    enable_view "$COMPONENT_ADD_ID" 1
     enable_view "$PAYLOAD_ADD_ID" 1
     enable_view "$PAYLOAD_SCAN_ID" 1
     # The Actions menu is enabled as a whole once there is a document; the items
@@ -1007,15 +1034,38 @@ component_title() {
     esac
 }
 
+# The version this component's package carries: its own when it has one, the
+# project's otherwise.
+#
+# The fallback rather than a required field per component, for two reasons. One
+# version is the right answer for most projects - a component that does not say
+# otherwise is part of the same release as the rest - and every document written
+# before this key existed goes on building byte-identical packages.
+#
+# It is a real per-component value in the format, not a convenience of this app:
+# pkgbuild takes --version per component package, the Distribution carries one
+# per pkg-ref, and macOS records a version per component in its receipt database,
+# which is what "pkgutil --pkg-info" reports and what an updater compares. Two
+# components of one product legitimately differ - a 2.4 application beside the
+# 1.0 helper tool it has always shipped with.
+component_version() {
+    local component_index="$1"
+    local version="$(component_get VERSION "$component_index")"
+    [ -n "$version" ] || version="$(model_get /PROJECT/VERSION)"
+    printf '%s' "$version"
+}
+
 # --- Which component the window is editing ------------------------------------
 # Persisted per document, the same way the payload selection is, and re-checked
 # against the current count on every read: a reload or a removal can shrink the
 # array under a selection that was valid when it was made, and every caller
 # would otherwise address a component that is no longer there.
 #
-# There is no component picker in the window yet, so this resolves to 0 for every
-# document. It is written now because the alternative is for the field map and
-# the window projection to hardcode 0 a second time and have to be found again.
+# The sidebar list is what writes it. Every handler that reads or writes a
+# component field calls load_current_component_index once, at the top, before it
+# touches the model - a handler that forgets edits component 1 no matter which
+# row is selected, silently. Tests/10-document.test.sh checks that none of them
+# forgets.
 stored_component_index() {
     local component_index="$(pb_get pb_current_component_index)"
     case "$component_index" in
@@ -1032,6 +1082,12 @@ set_current_component_index() {
     esac
     PB_COMPONENT_INDEX="$component_index"
     pb_set pb_current_component_index "$component_index"
+    # The payload selection is one number for the document, not one per
+    # component, and selected_payload_index only bounds-checks it. Row 2 of the
+    # component being left is a perfectly valid row 2 of the component being
+    # entered, so without this the inspector opens on an unrelated entry and the
+    # next keystroke edits it.
+    set_selected_payload_index ""
 }
 
 # Resolve the persisted selection into PB_COMPONENT_INDEX for this handler.
@@ -1039,6 +1095,356 @@ set_current_component_index() {
 # never per accessor.
 load_current_component_index() {
     PB_COMPONENT_INDEX="$(stored_component_index)"
+    return 0
+}
+
+# --- Adding, removing and reordering ------------------------------------------
+# Both frontends go through these. The agent CLI had its own copies of the first
+# two before the window could do any of it, and two frontends that disagree
+# about what a new component is - or about which identifiers they refuse - hand
+# each other documents the other one will not build.
+
+# Reduce an identifier to the token that reaches a file name and a choice id.
+# Lives here rather than beside its two callers in lib.packagebuilder.build.sh
+# because component_identifier_conflict needs it and the window handlers that
+# add a component do not source the build pipeline.
+sanitize_component_token() {
+    printf '%s' "$1" | /usr/bin/tr -c 'A-Za-z0-9' '_'
+}
+
+# Print a sentence naming the component a proposed identifier collides with, or
+# nothing when it collides with none.
+#
+# Two ways to collide, and the second is the one nobody catches by reading: two
+# identifiers that differ only in punctuation reduce to one Distribution choice
+# id AND one component package file name, so one component quietly replaces the
+# other and the product ships without it.
+# Arguments: proposed identifier, optional index to exempt (the one being renamed)
+component_identifier_conflict() {
+    local identifier="$1" skip_index="$2"
+    local total="$(component_count)"
+    local index=0
+    # Set once per iteration.
+    local existing
+    while [ "$index" -lt "$total" ]; do
+        if [ "$index" = "$skip_index" ]; then
+            index=$((index + 1))
+            continue
+        fi
+        existing="$(component_get IDENTIFIER "$index")"
+        if [ "$existing" = "$identifier" ]; then
+            printf 'component %s already has the identifier "%s"' \
+                "$((index + 1))" "$identifier"
+            return 0
+        fi
+        if [ "$(sanitize_component_token "$existing")" = "$(sanitize_component_token "$identifier")" ]; then
+            printf '"%s" differs from component %s only in punctuation - they would share one choice and overwrite one another in the component directory' \
+                "$identifier" "$((index + 1))"
+            return 0
+        fi
+        index=$((index + 1))
+    done
+    return 0
+}
+
+# Print the identifier a component added through the window starts with.
+#
+# Empty would be simpler, and it is what a new payload entry does with its
+# destination. It is the wrong answer here: a second component with no
+# identifier collides with the first one that has none, and nothing says so
+# until a build refuses the document. What this returns is unique by
+# construction and is meant to be typed over.
+# Arguments: the index the new component will have
+default_component_identifier() {
+    local new_index="$1"
+    local base="$(component_get IDENTIFIER 0)"
+    case "$base" in
+        *.*) base="${base%.*}" ;;
+        *)   base="com.example.pkg" ;;
+    esac
+    local suffix=$((new_index + 1))
+    local candidate="$base.component$suffix"
+    while [ -n "$(component_identifier_conflict "$candidate")" ]; do
+        suffix=$((suffix + 1))
+        candidate="$base.component$suffix"
+    done
+    printf '%s' "$candidate"
+}
+
+# Append a component and print its index. Prints nothing and returns non-zero
+# when the document could not be written.
+# Arguments: identifier, optional install location
+component_append() {
+    local identifier="$1" install_location="$2"
+    # model_count, not component_count: the append index has to be the real
+    # length of the array, and component_count answers 1 for an empty one.
+    local new_index="$(model_count /COMPONENTS)"
+    # The whole mutation is silenced, because this function's own output is the
+    # index and both callers read it through a command substitution. Anything a
+    # tool printed on its way through - plister prints nothing today, which is
+    # not a guarantee anybody made - would be read back as part of the number.
+    # Failure still travels: the tests below are on exit status, not on output.
+    {
+        "$plister" append dict "$(model_file)" /COMPONENTS || return 1
+        # Past the append there is an empty dict in the array, so a failure from
+        # here on has to take it back out. Left behind it is invisible - the
+        # caller reports the failure and does not repopulate, so the list never
+        # shows it - and the next ordinary edit marks the document dirty and
+        # saves it, where model_normalize scaffolds it into a real component
+        # with an empty identifier.
+        if ! model_set "/COMPONENTS/$new_index/IDENTIFIER" "$identifier"; then
+            component_remove_at "$new_index"
+            return 1
+        fi
+        if [ -n "$install_location" ]; then
+            if ! model_set "/COMPONENTS/$new_index/INSTALL_LOCATION" "$install_location"; then
+                component_remove_at "$new_index"
+                return 1
+            fi
+        fi
+        # Fills in every key the new component does not have yet, its empty
+        # PAYLOAD array included, so what lands is a component the schema accepts.
+        model_normalize
+    } >/dev/null
+    printf '%s' "$new_index"
+    return 0
+}
+
+component_remove_at() {
+    local component_index="$1"
+    "$plister" remove "$(model_file)" "/COMPONENTS/$component_index"
+}
+
+# Exchange two components, payload and all.
+#
+# Not the field-by-field exchange payload_swap does: a component holds a nested
+# PAYLOAD array of its own, and swapping two arrays of different lengths element
+# by element is a great deal of work to arrive somewhere plister already goes.
+# "copy" moves a whole subtree between files, so the crossing is done with four
+# subtree copies through a scratch document.
+#
+# The ORDER of those four is the whole of the safety here, and the obvious order
+# is the unsafe one. Copying each component out and then writing the two back
+# crossed over touches the model twice: a failure between the two writes leaves
+# one component at BOTH indices and the other one only in the scratch file -
+# duplicate plus loss, not a half-swap, and the window goes on showing the old
+# order over it. So the whole array is copied out instead, crossed over inside
+# the scratch document while the model is still untouched, and written back in
+# ONE call. plister writes a file atomically, so every failure before that last
+# call leaves the model exactly as it was, and the last call either lands whole
+# or not at all. Same four copies, no window.
+# Arguments: index a, index b
+component_swap() {
+    local first_index="$1" second_index="$2"
+    local model="$(model_file)"
+    local scratch="$(state_dir)/component_swap.json"
+    /bin/rm -f "$scratch"
+    "$plister" set dict "$scratch" / || return 1
+    "$plister" insert COMPONENTS copy "$model" /COMPONENTS "$scratch" / || return 1
+    # Crossed over inside the scratch: the source of each is the model, which
+    # still holds both in their original places.
+    "$plister" set copy "$model" "/COMPONENTS/$second_index" "$scratch" "/COMPONENTS/$first_index" || return 1
+    "$plister" set copy "$model" "/COMPONENTS/$first_index" "$scratch" "/COMPONENTS/$second_index" || return 1
+    "$plister" set copy "$scratch" /COMPONENTS "$model" /COMPONENTS || return 1
+    /bin/rm -f "$scratch"
+    return 0
+}
+
+# --- The component list in the window -----------------------------------------
+# Same shape as the payload table above it: rows carry a hidden index column,
+# every edit that changes the shape of the list goes through repopulate_components,
+# and the buttons under the list are set from the selection.
+
+# Two visible columns plus a hidden third carrying the component's index.
+# The item count is there because it is the one thing about a component that
+# says at a glance whether it is the one being worked on, and because a
+# component with no payload builds an empty package without complaining.
+populate_component_table() {
+    local total="$(component_count)"
+    local index=0
+    # Set once per iteration.
+    local title items
+    {
+        while [ "$index" -lt "$total" ]; do
+            title="$(table_cell "$(component_title "$index")")"
+            # A component of a document with nothing filled in yet has no title,
+            # no identifier and no project name to fall back to, and a blank row
+            # is not something a person can click on with any confidence. This
+            # placeholder is display only: component_title is what reaches the
+            # Distribution, and an unnamed choice there is the build's business.
+            [ -n "$title" ] || title="Component $((index + 1))"
+            items="$(payload_count "$index")"
+            printf '%s\t%s\t%s\n' "$title" "$items" "$index"
+            index=$((index + 1))
+        done
+    } | "$dialog_tool" "$document_uuid" "$COMPONENT_TABLE_ID" omc_table_set_rows_from_stdin
+}
+
+select_component_row() {
+    local component_index="$1"
+    "$dialog_tool" "$document_uuid" "$COMPONENT_TABLE_ID" omc_select_row "$component_index"
+}
+
+# Enable the strip buttons that make sense for the current selection. Unlike the
+# payload strip there is no "nothing selected" state: a document always has at
+# least one component and one of them is always current.
+refresh_component_buttons() {
+    local total="$(component_count)"
+    # A project needs a component, so the last one cannot be removed.
+    if [ "$total" -gt 1 ]; then
+        enable_view "$COMPONENT_REMOVE_ID" 1
+    else
+        enable_view "$COMPONENT_REMOVE_ID" 0
+    fi
+    if [ "$PB_COMPONENT_INDEX" -gt 0 ]; then
+        enable_view "$COMPONENT_UP_ID" 1
+    else
+        enable_view "$COMPONENT_UP_ID" 0
+    fi
+    if [ "$PB_COMPONENT_INDEX" -lt "$((total - 1))" ]; then
+        enable_view "$COMPONENT_DOWN_ID" 1
+    else
+        enable_view "$COMPONENT_DOWN_ID" 0
+    fi
+    return 0
+}
+
+# Write the current component into the Component tab. Guarded by the loading
+# flag for the reason push_payload_item_to_window is: ten programmatic writes
+# that field.changed would otherwise read as ten edits. The previous flag is
+# restored rather than cleared, because this also runs inside
+# push_model_to_window's own guarded stretch.
+push_component_to_window() {
+    local previous_flag="$(pb_get pb_loading)"
+    pb_set pb_loading "$(/bin/date '+%s')"
+    set_value "$COMPONENT_TITLE_ID" "$(component_get TITLE)"
+    set_value "$IDENTIFIER_ID" "$(component_get IDENTIFIER)"
+    set_value "$INSTALL_LOCATION_ID" "$(component_get INSTALL_LOCATION)"
+    set_value "$AUTH_ID" "$(component_get AUTH)"
+    set_value "$COMPONENT_DESCRIPTION_ID" "$(component_get DESCRIPTION)"
+    set_value "$OVERWRITE_ID" "$(component_get_bool_str OVERWRITE_PERMISSIONS)"
+    set_value "$RELOCATABLE_ID" "$(component_get_bool_str RELOCATABLE)"
+    set_value "$COMPONENT_SELECTED_ID" "$(component_get_bool_str SELECTED)"
+    set_value "$PREINSTALL_ID" "$(component_get PREINSTALL)"
+    set_value "$POSTINSTALL_ID" "$(component_get POSTINSTALL)"
+    set_value "$COMPONENT_VERSION_ID" "$(component_get VERSION)"
+    set_value "$COMPONENT_VERSION_HINT_ID" "$(component_version_hint)"
+    set_value "$COMPONENT_CHOICE_NOTE_ID" "$(choice_list_note)"
+    # Opened when it is hiding something, closed when it is not. A disclosure
+    # that quietly holds a preinstall script is worse than no disclosure.
+    set_state "$COMPONENT_OPTIONS_ID" isExpanded "$(bool_str "$(component_has_options)")"
+    pb_set pb_loading "$previous_flag"
+    return 0
+}
+
+# What to show beside the version field, which is empty for a component that
+# takes the project's.
+#
+# Inheritance is the common case and an empty field says nothing about it. For a
+# version that matters more than for a title: this is the number macOS records
+# in its receipt database, and "empty" reads as "none" rather than as "2.4".
+component_version_hint() {
+    # A component that states its own version has it on screen already.
+    [ -z "$(component_get VERSION)" ] || return 0
+    local project_version="$(model_get /PROJECT/VERSION)"
+    [ -n "$project_version" ] || return 0
+    printf 'project: %s' "$project_version"
+}
+
+# Put the version caption back in step with the model.
+#
+# Called from everywhere either half of the answer can change: the component's
+# own field, the project's field, and the two paths that fill the project
+# version in from an artifact. A caption that is only refreshed when a component
+# is selected is worse than no caption, because it goes on naming a version that
+# is no longer the one this component would inherit.
+refresh_version_hint() {
+    set_value "$COMPONENT_VERSION_HINT_ID" "$(component_version_hint)"
+    return 0
+}
+
+# Why the two installer-choice controls have no effect, when they have none.
+#
+# TITLE, DESCRIPTION and SELECTED only ever reach a <choice> the user can see,
+# and "never" is the default. Saying so is better than either hiding the
+# controls - which leaves a user who sets CUSTOMIZE later wondering where they
+# went - or letting them look like they do something.
+choice_list_note() {
+    [ "$(model_get /DISTRIBUTION/CUSTOMIZE)" = "never" ] || return 0
+    printf 'Customize is Never on the Distribution tab, so the installer shows no choice list and these have no effect.'
+}
+
+# Succeed when the disclosure is hiding a value somebody chose, so it can be
+# opened rather than quietly holding it.
+component_has_options() {
+    [ "$(component_get_bool OVERWRITE_PERMISSIONS)" = "0" ] || { printf '1'; return 0; }
+    [ "$(component_get_bool RELOCATABLE)" = "0" ] || { printf '1'; return 0; }
+    [ -z "$(component_get PREINSTALL)" ] || { printf '1'; return 0; }
+    [ -z "$(component_get POSTINSTALL)" ] || { printf '1'; return 0; }
+    [ -z "$(component_get DESCRIPTION)" ] || { printf '1'; return 0; }
+    # SELECTED defaults to on, so off is the choice worth revealing.
+    [ "$(component_get_bool SELECTED)" = "1" ] || { printf '1'; return 0; }
+    printf '0'
+}
+
+# Adopt a component: record it, show its fields, refill the payload table from
+# it, and set the strip buttons. Arguments: component index
+show_component_selection() {
+    local component_index="$1"
+    set_current_component_index "$component_index"
+    push_component_to_window
+    # The payload table belongs to the component, so it is rebuilt here rather
+    # than left showing the rows of the one just left.
+    if [ "$(payload_count)" -gt 0 ]; then
+        repopulate_payload 0
+    else
+        repopulate_payload ""
+    fi
+    refresh_component_buttons
+    return 0
+}
+
+# Rebuild the list in place, keeping the selection where it is. For the edits
+# that change what a row *shows* - a title, the identifier a title falls back
+# to, a payload count - rather than which components there are.
+#
+# Called from repopulate_payload rather than from the eight handlers that add or
+# remove payload entries, for the same reason the component index is resolved in
+# one place: a handler that forgets leaves a stale count on screen, and nothing
+# about the window says which handler forgot. Re-selecting the row the selection
+# is already on is what makes that safe - see PackageBuilder.component.select.sh.
+refresh_component_list() {
+    populate_component_table
+    select_component_row "$PB_COMPONENT_INDEX"
+    return 0
+}
+
+# Rebuild the list and put the selection on a chosen component. Every edit that
+# changes the shape of the list goes through here, for the reason
+# repopulate_payload exists: setting a table's rows replaces them and does not
+# move the selection. Arguments: index to select, or "" for the first
+repopulate_components() {
+    local wanted_index="$1"
+    local total="$(component_count)"
+    # The rows are written here and again further down, because
+    # show_component_selection refills the payload and repopulate_payload counts
+    # the rows for the list. Writing them once would mean either selecting a row
+    # before it exists - which the engine reads as an out-of-range clear - or
+    # taking the payload out of the one funnel every shape change goes through.
+    # The duplicate is a handful of process spawns on a button press.
+    populate_component_table
+    case "$wanted_index" in
+        ''|*[!0-9]*) wanted_index=0 ;;
+    esac
+    [ "$wanted_index" -lt "$total" ] || wanted_index=0
+    # Recorded before the row is selected, not after. Selecting a row can echo
+    # back as a selection event, and an echo that arrives while the stored index
+    # is still the old one misses component.select's already-current exit and
+    # runs a second, concurrent adoption of the same component. It converges,
+    # but it costs nothing to make the echo inert on arrival.
+    set_current_component_index "$wanted_index"
+    select_component_row "$wanted_index"
+    show_component_selection "$wanted_index"
     return 0
 }
 
@@ -2150,6 +2556,9 @@ repopulate_payload() {
     local wanted_index="$1"
     local entry_count="$(payload_count)"
     populate_payload_table
+    # The list in the sidebar shows this component's entry count, so a payload
+    # that changed shape has to be counted again there.
+    refresh_component_list
     if [ -n "$wanted_index" ] && [ "$wanted_index" -ge 0 ] && [ "$wanted_index" -lt "$entry_count" ]; then
         select_payload_row "$wanted_index"
         show_payload_selection "$wanted_index"
@@ -2349,6 +2758,7 @@ field_key_path() {
     case "$view_id" in
         "$ARTIFACTS_DIR_ID")     printf '/PROJECT/ARTIFACTS_DIR' ;;
         "$NAME_ID")              printf '/PROJECT/NAME' ;;
+        "$COMPONENT_TITLE_ID")   component_key TITLE ;;
         "$IDENTIFIER_ID")        component_key IDENTIFIER ;;
         "$VERSION_ID")           printf '/PROJECT/VERSION' ;;
         "$INSTALL_LOCATION_ID")  component_key INSTALL_LOCATION ;;
@@ -2357,9 +2767,13 @@ field_key_path() {
         "$RELOCATABLE_ID")       component_key RELOCATABLE ;;
         "$PREINSTALL_ID")        component_key PREINSTALL ;;
         "$POSTINSTALL_ID")       component_key POSTINSTALL ;;
+        "$COMPONENT_VERSION_ID")     component_key VERSION ;;
+        "$COMPONENT_DESCRIPTION_ID") component_key DESCRIPTION ;;
+        "$COMPONENT_SELECTED_ID")    component_key SELECTED ;;
         "$TITLE_ID")             printf '/DISTRIBUTION/TITLE' ;;
         "$MIN_OS_ID")            printf '/PROJECT/MIN_OS_VERSION' ;;
         "$CUSTOMIZE_ID")         printf '/DISTRIBUTION/CUSTOMIZE' ;;
+        "$REQUIRE_SCRIPTS_ID")   printf '/DISTRIBUTION/REQUIRE_SCRIPTS' ;;
         "$README_ID")            printf '/DISTRIBUTION/RESOURCES/README' ;;
         "$LICENSE_ID")           printf '/DISTRIBUTION/RESOURCES/LICENSE' ;;
         "$WELCOME_ID")           printf '/DISTRIBUTION/RESOURCES/WELCOME' ;;
@@ -2377,7 +2791,8 @@ field_key_path() {
 field_kind() {
     local view_id="$1"
     case "$view_id" in
-        "$OVERWRITE_ID"|"$RELOCATABLE_ID"|"$SIGN_ID") printf 'bool' ;;
+        "$OVERWRITE_ID"|"$RELOCATABLE_ID"|"$COMPONENT_SELECTED_ID"|\
+        "$REQUIRE_SCRIPTS_ID"|"$SIGN_ID") printf 'bool' ;;
         *) printf 'string' ;;
     esac
 }
@@ -2401,6 +2816,17 @@ is_verify_toggle() {
     case "$view_id" in
         "$VERIFY_UNIVERSAL_ID"|"$VERIFY_SIGNED_ID"|"$VERIFY_HARDENED_ID"|"$VERIFY_TIMESTAMP_ID")
             return 0 ;;
+    esac
+    return 1
+}
+
+# Succeed when a view id edits what the component list shows. The title column
+# is the component's TITLE, and component_title falls back to the last element
+# of the identifier when there is none - so both controls can rename a row.
+is_component_column_field() {
+    local view_id="$1"
+    case "$view_id" in
+        "$COMPONENT_TITLE_ID"|"$IDENTIFIER_ID") return 0 ;;
     esac
     return 1
 }

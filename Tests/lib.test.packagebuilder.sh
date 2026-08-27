@@ -354,6 +354,9 @@ pb_get() { "$OMC_OMC_SUPPORT_PATH/pasteboard" "$(pb_key "$1")" get 2>/dev/null; 
 pb_set() { printf '%s' "$2" | "$OMC_OMC_SUPPORT_PATH/pasteboard" "$(pb_key "$1")" set; }
 
 selected_index() { pb_get selected_payload_index; }
+# Which component the window is editing. Empty before any handler has resolved
+# it, which is a state worth being able to assert.
+current_component() { pb_get current_component_index; }
 
 # --- The run log and the build's outputs --------------------------------------
 
@@ -442,6 +445,22 @@ select_payload_row() { # <hidden-index-value>
     omc_run PackageBuilder.payload.select
 }
 
+# The same for the component list in the sidebar. Its hidden column is the
+# third, past the title and the item count.
+select_component_row() { # <hidden-index-value>
+    omc_table_cell "$COMPONENT_TABLE_ID" "$COMPONENT_INDEX_COLUMN" "$1"
+    omc_trigger "$COMPONENT_TABLE_ID"
+    omc_run PackageBuilder.component.select
+}
+
+# One cell of one row of the component list, as the sidebar shows it.
+# Arguments: row, column (1 = title, 2 = item count)
+component_row_cell() { # <row> <column>
+    ui_rows "$COMPONENT_TABLE_ID" \
+        | /usr/bin/sed -n "$(($1 + 1))p" \
+        | /usr/bin/awk -F '\t' -v c="$2" '{ printf "%s", $c }'
+}
+
 # View ids and column numbers, imported from the app rather than restated here.
 #
 # The applet already names every one of its views in lib.packagebuilder.sh, and a
@@ -452,8 +471,9 @@ select_payload_row() { # <hidden-index-value>
 # names were quietly describing the wrong controls, which is the exact failure
 # the no-bare-numbers rule exists to prevent.
 #
-# Only bare "NAME_ID=<digits>" and "NAME_COLUMN=<digits>" lines are taken, so
-# nothing else in those libraries can arrive here through the eval.
+# Only bare "NAME_ID=<digits>", "NAME_COLUMN=<digits>" and "NAME_INDEX=<digits>"
+# lines are taken, so nothing else in those libraries can arrive here through
+# the eval.
 omctest_import_view_ids() { # <script ...>
     local script
     for script; do
@@ -463,6 +483,7 @@ omctest_import_view_ids() { # <script ...>
         eval "$(/usr/bin/sed -n \
             -e 's/^\([A-Z][A-Z0-9_]*_ID\)=\([0-9][0-9]*\)$/\1=\2/p' \
             -e 's/^\([A-Z][A-Z0-9_]*_COLUMN\)=\([0-9][0-9]*\)$/\1=\2/p' \
+            -e 's/^\([A-Z][A-Z0-9_]*_INDEX\)=\([0-9][0-9]*\)$/\1=\2/p' \
             "$script")"
     done
 }
@@ -482,7 +503,13 @@ for omctest_required_id in PAYLOAD_TABLE_ID PAYLOAD_ADD_ID PAYLOAD_REMOVE_ID \
     VERIFY_SIGNED_ID VERIFY_HARDENED_ID VERIFY_TIMESTAMP_ID VERSION_FLAG_ID \
     NAME_ID IDENTIFIER_ID VERSION_ID INSTALL_LOCATION_ID AUTH_ID OVERWRITE_ID \
     RELOCATABLE_ID TITLE_ID MIN_OS_ID ARCH_ARM64_ID ARCH_X86_64_ID README_ID \
-    IDENTITY_PICKER_ID PRESET_APPLICATIONS_ID PRESET_APP_SUPPORT_ID; do
+    IDENTITY_PICKER_ID PRESET_APPLICATIONS_ID PRESET_APP_SUPPORT_ID \
+    COMPONENT_TABLE_ID COMPONENT_INDEX_COLUMN COMPONENT_ADD_ID \
+    COMPONENT_REMOVE_ID COMPONENT_UP_ID COMPONENT_DOWN_ID \
+    COMPONENT_TITLE_ID COMPONENT_DESCRIPTION_ID COMPONENT_SELECTED_ID \
+    COMPONENT_VERSION_ID COMPONENT_VERSION_HINT_ID COMPONENT_OPTIONS_ID \
+    COMPONENT_CHOICE_NOTE_ID REQUIRE_SCRIPTS_ID TABVIEW_ID BUILD_TAB_INDEX \
+    STATUS_ID; do
     eval "omctest_required_value=\$$omctest_required_id"
     [ -n "$omctest_required_value" ] || {
         printf 'lib.test.packagebuilder: %s did not import from the app\n' \

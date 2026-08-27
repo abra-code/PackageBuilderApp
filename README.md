@@ -102,8 +102,8 @@ Working end to end. A document opens, a payload is assembled, and Build Package
 runs verify, component, distribution and sign in order, writing a signed `.pkg`.
 
 Implemented: the document lifecycle, including close confirmation and noticing
-that the file changed on disk; the payload tab with drop, folder scan, reorder
-and the per-item inspector; the verify stage with its diagnostics and a Stop
+that the file changed on disk; the component list with add, remove and reorder;
+the payload tab with drop, folder scan, reorder and the per-item inspector; the verify stage with its diagnostics and a Stop
 that asks the build to stop rather than killing it; `pkgbuild` with the
 `overwrite-permissions` and `--component-plist` corrections; `Distribution.xml`
 generation; `productbuild` and `productsign`; export as a standalone packaging
@@ -123,9 +123,17 @@ spans `/usr/local/bin`, `/Applications` and `/Library/Frameworks`. A second earn
 its keep when a part has to be separately selectable in the installer, or needs
 its own install scripts, `auth` or relocatability.
 
-The window edits the first component; there is no component list in it yet, so
-adding and selecting one is the CLI's `add-component` and `--component`.
-`Private/Multi_Component_Support.md` records what the window would take.
+The window has four tabs - Project, Components, Distribution, Build - and one
+rule: a tab either belongs to the document or belongs to one component. The
+Components tab holds the list, and everything that list governs: the component's
+settings and its payload. Click a component to edit it, and add, remove or
+reorder with the buttons under the list. The CLI's `add-component`,
+`remove-component` and `--component` reach the same components from a script.
+
+A component may carry a version of its own; leave it empty and it takes the
+project's, which is what most projects want. Set it when a part ships on its own
+schedule - macOS records a version per component, so a 1.0 helper tool beside a
+2.4 app is an ordinary installer and nothing complains about it.
 
 See `Private/Design.md` for the full specification and the phasing plan.
 

@@ -49,6 +49,13 @@ model_unlock
 
 # The whole window, not a field at a time: the import touched the project, the
 # component, the payload and the distribution resources.
+# The document was replaced wholesale, so the component the window was left on
+# has nothing to do with the components it holds now. Only on the way OUT, and
+# only here: this persists the selection and discards the payload selection, so
+# doing it before the import would move the window's state on a refusal that
+# changed nothing, leaving the sidebar showing one component while every handler
+# edited another. The import pins its own index in a shell variable instead.
+set_current_component_index 0
 push_model_to_window
 
 set_status "Imported $(/usr/bin/basename "$chosen") - review, then save"

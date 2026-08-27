@@ -33,7 +33,7 @@ check "and the format is clean"  "1"                          "$(/usr/bin/grep -
 /bin/cat > "$OMCTEST_WORK/cli/bad.pkgbld" <<'BAD'
 { "FORMAT_VERSION": 1,
   "PROJECT": { "NAME": "w", "VERSION": "1.0", "ARTIFACT_DIR": "build" },
-  "COMPONENTS": [ { "IDENTIFIER": "com.example.w", "RELOCATABLE": "false", "AUTH": "root",
+  "COMPONENTS": [ { "IDENTIFIER": "com.example.w", "VERSION": 2.4, "RELOCATABLE": "false", "AUTH": "root",
     "PAYLOAD": [ { "SOURCE": "s", "DESTINATION": "/usr/local/bin/w", "MODE": 755 },
                  { "DESTINATION": "/usr/local/bin/x", "MODE": "0755" } ] } ],
   "DISTRIBUTION": { "HOST_ARCHITECTURES": ["arm64","ppc"], "CUSTOMIZE": "sometimes",
@@ -45,6 +45,10 @@ pbcli validate "$OMCTEST_WORK/cli/bad.pkgbld" > /dev/null 2> "$bad_report"
 check "errors mean exit 1"       "1"                          "$?"
 check "a misspelled key is named" "1"                         "$(/usr/bin/grep -c 'unknown key "ARTIFACT_DIR"' "$bad_report" | /usr/bin/tr -d ' ')"
 check "a string bool is refused" "1"                          "$(/usr/bin/grep -c 'RELOCATABLE is string, expected bool' "$bad_report" | /usr/bin/tr -d ' ')"
+# A component VERSION is a string like every other version in the document. It
+# was in the key list before it was in the type checks, which made a number pass
+# validate and reach pkgbuild as one.
+check "a numeric VERSION is refused" "1"                       "$(/usr/bin/grep -c 'VERSION is real, expected string' "$bad_report" | /usr/bin/tr -d ' ')"
 check "a numeric MODE is refused" "1"                         "$(/usr/bin/grep -c 'MODE is integer, expected string' "$bad_report" | /usr/bin/tr -d ' ')"
 check "a bad enum is refused"    "1"                          "$(/usr/bin/grep -c 'AUTH is "root"' "$bad_report" | /usr/bin/tr -d ' ')"
 check "a bad host arch is refused" "1"                        "$(/usr/bin/grep -c 'HOST_ARCHITECTURES lists "ppc"' "$bad_report" | /usr/bin/tr -d ' ')"

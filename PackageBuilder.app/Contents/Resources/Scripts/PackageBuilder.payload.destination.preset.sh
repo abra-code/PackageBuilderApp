@@ -10,6 +10,10 @@ dbg_context "PackageBuilder.payload.destination.preset.sh"
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 dir="$(destination_preset "$OMC_ACTIONUI_TRIGGER_VIEW_ID")"
 if [ -z "$dir" ]; then
     dbg "destination.preset: unknown trigger view [$OMC_ACTIONUI_TRIGGER_VIEW_ID]"

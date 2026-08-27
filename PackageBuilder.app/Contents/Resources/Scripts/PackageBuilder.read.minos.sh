@@ -7,6 +7,10 @@ dbg_context "PackageBuilder.read.minos.sh"
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 idx="$(selected_payload_index)"
 if [ -z "$idx" ]; then
     set_status "Select a payload item first - the minimum macOS is read from it"

@@ -255,7 +255,7 @@ check_preconditions() {
 
     local name="$(model_get /PROJECT/NAME)"
     local version="$(model_get /PROJECT/VERSION)"
-    local identifier install_location entry_count index
+    local identifier install_location entry_count index component_own_version
     local component_index total_components saved_component
 
     valid_name "$name" || fail_precondition \
@@ -279,6 +279,14 @@ check_preconditions() {
 
     valid_identifier "$identifier" || fail_precondition \
         "$(component_prefix)Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+
+    # Only when the component states one. An empty version is not missing, it
+    # means the project's - which was checked above.
+    component_own_version="$(component_get VERSION)"
+    if [ -n "$component_own_version" ]; then
+        valid_version "$component_own_version" || fail_precondition \
+            "$(component_prefix)Version \"$component_own_version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
+    fi
 
     case "$install_location" in
         /*) ;;
@@ -483,6 +491,7 @@ check_distribution_preconditions() {
     local version="$(model_get /PROJECT/VERSION)"
     local name="$(model_get /PROJECT/NAME)"
     local identifier component_index total_components saved_component
+    local component_own_version
 
     valid_name "$name" || fail_precondition \
         "Project name \"$name\" is not usable in a filename - use letters, digits, dot, underscore or hyphen"
@@ -497,6 +506,13 @@ check_distribution_preconditions() {
         identifier="$(component_get IDENTIFIER "$component_index")"
         valid_identifier "$identifier" || fail_precondition \
             "$(component_prefix)Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
+        # Checked here as well as in stage 1, because a component's version
+        # reaches its pkg-ref and Build Distribution Only never runs stage 1.
+        component_own_version="$(component_get VERSION)"
+        if [ -n "$component_own_version" ]; then
+            valid_version "$component_own_version" || fail_precondition \
+                "$(component_prefix)Version \"$component_own_version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
+        fi
         component_index=$((component_index + 1))
     done
     PB_COMPONENT_INDEX="$saved_component"
@@ -888,7 +904,13 @@ verify_payload_entry() {
     fi
 
     if [ -n "$version_flag" ]; then
-        local project_version="$(model_get /PROJECT/VERSION)"
+        # The current component's version, not the project's - and read the way
+        # every other line in this function reads the current component, with no
+        # index. This check catches an artifact that disagrees with the version
+        # it is shipping under, and that is the version of the component it is
+        # in: comparing against the project's would fail whichever component
+        # overrode it.
+        local expected_version="$(component_version)"
         # A bundle answers from its Info.plist rather than by being launched:
         # running an .app's executable to ask what version it is starts the app.
         # The flag is still what turns the check on, so this stays the per-entry
@@ -900,15 +922,25 @@ verify_payload_entry() {
             # user that "--version printed no version" when the value was looked
             # for in an Info.plist points them at a flag that never ran.
             if [ -n "$(bundle_info_plist "$source")" ]; then
-                verify_fail "$label: no CFBundleShortVersionString to compare against $project_version"
+                verify_fail "$label: no CFBundleShortVersionString to compare against $expected_version"
                 verify_note "a bundle answers from its Info.plist; the version flag only runs for a bare executable"
             else
-                verify_fail "$label: $version_flag printed no version to compare against $project_version"
+                verify_fail "$label: $version_flag printed no version to compare against $expected_version"
             fi
             return 1
         fi
-        if [ "$reported_version" != "$project_version" ]; then
-            verify_fail "$label: reports version $reported_version, but this is being built as $project_version"
+        if [ "$reported_version" != "$expected_version" ]; then
+            # Which field to go and fix. Where the document holds one version it
+            # is the project's, and saying so adds nothing. Where this component
+            # overrides it, the difference is between editing the right field
+            # and editing every other component's build by mistake - and the
+            # "Read from artifact" button beside the project version is exactly
+            # the wrong thing to reach for.
+            if [ -n "$(component_get VERSION)" ]; then
+                verify_fail "$label: reports version $reported_version, but this component is being built as $expected_version - its own version, not the project's"
+            else
+                verify_fail "$label: reports version $reported_version, but this is being built as $expected_version"
+            fi
             verify_note "the artifacts folder may be stale - a six-month-old binary shipping under a new version number looks exactly like this"
             return 1
         fi
@@ -1340,7 +1372,7 @@ build_component_package() {
     local root="$(component_scratch root "$component_index")"
     local component_dir="$(state_dir)/component"
     local identifier="$(component_get IDENTIFIER "$component_index")"
-    local version="$(model_get /PROJECT/VERSION)"
+    local version="$(component_version "$component_index")"
     local install_location="$(component_get INSTALL_LOCATION "$component_index")"
     [ -n "$install_location" ] || install_location="/"
 
@@ -1430,9 +1462,9 @@ xml_escape() {
 # check_distribution_preconditions covers the choice ids and the component
 # package file names at the same time - they cannot disagree about which pairs
 # of identifiers collapse together.
-sanitize_component_token() {
-    printf '%s' "$1" | /usr/bin/tr -c 'A-Za-z0-9' '_'
-}
+# sanitize_component_token moved to lib.packagebuilder.sh: the window handlers
+# that add a component have to refuse the identifiers this collapses together,
+# and they do not source the build pipeline.
 
 distribution_choice_id() {
     local identifier="$1"
@@ -1548,7 +1580,6 @@ stage_distribution_resources() {
 generate_distribution_xml() {
     local xml_path="$(state_dir)/Distribution.xml"
     local name="$(model_get /PROJECT/NAME)"
-    local version="$(model_get /PROJECT/VERSION)"
     local title="$(model_get /DISTRIBUTION/TITLE)"
     local min_os="$(model_get /PROJECT/MIN_OS_VERSION)"
     local customize="$(model_get /DISTRIBUTION/CUSTOMIZE)"
@@ -1641,8 +1672,11 @@ generate_distribution_xml() {
             identifier="$(component_get IDENTIFIER "$component_index")"
             auth="$(component_get AUTH "$component_index")"
             [ -n "$auth" ] || auth="Root"
+            # The component's version, not the project's: this is the number
+            # macOS records in its receipt database for this component, and two
+            # components of one product may legitimately carry different ones.
             printf '    <pkg-ref id="%s" version="%s" auth="%s">#%s.pkg</pkg-ref>\n' \
-                "$(xml_escape "$identifier")" "$(xml_escape "$version")" \
+                "$(xml_escape "$identifier")" "$(xml_escape "$(component_version "$component_index")")" \
                 "$(xml_escape "$auth")" \
                 "$(xml_escape "$(component_package_basename "$component_index")")"
             component_index=$((component_index + 1))

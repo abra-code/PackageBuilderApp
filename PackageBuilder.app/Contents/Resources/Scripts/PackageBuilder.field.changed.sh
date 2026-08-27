@@ -25,6 +25,11 @@ fi
 
 has_model || exit 0
 
+# Which component the component-scoped controls belong to. Resolved once, before
+# anything reads or writes the model, because field_key_path routes IDENTIFIER,
+# INSTALL_LOCATION, AUTH and the rest through the current component.
+load_current_component_index
+
 value="$(view_value "$vid")"
 dbg "field.changed: view=$vid value=[$value]"
 
@@ -39,8 +44,8 @@ fi
 failed=0
 
 # --- the payload inspector ----------------------------------------------------
-# These controls edit the selected entry of COMPONENTS/0/PAYLOAD, so their key
-# path depends on the selection rather than on the view id alone.
+# These controls edit the selected entry of the current component's PAYLOAD, so
+# their key path depends on two selections rather than on the view id alone.
 if is_payload_field "$vid"; then
     idx="$(selected_payload_index)"
     if [ -z "$idx" ]; then
@@ -180,6 +185,44 @@ if [ "$failed" = "1" ]; then
 fi
 
 mark_dirty
+
+# The component list shows a title that falls back to the identifier, so either
+# control can rename the row the user is looking at.
+if is_component_column_field "$vid"; then
+    refresh_component_list
+fi
+
+# Either version field changes what the caption beside the component's version
+# should say: its own field decides whether there is anything to inherit, and
+# the project's is what would be inherited.
+if [ "$vid" = "$COMPONENT_VERSION_ID" ] || [ "$vid" = "$VERSION_ID" ]; then
+    refresh_version_hint
+fi
+
+# Customize decides whether the two installer-choice controls on the Component
+# tab do anything, and it is edited on a different tab. Without this the note
+# beside them would go on claiming the installer shows no choice list until the
+# next time a component is selected.
+if [ "$vid" = "$CUSTOMIZE_ID" ]; then
+    set_value "$COMPONENT_CHOICE_NOTE_ID" "$(choice_list_note)"
+fi
+
+# Two components may not share an identifier, nor have identifiers that differ
+# only in punctuation: both collapse to one Distribution choice id AND one
+# component package file name, so one would quietly replace the other.
+#
+# The edit is kept and the status line warns, rather than refused. A text field
+# reports its value when it is committed, and a rename is usually half done at
+# that moment - refusing would leave the user looking at text the document does
+# not contain, which is the failure the whole write path is built to avoid. The
+# build refuses it, and now it is not a surprise when it does. The CLI's
+# add-component refuses outright because there is nothing half-typed there.
+if [ "$vid" = "$IDENTIFIER_ID" ]; then
+    conflict="$(component_identifier_conflict "$value" "$PB_COMPONENT_INDEX")"
+    if [ -n "$conflict" ]; then
+        set_status "The build will refuse this: $conflict"
+    fi
+fi
 
 # Only now, and only for the picker. Everything above has to have held for
 # execution to arrive here: loading_in_progress returned, so this is not

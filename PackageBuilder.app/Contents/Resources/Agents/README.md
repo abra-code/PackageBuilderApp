@@ -108,6 +108,11 @@ pkgbuilder remove-component <doc> <N>
 which is what `add-payload --component` takes. It fills in the rest of the keys,
 so the document that lands is one `validate` accepts.
 
+A component takes the project's version unless it is given one of its own with
+`set <doc> /COMPONENTS/<N>/VERSION <v>`. Most projects never need that; set it
+when a part ships on its own schedule, since macOS records a version per
+component in its receipt database.
+
 It refuses an identifier another component already has, and one differing from
 another only in punctuation: `com.example.a-b` and `com.example.a_b` both reduce
 to a single choice id and a single package file name, so one component would

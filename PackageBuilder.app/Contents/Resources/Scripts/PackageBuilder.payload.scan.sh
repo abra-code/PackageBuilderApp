@@ -13,6 +13,10 @@ fi
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 abs="$(canonical_path "$chosen")"
 [ -n "$abs" ] || abs="$chosen"
 
@@ -146,6 +150,7 @@ if [ "$added" -gt 0 ]; then
     # filled in, resetting a field the user happens to be typing in.
     set_value "$NAME_ID" "$(model_get /PROJECT/NAME)"
     set_value "$VERSION_ID" "$(model_get /PROJECT/VERSION)"
+    refresh_version_hint
     set_value "$MIN_OS_ID" "$(model_get /PROJECT/MIN_OS_VERSION)"
 fi
 

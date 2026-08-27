@@ -7,6 +7,10 @@ dbg_context "PackageBuilder.payload.remove.sh"
 
 has_model || exit 0
 
+# Which component this handler is working inside. The payload accessors below
+# default to it, so it has to be resolved before the first one runs.
+load_current_component_index
+
 if ! model_lock; then
     set_status "Busy - nothing was removed, please try again"
     exit 0

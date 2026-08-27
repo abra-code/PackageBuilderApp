@@ -83,6 +83,30 @@
     },
     {
       "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.component.select",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.component.add",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.component.remove",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
+      "COMMAND_ID": "PackageBuilder.component.move",
+      "ACTIVATION_MODE": "act_always",
+      "EXECUTION_MODE": "exe_script_file"
+    },
+    {
+      "NAME": "PackageBuilder",
       "COMMAND_ID": "PackageBuilder.payload.select",
       "ACTIVATION_MODE": "act_always",
       "EXECUTION_MODE": "exe_script_file"
