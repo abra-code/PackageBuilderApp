@@ -72,12 +72,26 @@ report_unsigned_result() {
     append_log "Signing is turned off. This package is NOT signed and NOT notarized;"
     append_log "macOS will refuse to install it on another Mac."
     local keep_dir="$(output_dir_abs)"
-    if [ -n "$keep_dir" ] && [ -d "$keep_dir" ]; then
-        local kept="$keep_dir/$(/usr/bin/basename "$package_path")"
-        if /bin/cp "$package_path" "$kept"; then
-            printf '%s' "$kept" > "$(state_dir)/kept_package.txt"
-            append_log "  $kept"
-            return 0
+    if [ -n "$keep_dir" ]; then
+        # Created here, exactly as the signed path creates it before landing
+        # (build.sh, land_signed_package). A document names its output folder
+        # long before that folder exists, and for a terminal caller the scratch
+        # copy is gone the moment this command returns - so "the folder is not
+        # there yet" must not be the difference between keeping the package and
+        # losing it.
+        local made_dir
+        /bin/mkdir -p "$keep_dir"
+        made_dir=$?
+        if [ "$made_dir" -eq 0 ]; then
+            local kept="$keep_dir/$(/usr/bin/basename "$package_path")"
+            local copied
+            /bin/cp "$package_path" "$kept"
+            copied=$?
+            if [ "$copied" -eq 0 ]; then
+                printf '%s' "$kept" > "$(state_dir)/kept_package.txt"
+                append_log "  $kept"
+                return 0
+            fi
         fi
         append_log "  ! Could not copy it to $keep_dir"
     fi

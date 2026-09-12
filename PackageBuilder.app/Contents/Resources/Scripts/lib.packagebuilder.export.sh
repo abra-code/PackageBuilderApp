@@ -198,6 +198,8 @@ write_packaging_script() {
         printf '#   --artifacts-dir <d>  Where the payload artifacts are. Default: %s\n' "$(comment_safe "${artifacts:-(not set - required)}")"
         printf '#   --output-dir <d>     Where the signed package lands. Default: %s\n' "$(comment_safe "${output_dir:-(not set - required)}")"
         printf '#   --identity <i>       Installer signing identity. Default: %s\n' "$(comment_safe "${identity:-(none)}")"
+        printf '%s\n' '#   --project-dir <d>    Folder the installer resources are read from.'
+        printf '%s\n' '#                        Default: the folder holding this script.'
         printf '%s\n' '#   --unsigned           Skip the identity check and productsign; the result is a'
         printf '%s\n' '#                        test-only package that macOS will not install elsewhere.'
         printf '%s\n' '#   -h, --help           Show this help.'
@@ -210,7 +212,14 @@ write_packaging_script() {
         printf 'installer_identity=%s\n' "$(sh_quote "$identity")"
         printf 'artifacts_dir=%s\n' "$(sh_quote "$artifacts")"
         printf 'output_dir=%s\n' "$(sh_quote "$output_dir")"
-        printf 'project_dir=%s\n' "$(sh_quote "$(document_dir)")"
+        # Derived from the script rather than frozen at export time. ${PROJECT_DIR}
+        # is the portable way to store an installer resource, and baking this
+        # machine's path here would throw that away the moment the script is
+        # exported: the generated script is self-contained and travels with the
+        # project, so the folder holding it is the project folder. --project-dir
+        # overrides for a script kept somewhere else.
+        printf '%s\n' 'project_dir="$(cd "$(/usr/bin/dirname "$0")" 2>/dev/null && pwd)"'
+        printf '%s\n' '[ -n "$project_dir" ] || project_dir="$(pwd)"'
         printf 'do_codesign=%s\n' "$(sh_quote "$signing_on")"
         printf 'needs_artifacts=%s\n' "$needs_artifacts"
         printf 'build_date="$(/bin/date +%%Y-%%m-%%d)"\n'
@@ -251,6 +260,7 @@ while [ $# -gt 0 ]; do
         --version)       require_option_value "$1" "${2-}"; package_version="$2"; shift 2 ;;
         --artifacts-dir) require_option_value "$1" "${2-}"; artifacts_dir="$(absolute_path "$2")"; shift 2 ;;
         --output-dir)    require_option_value "$1" "${2-}"; output_dir="$(absolute_path "$2")"; shift 2 ;;
+        --project-dir)   require_option_value "$1" "${2-}"; project_dir="$(absolute_path "$2")"; shift 2 ;;
         --identity)      require_option_value "$1" "${2-}"; installer_identity="$2"; do_codesign=1; shift 2 ;;
         --unsigned)      do_codesign=0; shift ;;
         -h|--help)       usage; exit 0 ;;
@@ -726,9 +736,28 @@ PB_HELPERS
 component_plist="$staging_dir/component.plist"
 /usr/bin/pkgbuild --analyze --root "$payload_root" "$component_plist" >/dev/null 2>&1 \
     || fail "pkgbuild --analyze failed"
-if /usr/libexec/PlistBuddy -c 'Print :0' "$component_plist" >/dev/null 2>&1; then
+# A non-zero PlistBuddy answers two different questions the same way: "that key
+# is not there" and "this file could not be read". Treating both as "no bundles"
+# would drop --component-plist and ship pkgbuild's default
+# BundleIsRelocatable=true - the exact hazard this block exists to prevent, with
+# nothing printed. So the file is proved readable first, and only then is an
+# absent :0 taken to mean there are no bundles.
+/usr/libexec/PlistBuddy -c 'Print' "$component_plist" >/dev/null 2>&1
+plist_readable=$?
+if [ "$plist_readable" -ne 0 ]; then
+    fail "Could not read the component plist that pkgbuild --analyze wrote: $component_plist"
+fi
+
+/usr/libexec/PlistBuddy -c 'Print :0' "$component_plist" >/dev/null 2>&1
+has_bundles=$?
+if [ "$has_bundles" -eq 0 ]; then
     reloc_index=0
-    while /usr/libexec/PlistBuddy -c "Print :$reloc_index" "$component_plist" >/dev/null 2>&1; do
+    while true; do
+        /usr/libexec/PlistBuddy -c "Print :$reloc_index" "$component_plist" >/dev/null 2>&1
+        entry_present=$?
+        if [ "$entry_present" -ne 0 ]; then
+            break
+        fi
         /usr/libexec/PlistBuddy -c "Set :$reloc_index:BundleIsRelocatable false" "$component_plist" \
             || fail "Could not mark bundle $reloc_index non-relocatable"
         reloc_index=$((reloc_index + 1))
@@ -981,12 +1010,20 @@ if [ "$do_codesign" = "1" ]; then
         || fail "The signed package did not verify; the output folder was not touched"
     landing="$output_dir/.$package_name.$$.makepkg"
     /bin/cp "$staged_signed" "$landing" || fail "Could not write into $output_dir"
-    /bin/mv -f "$landing" "$output_dir/$package_name" || fail "Could not put the signed package in place"
+    /bin/mv -f "$landing" "$output_dir/$package_name" \
+        || { /bin/rm -f "$landing"; fail "Could not put the signed package in place"; }
     final_package="$output_dir/$package_name"
 else
     announce "UNSIGNED build - skipping productsign"
+    # Landed the same way the signed package is, for the same reason: a copy
+    # written straight onto the final name leaves a truncated .pkg under that
+    # name if it is interrupted, and a truncated package looks like a finished
+    # one until something tries to expand it.
+    landing="$output_dir/.$unsigned_name.$$.makepkg"
+    /bin/cp "$unsigned_package" "$landing" || fail "Could not write into $output_dir"
+    /bin/mv -f "$landing" "$output_dir/$unsigned_name" \
+        || { /bin/rm -f "$landing"; fail "Could not put the package in place"; }
     final_package="$output_dir/$unsigned_name"
-    /usr/bin/ditto "$unsigned_package" "$final_package" || fail "Could not write into $output_dir"
 fi
 
 announce "DONE"

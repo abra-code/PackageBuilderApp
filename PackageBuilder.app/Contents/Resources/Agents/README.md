@@ -214,6 +214,19 @@ produce bytes.
 The overrides are applied to a working copy, never to the document on disk: a CI
 run that passes `--version` does not silently rewrite the project it was handed.
 
+`--identity` is needed for `--dry-run` too, on a document with signing enabled.
+Preconditions run before anything else, and a missing identity stops the run
+there - before the payload verify, which is the part a dry run is for. Pass the
+dry run the same identity the real build will get.
+
+`--unsigned` turns signing off for this run only: no identity is required and
+`productsign` does not run. What comes out is a test package, named
+`<name>-<version>-unsigned.pkg` rather than the document's package name, and
+macOS will refuse to install it on another Mac. It skips the *installer*
+signature only - every payload `VERIFY` assertion still runs, `SIGNED_BY`
+included, so an unsigned build of a document that asserts Developer ID still
+fails on a machine whose artifacts are ad-hoc signed.
+
 ### inspect - what is in a built package?
 
 ```
@@ -232,9 +245,19 @@ pkgbuilder export-script <doc> <out.sh>
 
 Writes a self-contained `/bin/sh` script that reproduces this document's package
 with no dependency on PackageBuilder or OMC, on any Mac with Apple's command line
-tools. It takes `--version`, `--artifacts-dir`, `--output-dir`, `--identity` and
-`--unsigned`, and ends at a signed package, printing the `notarytool` command to
-run next. This is what puts the packaging step on a CI machine with no GUI session.
+tools. This is what puts the packaging step on a CI machine with no GUI session.
+
+`export-script` itself takes no options beyond the two paths. The script it
+writes takes `--version`, `--artifacts-dir`, `--output-dir`, `--project-dir`,
+`--identity` and `--unsigned`, ends at a signed package, and prints the
+`notarytool` command to run next.
+
+Everything the document froze into the script can be overridden at run time, so
+the script is portable to the machine that has the artifacts. `--project-dir` is
+the one worth knowing about: installer resources stored as `${PROJECT_DIR}/...`
+are read from the folder holding the script, which is where `export-script` put
+it, so a script that travels with its `resources/` folder needs no flag at all.
+Point `--project-dir` somewhere else when the two are kept apart.
 
 ### import-pkgproj - convert a Packages.app project
 

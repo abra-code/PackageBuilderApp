@@ -46,6 +46,10 @@ set incorrectly - so it is documentation to read, not a document to parse.
 
 ## The workflow that works
 
+The examples below set `PB` to the copy in `/Applications`; point it at
+whichever bundle you actually have, which during development is the one in the
+source tree. The tool finds everything it needs relative to itself.
+
 ```sh
 PB="/Applications/PackageBuilder.app/Contents/Resources/Agents/pkgbuilder"
 
@@ -78,6 +82,10 @@ makes - all preconditions, the real payload verify against the artifacts on disk
 and the real Distribution XML generation - and writes nothing. A dry run that
 passes has exercised everything except the four Apple tools that produce bytes.
 
+Give the dry run the same `--identity` the real build will get. Preconditions
+run first, and on a document with signing enabled a missing identity stops the
+run there - before the payload verify, which is the part worth knowing about.
+
 ## Rules that will bite you
 
 1. **`MODE` is a string of octal digits, not a number.** `"0755"`, never `755`.
@@ -102,8 +110,11 @@ passes has exercised everything except the four Apple tools that produce bytes.
    path.
 8. **`arm64e` is not `arm64`.** They are separate architectures, and asserting one
    does not accept the other.
-9. **An unsigned package never reaches the output folder** (design 8.3). Only a
-   signed, signature-checked package lands there.
+9. **Nothing reaches the output folder under the document's package name unless
+   it is signed and signature-checked** (design 8.3). An unsigned build from the
+   CLI or from an exported script does land there, but as `<name>-unsigned.pkg`,
+   so a test package can never be mistaken for a release. In the window an
+   unsigned build is an intermediate and stays in the scratch directory.
 10. **One component covers more than it looks like it does.** With
     `INSTALL_LOCATION` `/` and absolute destinations, a single component already
     spans `/usr/local/bin`, `/Applications` and `/Library/Frameworks`. Add a
@@ -209,6 +220,10 @@ N=$("$PB" add-component "$DOC" --identifier com.example.pkg.cli --title "Command
 # dependency on PackageBuilder - for a CI machine with no GUI session.
 "$PB" export-script "$DOC" makepkg.sh
 sh makepkg.sh --version 2.1 --artifacts-dir ./build --output-dir ./dist
+
+# Installer resources stored as ${PROJECT_DIR}/... are read from the folder
+# holding the script, so keep resources/ beside it. --project-dir points
+# somewhere else.
 
 # Look inside a built package.
 "$PB" inspect dist/widget_2.0.pkg

@@ -462,31 +462,63 @@ model_unlock() {
 }
 
 # --- Model shape --------------------------------------------------------------
+# Raised by the ensure_* helpers when a write into the model file fails, and
+# read by model_normalize.
+#
+# A write fails for one reason that matters: the model file could not be
+# written. The normalizer issues dozens of writes in a row, so discarding the
+# status meant one unwritable model file produced one complaint per call - a
+# wall of identical "could not save the result plist file" lines - and then a
+# document that reached disk missing most of its keys. The flag short-circuits
+# every later write, so the first failure is reported once and stops the run.
+PB_MODEL_WRITE_FAILED=0
+
 # Create a missing container. Arguments: parent key path, key or index, dict|array
 ensure_container() {
+    [ "$PB_MODEL_WRITE_FAILED" -eq 0 ] || return 1
     local parent_path="$1" key="$2" kind="$3"
     local child_path="${parent_path%/}/$key"
-    if [ -z "$(model_type "$child_path")" ]; then
-        "$plister" insert "$key" "$kind" "$(model_file)" "$parent_path"
+    local write_status
+    if [ -n "$(model_type "$child_path")" ]; then
+        return 0
     fi
-    return 0
+    "$plister" insert "$key" "$kind" "$(model_file)" "$parent_path"
+    write_status=$?
+    if [ "$write_status" -ne 0 ]; then
+        PB_MODEL_WRITE_FAILED=1
+    fi
+    return "$write_status"
 }
 
 # Give a missing scalar its default. Arguments: key path, default value
 ensure_string() {
+    [ "$PB_MODEL_WRITE_FAILED" -eq 0 ] || return 1
     local key_path="$1" default_value="$2"
-    if [ -z "$(model_type "$key_path")" ]; then
-        model_set "$key_path" "$default_value"
+    local write_status
+    if [ -n "$(model_type "$key_path")" ]; then
+        return 0
     fi
-    return 0
+    model_set "$key_path" "$default_value"
+    write_status=$?
+    if [ "$write_status" -ne 0 ]; then
+        PB_MODEL_WRITE_FAILED=1
+    fi
+    return "$write_status"
 }
 
 ensure_bool() {
+    [ "$PB_MODEL_WRITE_FAILED" -eq 0 ] || return 1
     local key_path="$1" default_flag="$2"
-    if [ -z "$(model_type "$key_path")" ]; then
-        model_set_bool "$key_path" "$default_flag"
+    local write_status
+    if [ -n "$(model_type "$key_path")" ]; then
+        return 0
     fi
-    return 0
+    model_set_bool "$key_path" "$default_flag"
+    write_status=$?
+    if [ "$write_status" -ne 0 ]; then
+        PB_MODEL_WRITE_FAILED=1
+    fi
+    return "$write_status"
 }
 
 # Bring a just-loaded model up to the shape every handler assumes.
@@ -503,10 +535,14 @@ ensure_bool() {
 # still marked clean afterwards: what was added is exactly what the window would
 # display anyway, and it reaches the file on the next ordinary save.
 model_normalize() {
+    PB_MODEL_WRITE_FAILED=0
     ensure_container / PROJECT dict
     ensure_container / COMPONENTS array
     if [ -z "$(model_type /COMPONENTS/0)" ]; then
         "$plister" insert 0 dict "$(model_file)" /COMPONENTS
+        if [ $? -ne 0 ]; then
+            PB_MODEL_WRITE_FAILED=1
+        fi
     fi
     ensure_container / DISTRIBUTION dict
     ensure_container /DISTRIBUTION RESOURCES dict
@@ -534,6 +570,12 @@ model_normalize() {
     esac
 
     normalize_components
+
+    # Non-zero only when a write into the model file failed, which means the
+    # document in memory is incomplete and must not be presented as one.
+    if [ "$PB_MODEL_WRITE_FAILED" -ne 0 ]; then
+        return 1
+    fi
     return 0
 }
 

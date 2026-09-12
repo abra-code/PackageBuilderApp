@@ -281,7 +281,39 @@ USAGE
 
 # --- new ----------------------------------------------------------------------
 
+# Every model write in cmd_new goes through these. plister's status is the only
+# sign that a value did not land, and discarding it produced a document that
+# looked created and was missing the keys the caller had just passed.
+new_write_failed=0
+
+new_set() {
+    local key_path="$1" new_value="$2"
+    local write_status
+    model_set "$key_path" "$new_value"
+    write_status=$?
+    if [ "$write_status" -ne 0 ]; then
+        printf 'pkgbuilder: could not write %s into the document\n' "$key_path" >&2
+        new_write_failed=1
+    fi
+    return "$write_status"
+}
+
+new_set_bool() {
+    local key_path="$1" flag="$2"
+    local write_status
+    model_set_bool "$key_path" "$flag"
+    write_status=$?
+    if [ "$write_status" -ne 0 ]; then
+        printf 'pkgbuilder: could not write %s into the document\n' "$key_path" >&2
+        new_write_failed=1
+    fi
+    return "$write_status"
+}
+
 cmd_new() {
+    # Reset rather than relying on the initializer: the flag is file-scope, so a
+    # second cmd_new in one process would otherwise inherit the first's failure.
+    new_write_failed=0
     local destination="$1"; shift 2>/dev/null
     case "$destination" in
         ''|-*) fail_usage "new: a destination path is required"; return 2 ;;
@@ -320,21 +352,24 @@ cmd_new() {
     fi
 
     new_document || { printf 'pkgbuilder: could not start a document\n' >&2; return 1; }
-    model_normalize
+    model_normalize || {
+        printf 'pkgbuilder: could not write the document model\n' >&2
+        return 1
+    }
 
-    model_set /PROJECT/NAME "$name"
-    model_set /COMPONENTS/0/IDENTIFIER "$identifier"
-    [ -z "$version" ] || model_set /PROJECT/VERSION "$version"
-    [ -z "$min_os" ] || model_set /PROJECT/MIN_OS_VERSION "$min_os"
-    [ -z "$install_location" ] || model_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
-    [ -z "$identity" ] || model_set /SIGNING/INSTALLER_IDENTITY "$identity"
-    model_set_bool /SIGNING/ENABLED "$signing"
+    new_set /PROJECT/NAME "$name"
+    new_set /COMPONENTS/0/IDENTIFIER "$identifier"
+    [ -z "$version" ] || new_set /PROJECT/VERSION "$version"
+    [ -z "$min_os" ] || new_set /PROJECT/MIN_OS_VERSION "$min_os"
+    [ -z "$install_location" ] || new_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
+    [ -z "$identity" ] || new_set /SIGNING/INSTALLER_IDENTITY "$identity"
+    new_set_bool /SIGNING/ENABLED "$signing"
     # The title defaults to the project name rather than being left empty: an
     # empty <title> is what the installer window shows in its title bar.
     if [ -n "$title" ]; then
-        model_set /DISTRIBUTION/TITLE "$title"
+        new_set /DISTRIBUTION/TITLE "$title"
     else
-        model_set /DISTRIBUTION/TITLE "$name"
+        new_set /DISTRIBUTION/TITLE "$name"
     fi
 
     # The two folders are stored the way the window stores them - relative to
@@ -344,10 +379,18 @@ cmd_new() {
     # is set before either folder is.
     set_doc_path "$destination"
     if [ -n "$artifacts" ]; then
-        model_set /PROJECT/ARTIFACTS_DIR "$(store_path "$(canonical_path "$artifacts")")"
+        new_set /PROJECT/ARTIFACTS_DIR "$(store_path "$(canonical_path "$artifacts")")"
     fi
     if [ -n "$output" ]; then
-        model_set /PROJECT/OUTPUT_DIR "$(store_path "$(canonical_path "$output")")"
+        new_set /PROJECT/OUTPUT_DIR "$(store_path "$(canonical_path "$output")")"
+    fi
+
+    # A document that reaches disk missing the values the caller passed is worse
+    # than no document: every later command reads it as if it said what it does
+    # not say. Nothing is written when any of the writes above failed.
+    if [ "$new_write_failed" -ne 0 ]; then
+        printf 'pkgbuilder: the document was not written\n' >&2
+        return 1
     fi
 
     write_document "$destination" || return 1
@@ -974,9 +1017,12 @@ cmd_build() {
         return 0
     fi
 
-    produced="$(built_distribution_path)"
-    [ -n "$produced" ] || return 1
-    printf '%s\n' "$produced"
+    # Nothing durable came out of this run: signing was off and the document
+    # named no output folder, so the only copy is in the scratch directory this
+    # command is about to remove. Printing that path would hand the caller a
+    # file that is already gone by the time it reads it, and stdout is
+    # documented as results worth capturing. The log has said where the package
+    # was and why it stayed there.
     return 0
 }
 
