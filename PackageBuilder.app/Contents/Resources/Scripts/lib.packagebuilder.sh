@@ -124,7 +124,6 @@ BACKGROUND_ID=164
 
 OUTPUT_DIR_ID=170
 PACKAGE_NAME_ID=172
-SIGN_ID=173
 IDENTITY_PICKER_ID=174
 
 # The component list in the sidebar and its button strip, plus the three
@@ -860,7 +859,6 @@ push_model_to_window() {
 
     set_value "$OUTPUT_DIR_ID" "$(model_get /PROJECT/OUTPUT_DIR)"
     set_value "$PACKAGE_NAME_ID" "$(model_get /PROJECT/PACKAGE_NAME)"
-    set_value "$SIGN_ID" "$(model_get_bool_str /SIGNING/ENABLED)"
 
     # The component list, the component fields and the payload table all follow
     # from which component is current, so one call fills all three. A document
@@ -2709,87 +2707,205 @@ list_installer_identities() {
 }
 
 NO_IDENTITY_LABEL="(no Developer ID Installer certificate found)"
-CHOOSE_IDENTITY_LABEL="(choose an identity)"
+# The tag that row carries. It needs one of its own: the engine drops an option
+# whose tag is empty (ActionUI Picker.swift, extractSections - "missing valid
+# 'tag'; skipping"), so a row tagged "" was never on screen at all. The menu then
+# sat on "Don't Code-sign" while the model said signing was on, on every machine
+# with no certificate - the exact disagreement this menu exists to prevent.
+# Found in review, 2026-09-12.
+NO_IDENTITY_TAG="__pb_no_identity__"
 
-# Fill the installer identity picker from the keychain and select the one the
-# document names.
+# The row that turns signing off, and the tag it carries.
+#
+# This replaces a separate "Sign the installer package" checkbox, following
+# Notarize.app: not signing is one of the choices in the identity menu rather
+# than a second control that has to agree with it. Two controls for one decision
+# can disagree - a ticked box with no identity chosen, an identity chosen with
+# the box clear - and every such pair is a state the build has to interpret.
+#
+# The tag cannot collide with a real selection: list_installer_identities only
+# ever yields names holding "Developer ID Installer".
+NO_SIGN_LABEL="Don't Code-sign"
+NO_SIGN_TAG="__pb_no_sign__"
+
+# The title for an identity the document names that this keychain does not have.
+# It is offered as a row so the menu can always show what the document says;
+# without it the picker would sit on some other row while the model named this
+# one, and the window would be describing a different project than the one open.
+missing_identity_title() {
+    printf '%s - not in this keychain' "$1"
+}
+
+# Fill the installer identity picker from the keychain and select the row that
+# matches what the document says.
+#
+# Every state the model can be in has exactly one row, because the menu is now
+# the whole of the signing decision - there is no checkbox beside it to carry
+# half of it. The rows, in order:
+#
+#   - one per installed Developer ID Installer certificate
+#   - the identity the document names, when this keychain does not have it, so
+#     a project built elsewhere still shows what it asks for
+#   - "(no ... certificate found)", only when there is nothing else to show and
+#     the document still wants signing. A user with no certificate can come
+#     back to it from "Don't Code-sign", and doing so turns signing on again.
+#   - "Don't Code-sign", always last and always present
 #
 # The ordered list is also written to identities.txt. The options carry explicit
-# tags, so the picker should deliver the identity name directly the way the Auth
-# and Customize pickers already do - but a Picker's value channel is the 1-based
+# tags, so the picker should deliver the tag directly the way the Auth and
+# Customize pickers already do - but a Picker's value channel is the 1-based
 # option index when options are plain strings (design 5.2), and which of the two
 # a runtime-populated picker uses is not something this app has established.
 # Keeping the map costs one file and lets the reader below accept either.
 refresh_identity_picker() {
     local map_file="$(state_dir)/identities.txt"
     local stored="$(model_get /SIGNING/INSTALLER_IDENTITY)"
+    local signing_on="$(model_get_bool /SIGNING/ENABLED)"
     # Set once per iteration below.
     local identity
+    # Set only on the branch that records a default identity.
+    local wrote
 
     list_installer_identities > "$map_file"
 
-    local options="" selected="" found=0
+    local options="" first_identity="" found=0 count=0
     while IFS= read -r identity; do
         [ -n "$identity" ] || continue
+        count=$((count + 1))
+        [ -n "$first_identity" ] || first_identity="$identity"
         if [ -n "$options" ]; then options="$options,"; fi
         options="$options{\"title\":\"$(json_escape "$identity")\",\"tag\":\"$(json_escape "$identity")\"}"
         if [ "$identity" = "$stored" ]; then
-            selected="$identity"
             found=1
         fi
     done < "$map_file"
 
-    if [ -z "$options" ]; then
-        set_property "$IDENTITY_PICKER_ID" options \
-            "[{\"title\":\"$(json_escape "$NO_IDENTITY_LABEL")\",\"tag\":\"\"}]"
-        enable_view "$IDENTITY_PICKER_ID" 0
-        return 0
+    # A document naming an identity this machine does not have keeps its stored
+    # value - the project is not wrong just because it was opened elsewhere -
+    # and the build's preconditions are what refuse it. It gets a row of its own
+    # so the menu still shows it, and the row goes in the map so an index-based
+    # value channel resolves to the same name.
+    if [ -n "$stored" ] && [ "$found" != "1" ]; then
+        if [ -n "$options" ]; then options="$options,"; fi
+        options="$options{\"title\":\"$(json_escape "$(missing_identity_title "$stored")")\",\"tag\":\"$(json_escape "$stored")\"}"
+        printf '%s\n' "$stored" >> "$map_file"
+        count=$((count + 1))
+        found=1
     fi
 
-    # An explicit empty first row, so a document that names no identity shows
-    # one rather than appearing to have chosen the first certificate.
-    #
-    # Without it the picker sits on its first option while the model holds "",
-    # which is every fresh document, and the build then refuses with "no
-    # installer identity is chosen" while the window plainly shows one. The
-    # picker's own value channel is what makes this unavoidable: a value with no
-    # matching tag leaves it on its previous selection and fires no action
-    # (design 5.2), so there is no way to say "nothing" except to offer it.
-    options="{\"title\":\"$(json_escape "$CHOOSE_IDENTITY_LABEL")\",\"tag\":\"\"},$options"
+    # Only drawn when the keychain has nothing and the document names nothing,
+    # and only while the document still asks to be signed. It explains the
+    # state rather than offering a certificate: without it that state would
+    # have to borrow the "Don't Code-sign" row, and the window would then say
+    # signing is off while the model says it is on. Choosing it again after
+    # "Don't Code-sign" is the one way back to "sign, with nothing chosen", and
+    # field.changed turns ENABLED on for it.
+    local no_identity_row=0
+    if [ "$count" = "0" ] && [ -z "$stored" ] && [ "$signing_on" = "1" ]; then
+        options="{\"title\":\"$(json_escape "$NO_IDENTITY_LABEL")\",\"tag\":\"$(json_escape "$NO_IDENTITY_TAG")\"}"
+        no_identity_row=1
+        # An empty line, so the map holds one line per row ahead of the decline
+        # whatever those rows are. That is the only thing that lets an index be
+        # resolved without knowing which rows were drawn, and the reader below
+        # turns the empty line back into NO_IDENTITY_TAG.
+        printf '\n' > "$map_file"
+    fi
+
+    if [ -n "$options" ]; then options="$options,"; fi
+    options="$options{\"title\":\"$(json_escape "$NO_SIGN_LABEL")\",\"tag\":\"$(json_escape "$NO_SIGN_TAG")\"}"
 
     set_property "$IDENTITY_PICKER_ID" options "[$options]"
     enable_view "$IDENTITY_PICKER_ID" 1
 
-    # A document naming an identity this machine does not have keeps its stored
-    # value - the project is not wrong just because it was opened elsewhere -
-    # and the build's preconditions are what refuse it.
-    if [ "$found" = "1" ]; then
-        local previous_flag="$(pb_get pb_loading)"
-        pb_set pb_loading "$(/bin/date '+%s')"
-        set_value "$IDENTITY_PICKER_ID" "$selected"
-        pb_set pb_loading "$previous_flag"
+    # Which row the document is on. Writing it always, rather than only when it
+    # changed, keeps the menu from sitting on whatever row the previous document
+    # left it on.
+    local selected=""
+    if [ "$signing_on" != "1" ]; then
+        selected="$NO_SIGN_TAG"
+    elif [ -n "$stored" ]; then
+        selected="$stored"
+    elif [ "$no_identity_row" = "1" ]; then
+        selected="$NO_IDENTITY_TAG"
+    elif [ -n "$first_identity" ]; then
+        # Signing is on and the document names no identity, which a new document
+        # reaches when no default has been remembered yet. The first certificate
+        # is selected AND written to the model: a menu showing a certificate the
+        # document does not name is the disagreement this whole design exists to
+        # prevent, and the build would refuse with "no installer identity is
+        # chosen" while the window plainly showed one.
+        #
+        # Not an edit, so it does not mark the document dirty - the same footing
+        # apply_new_document_defaults puts its remembered identity on.
+        #
+        # This is the only write in a function whose job is otherwise to read,
+        # and push_model_to_window runs with the model lock RELEASED - main.init
+        # never takes it, and both importers release it before they call - so
+        # the lock is taken here rather than assumed. It is uncontended at the
+        # moments this runs (window open, and just after an import), where the
+        # mkdir succeeds on the first attempt and nothing waits.
+        selected="$first_identity"
+        if model_lock; then
+            model_set /SIGNING/INSTALLER_IDENTITY "$first_identity"
+            wrote=$?
+            model_unlock
+            if [ "$wrote" -ne 0 ]; then
+                dbg "identity picker: could not record [$first_identity] as the identity"
+            fi
+        else
+            dbg "identity picker: model busy, [$first_identity] not recorded"
+        fi
+        dbg "identity picker: no identity named, defaulting to [$first_identity]"
     fi
+
+    local previous_flag="$(pb_get pb_loading)"
+    pb_set pb_loading "$(/bin/date '+%s')"
+    set_value "$IDENTITY_PICKER_ID" "$selected"
+    pb_set pb_loading "$previous_flag"
     return 0
 }
 
 # Turn whatever the identity picker delivered into an identity name: the name
-# itself when the picker used its tags, or the nth line of the map when it
-# delivered a 1-based index.
+# itself when the picker used its tags, the NO_SIGN_TAG or NO_IDENTITY_TAG
+# sentinel when the "Don't Code-sign" or "(no ... found)" row was chosen, or the
+# nth line of the map when the picker delivered a 1-based index.
+#
+# identities.txt holds one line per row ahead of the decline - a certificate, an
+# identity the document names that this keychain lacks, or a single empty line
+# standing for the "(no ... found)" explanation, which comes back out as
+# NO_IDENTITY_TAG so both value channels say the same thing about that row.
+# "Don't Code-sign" is always the row after the last of them and is deliberately
+# not in the map, so its index is the line count plus one however many rows the
+# menu happened to draw. An index past that belongs to no row: print nothing,
+# and let the caller decline to write rather than invent an identity out of a
+# number.
 resolve_identity_value() {
     local delivered="$1"
     [ -n "$delivered" ] || return 0
+    if [ "$delivered" = "$NO_SIGN_TAG" ] || [ "$delivered" = "$NO_IDENTITY_TAG" ]; then
+        printf '%s' "$delivered"
+        return 0
+    fi
     case "$delivered" in
         ''|*[!0-9]*) printf '%s' "$delivered"; return 0 ;;
     esac
-    # The picker carries a "(choose an identity)" row ahead of the certificates,
-    # so a 1-based option index is one further along than the matching line of
-    # identities.txt, which lists only real identities. Index 1 is that row and
-    # means "none chosen".
-    if [ "$delivered" -le 1 ]; then
+
+    local map_file="$(state_dir)/identities.txt"
+    # Every line, empty ones included - the count is rows, not identities.
+    local row_count="$(/usr/bin/grep -c '' "$map_file" 2>/dev/null)"
+    [ -n "$row_count" ] || row_count=0
+
+    if [ "$delivered" = "$((row_count + 1))" ]; then
+        printf '%s' "$NO_SIGN_TAG"
         return 0
     fi
-    local line="$(/usr/bin/sed -n "$((delivered - 1))p" "$(state_dir)/identities.txt" 2>/dev/null)"
-    if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$delivered"; fi
+    if [ "$delivered" -gt "$row_count" ]; then
+        return 0
+    fi
+
+    # An empty line here is the explanation row.
+    local line="$(/usr/bin/sed -n "${delivered}p" "$map_file" 2>/dev/null)"
+    if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$NO_IDENTITY_TAG"; fi
 }
 
 # --- Field map (design section 9.2) ------------------------------------------
@@ -2823,7 +2939,6 @@ field_key_path() {
         "$BACKGROUND_ID")        printf '/DISTRIBUTION/RESOURCES/BACKGROUND' ;;
         "$OUTPUT_DIR_ID")        printf '/PROJECT/OUTPUT_DIR' ;;
         "$PACKAGE_NAME_ID")      printf '/PROJECT/PACKAGE_NAME' ;;
-        "$SIGN_ID")              printf '/SIGNING/ENABLED' ;;
         "$IDENTITY_PICKER_ID")   printf '/SIGNING/INSTALLER_IDENTITY' ;;
         *) printf '' ;;
     esac
@@ -2834,7 +2949,7 @@ field_kind() {
     local view_id="$1"
     case "$view_id" in
         "$OVERWRITE_ID"|"$RELOCATABLE_ID"|"$COMPONENT_SELECTED_ID"|\
-        "$REQUIRE_SCRIPTS_ID"|"$SIGN_ID") printf 'bool' ;;
+        "$REQUIRE_SCRIPTS_ID") printf 'bool' ;;
         *) printf 'string' ;;
     esac
 }

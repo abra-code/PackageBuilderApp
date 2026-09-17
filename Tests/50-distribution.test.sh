@@ -204,17 +204,82 @@ reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
 printf 'First Identity\nSecond Identity\n' > "$(state_dir)/identities.txt"
-# Index 1 is the leading "(choose an identity)" row, so a certificate's index is
-# one further along than its line in identities.txt.
-check "row 1 means none"         ""                          "$(pb_call resolve_identity_value 1)"
-check "row 2 is the first"       "First Identity"            "$(pb_call resolve_identity_value 2)"
-check "row 3 is the second"      "Second Identity"           "$(pb_call resolve_identity_value 3)"
+# The menu is the certificates followed by "Don't Code-sign", so a certificate's
+# index is its line in identities.txt and the decline is one past the last.
+check "row 1 is the first"       "First Identity"            "$(pb_call resolve_identity_value 1)"
+check "row 2 is the second"      "Second Identity"           "$(pb_call resolve_identity_value 2)"
+check "row 3 is the decline"     "__pb_no_sign__"            "$(pb_call resolve_identity_value 3)"
 check "a name passes through"    "First Identity"            "$(pb_call resolve_identity_value 'First Identity')"
-check "an unknown index is kept" "9"                         "$(pb_call resolve_identity_value 9)"
+check "the tag passes through"   "__pb_no_sign__"            "$(pb_call resolve_identity_value '__pb_no_sign__')"
+check "an index past every row"  ""                          "$(pb_call resolve_identity_value 9)"
 check "empty stays empty"        ""                          "$(pb_call resolve_identity_value '')"
 # The picker writes the resolved name into the document, not the index.
-omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "3"
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "2"
 check "resolved before storing"  "Second Identity"           "$(model /SIGNING/INSTALLER_IDENTITY)"
+check "and signing is on"        "true"                      "$(model /SIGNING/ENABLED)"
+
+section "88b. the menu carries the whole signing decision"
+# The "Sign the installer package" checkbox is gone: choosing "Don't Code-sign"
+# is what turns signing off, and choosing a certificate is what turns it back on.
+check "the decline turns it off" "__pb_no_sign__"            "$(pb_call resolve_identity_value 3)"
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "__pb_no_sign__"
+check "signing is off"           "false"                     "$(model /SIGNING/ENABLED)"
+# Kept on purpose, so turning signing back on does not make the user find the
+# certificate again.
+check "the identity is kept"     "Second Identity"           "$(model /SIGNING/INSTALLER_IDENTITY)"
+
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "First Identity"
+check "a certificate turns it on" "true"                     "$(model /SIGNING/ENABLED)"
+check "and is stored"            "First Identity"            "$(model /SIGNING/INSTALLER_IDENTITY)"
+
+# A value belonging to no row must not clear a real choice.
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "9"
+check "a stray value is ignored" "First Identity"            "$(model /SIGNING/INSTALLER_IDENTITY)"
+check "and signing stays on"     "true"                      "$(model /SIGNING/ENABLED)"
+
+# The decline is the row after the last one in the map, whatever rows those are.
+# With no certificates at all and nothing for the document to show, the map is
+# empty and the decline is row 1 - the case that is wrong if the index is
+# computed from a count of identities rather than of rows.
+: > "$(state_dir)/identities.txt"
+check "no rows: 1 is the decline" "__pb_no_sign__"           "$(pb_call resolve_identity_value 1)"
+check "no rows: 2 is nothing"     ""                         "$(pb_call resolve_identity_value 2)"
+# One empty line is the "(no certificate found)" explanation row, which pushes
+# the decline to row 2 and itself resolves to the row's own tag, so an index
+# and a tag say the same thing about it.
+printf '\n' > "$(state_dir)/identities.txt"
+check "explained: 1 is the row"   "__pb_no_identity__"       "$(pb_call resolve_identity_value 1)"
+check "explained: 2 is the decline" "__pb_no_sign__"         "$(pb_call resolve_identity_value 2)"
+check "its tag passes through"    "__pb_no_identity__"       "$(pb_call resolve_identity_value '__pb_no_identity__')"
+
+section "88c. the explanation row is drawn, and coming back to it turns signing on"
+# The engine drops an option whose tag is empty (ActionUI Picker.swift,
+# extractSections), so a "(no ... found)" row tagged "" was never on screen and
+# the menu sat on "Don't Code-sign" while the model said signing was on. The
+# suite's isolated HOME sees no certificate (keychain_identity), which is
+# exactly the state that draws the row.
+if [ -z "$harness_identity" ]; then
+    reset_state
+    omc_object ""
+    omc_run PackageBuilder.main.init
+    check "no row without a tag"     "0"                        "$(ui_prop $IDENTITY_PICKER_ID options | /usr/bin/grep -c '"tag":""')"
+    check "the explanation is tagged" "1"                       "$(ui_prop $IDENTITY_PICKER_ID options | /usr/bin/grep -c '"tag":"__pb_no_identity__"')"
+    check "and is the row selected"  "__pb_no_identity__"       "$(ui_value $IDENTITY_PICKER_ID)"
+    check "still clean"              "0"                        "$(dirty)"
+    omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "__pb_no_sign__"
+    check "signing turned off"       "false"                    "$(model /SIGNING/ENABLED)"
+    omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID "__pb_no_identity__"
+    check "and back on"              "true"                     "$(model /SIGNING/ENABLED)"
+    check "with no identity invented" ""                        "$(model /SIGNING/INSTALLER_IDENTITY)"
+    check "marked edited"            "1"                        "$(dirty)"
+else
+    skip_section "section 88c: a certificate is visible, so the explanation row is not drawn"
+fi
+# No row carries an empty tag, so an empty value is never a gesture and must
+# not clear a real identity.
+pl set string "Kept Identity" "$(model_file)" /SIGNING/INSTALLER_IDENTITY
+omc_fire PackageBuilder.field.changed $IDENTITY_PICKER_ID ""
+check "an empty value is ignored" "Kept Identity"             "$(model /SIGNING/INSTALLER_IDENTITY)"
 
 section "89. a quote in an identity cannot break the picker options"
 check "quote escaped"            'a\"b'                      "$(pb_call json_escape 'a"b')"

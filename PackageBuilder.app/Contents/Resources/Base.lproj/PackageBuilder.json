@@ -1731,36 +1731,6 @@
                                         {
                                             "type": "Text",
                                             "properties": {
-                                                "text": "",
-                                                "frame": {
-                                                    "width": 130
-                                                }
-                                            }
-                                        },
-                                        {
-                                            "type": "Toggle",
-                                            "id": 173,
-                                            "properties": {
-                                                "title": "Sign the installer package",
-                                                "style": "checkbox",
-                                                "isOn": true,
-                                                "actionID": "PackageBuilder.field.changed"
-                                            }
-                                        },
-                                        {
-                                            "type": "Spacer"
-                                        }
-                                    ]
-                                },
-                                {
-                                    "type": "HStack",
-                                    "properties": {
-                                        "spacing": 8
-                                    },
-                                    "children": [
-                                        {
-                                            "type": "Text",
-                                            "properties": {
                                                 "text": "Installer identity",
                                                 "frame": {
                                                     "width": 130,
@@ -1775,9 +1745,8 @@
                                                 "pickerStyle": "menu",
                                                 "labelsHidden": true,
                                                 "options": [
-                                                    "(no Developer ID Installer certificate found)"
+                                                    "Don't Code-sign"
                                                 ],
-                                                "disabled": true,
                                                 "actionID": "PackageBuilder.field.changed",
                                                 "frame": {
                                                     "maxWidth": "infinity"

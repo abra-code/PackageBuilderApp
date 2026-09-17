@@ -142,7 +142,55 @@ fi
 # not something this app has established, so the value is resolved through the
 # ordered list either way before it reaches the model.
 if [ "$vid" = "$IDENTITY_PICKER_ID" ]; then
+    delivered="$value"
     value="$(resolve_identity_value "$value")"
+
+    # A value that matches no row in the menu the user was looking at, or no
+    # value at all. Every row carries a non-empty tag - the engine would not
+    # draw one without - so neither is a gesture, and writing the empty result
+    # would clear a real identity on the strength of a stray event. Nothing is
+    # written.
+    if [ -z "$value" ]; then
+        dbg "field.changed: identity picker delivered [$delivered], which matches no row"
+        model_unlock
+        exit 0
+    fi
+
+    # The menu carries the whole signing decision now that the checkbox beside
+    # it is gone, so one gesture writes both keys.
+    #
+    # The stored identity is deliberately left alone when signing is turned off.
+    # The document then holds an identity it is not using, which is what lets
+    # the menu put the user back on their certificate when they turn signing
+    # back on instead of making them find it again. Nothing downstream reads
+    # INSTALLER_IDENTITY while ENABLED is false.
+    if [ "$value" = "$NO_SIGN_TAG" ]; then
+        if [ "$(model_get_bool /SIGNING/ENABLED)" = "1" ]; then
+            model_set_bool /SIGNING/ENABLED 0
+            mark_dirty
+        fi
+        model_unlock
+        exit 0
+    fi
+
+    # The "(no ... certificate found)" row. It is only ever drawn when the
+    # document names no identity, so ENABLED is the one key it has anything to
+    # say about: a user with no certificate who chose "Don't Code-sign" and
+    # comes back to this row is asking for signing again, and the build's
+    # preconditions then say what is missing.
+    if [ "$value" = "$NO_IDENTITY_TAG" ]; then
+        if [ "$(model_get_bool /SIGNING/ENABLED)" != "1" ]; then
+            model_set_bool /SIGNING/ENABLED 1
+            mark_dirty
+        fi
+        model_unlock
+        exit 0
+    fi
+
+    if [ "$(model_get_bool /SIGNING/ENABLED)" != "1" ]; then
+        model_set_bool /SIGNING/ENABLED 1
+        mark_dirty
+    fi
 fi
 
 keypath="$(field_key_path "$vid")"
