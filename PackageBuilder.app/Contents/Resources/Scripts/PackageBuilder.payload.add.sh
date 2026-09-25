@@ -17,6 +17,13 @@ has_model || exit 0
 # default to it, so it has to be resolved before the first one runs.
 load_current_component_index
 
+# Before the existence test: a link to something not there yet is refused for
+# being a link, not reported as missing (is_symlink_source says why).
+if is_symlink_source "$chosen"; then
+    set_status "That item is a symbolic link - add what it points to, or make the link in a postinstall script"
+    exit 0
+fi
+
 if [ ! -e "$chosen" ]; then
     set_status "That item is no longer there"
     exit 0

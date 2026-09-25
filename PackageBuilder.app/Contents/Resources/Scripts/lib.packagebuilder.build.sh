@@ -319,6 +319,11 @@ check_preconditions() {
             source="$(resolve_stored_path "$stored_source")"
             if [ -z "$source" ]; then
                 fail_precondition "$(component_prefix)Item $item_number: \"$stored_source\" could not be resolved to a path"
+            elif is_symlink_source "$source"; then
+                # Before -e, which follows the link (is_symlink_source says why
+                # a link is refused). A document can name one when it was
+                # edited by hand, or the file became a link after it was added.
+                fail_precondition "$(component_prefix)Item $item_number: $source is a symbolic link - point the source at what it links to, or make the link in a postinstall script"
             elif [ ! -e "$source" ]; then
                 fail_precondition "$(component_prefix)Item $item_number: $source is not there"
             elif [ ! -r "$source" ]; then
@@ -789,6 +794,12 @@ verify_payload_entry() {
     local label="${in_component}item $item_number"
     [ -z "$source" ] || label="${in_component}item $item_number ($(/usr/bin/basename "$source"))"
 
+    # Before -e, which follows a link; the preconditions refuse the same thing
+    # (is_symlink_source says why), and Verify can run without them.
+    if [ -n "$source" ] && is_symlink_source "$source"; then
+        verify_fail "$label: $source is a symbolic link - point the source at what it links to, or make the link in a postinstall script"
+        return 1
+    fi
     if [ -z "$source" ] || [ ! -e "$source" ]; then
         verify_fail "$label: \"$stored_source\" is not on disk"
         return 1
@@ -1213,10 +1224,16 @@ component_plist_no_relocate() {
     local plist="$(component_scratch component "$component_index" .plist)"
     /bin/rm -f "$plist"
     "$pkgbuild_tool" --analyze --root "$root" "$plist" >/dev/null 2>&1 || return 1
-    [ -f "$plist" ] || return 0
+    # plister reads a file it cannot parse as a bare string and counts it as 0,
+    # and a missing file counts as nothing at all - both would drop
+    # --component-plist and ship pkgbuild's default BundleIsRelocatable=true
+    # with no message. --analyze always writes an array, even an empty one, so
+    # anything else is a failure. The exported script makes the same check.
+    local root_type="$("$plister" get type "$plist" / 2>/dev/null)"
+    [ "$root_type" = "array" ] || return 1
     local bundle_count="$("$plister" get count "$plist" / 2>/dev/null)"
     case "$bundle_count" in
-        ''|*[!0-9]*) bundle_count=0 ;;
+        ''|*[!0-9]*) return 1 ;;
     esac
     if [ "$bundle_count" = "0" ]; then
         /bin/rm -f "$plist"

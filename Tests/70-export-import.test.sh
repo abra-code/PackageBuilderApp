@@ -1039,6 +1039,61 @@ check "the overriding pkg-ref is frozen" "1"                  "$(/usr/bin/grep -
 check "the literal is re-checked" "2"                          "$(/usr/bin/grep -c 'Component version' "$exp_ver")"
 check "the inheriting one is not" "1"                         "$(/usr/bin/grep -c "pkg-ref id=\\\"com.example.pkg.cli\\\" version=\\\"' \"\$package_version\"" "$exp_ver")"
 
+section "158. an exported script marks every bundle non-relocatable, key or no key"
+# pkgbuild --analyze writes BundleIsRelocatable for an .app but leaves it out
+# for a bundle it does not consider relocatable - a SwiftPM resource bundle,
+# an Info.plist holding nothing but CFBundleIdentifier. The exported script used
+# PlistBuddy "Set", which fails on a missing key, so every export of such a
+# payload stopped with "Could not mark bundle 0 non-relocatable" while the
+# in-app build of the same document succeeded. Found packaging actionui-mcp,
+# 2026-09-24. Both kinds are in one payload so the loop meets the key present
+# and absent in one run, and the app's own package is the reference.
+setup_replay_project
+reloc_art="$OMCTEST_WORK/replay-artifacts"
+/bin/rm -rf "$reloc_art/Res_Docs.bundle" "$reloc_art/Tiny.app"
+/bin/mkdir -p "$reloc_art/Res_Docs.bundle/Contents/Resources" "$reloc_art/Tiny.app/Contents/MacOS"
+/usr/bin/plutil -create xml1 "$reloc_art/Res_Docs.bundle/Contents/Info.plist" >/dev/null 2>&1
+/usr/bin/plutil -insert CFBundleIdentifier -string com.example.res.docs "$reloc_art/Res_Docs.bundle/Contents/Info.plist" >/dev/null 2>&1
+printf 'schema\n' > "$reloc_art/Res_Docs.bundle/Contents/Resources/doc.txt"
+/bin/cp /bin/echo "$reloc_art/Tiny.app/Contents/MacOS/Tiny"
+/usr/bin/plutil -create xml1 "$reloc_art/Tiny.app/Contents/Info.plist" >/dev/null 2>&1
+/usr/bin/plutil -insert CFBundleIdentifier -string com.example.tiny "$reloc_art/Tiny.app/Contents/Info.plist" >/dev/null 2>&1
+/usr/bin/plutil -insert CFBundleExecutable -string Tiny "$reloc_art/Tiny.app/Contents/Info.plist" >/dev/null 2>&1
+/usr/bin/plutil -insert CFBundlePackageType -string APPL "$reloc_art/Tiny.app/Contents/Info.plist" >/dev/null 2>&1
+omc_dialog_answer choose_object "$reloc_art/Res_Docs.bundle"
+omc_run PackageBuilder.payload.add
+omc_dialog_answer choose_object "$reloc_art/Tiny.app"
+omc_run PackageBuilder.payload.add
+clear_payload_assertions
+reloc_last="$(( $(count /COMPONENTS/0/PAYLOAD) - 1 ))"
+pl set string "/usr/local/libexec/replay/Res_Docs.bundle" "$(model_file)" "/COMPONENTS/0/PAYLOAD/$((reloc_last - 1))/DESTINATION"
+pl set string "/Applications/Tiny.app" "$(model_file)" "/COMPONENTS/0/PAYLOAD/$reloc_last/DESTINATION"
+exp_reloc="$OMCTEST_WORK/makepkg.reloc.sh"
+/bin/rm -f "$exp_reloc"
+omc_dialog_answer save_as "$exp_reloc"
+omc_run PackageBuilder.export.script
+check "the script was written"   "yes"                        "$([ -f "$exp_reloc" ] && echo yes || echo no)"
+check "and names no PlistBuddy"  "0"                          "$(/usr/bin/grep -c 'PlistBuddy' "$exp_reloc" | /usr/bin/tr -d ' ')"
+# Standalone is the point of the export (design 11): nothing from the app, the
+# plist edits included, which the in-app build does with plister.
+check "and nothing from the app" "0"                          "$(/usr/bin/grep -c 'plister\|Abracode\|PackageBuilder.app/' "$exp_reloc" | /usr/bin/tr -d ' ')"
+/bin/rm -rf "$OMCTEST_WORK/exported-out"
+reloc_log="$OMCTEST_WORK/export-reloc.log"
+/bin/sh "$exp_reloc" --unsigned --output-dir "$OMCTEST_WORK/exported-out" > "$reloc_log" 2>&1
+check "the script succeeded"     "0"                          "$?"
+check "nothing failed to mark"   "0"                          "$(/usr/bin/grep -c 'non-relocatable' "$reloc_log" | /usr/bin/tr -d ' ')"
+/bin/rm -rf "$OMCTEST_WORK/exported-expand"
+/usr/sbin/pkgutil --expand "$OMCTEST_WORK/exported-out/replay_2.2-unsigned.pkg" "$OMCTEST_WORK/exported-expand" >/dev/null 2>&1
+reloc_info="$OMCTEST_WORK/exported-expand/replay.pkg/PackageInfo"
+check "both bundles are known"   "2"                          "$(/usr/bin/grep -c '<bundle id="com.example.[a-z.]*" path=' "$reloc_info" | /usr/bin/tr -d ' ')"
+# An empty <relocate/> is the whole point: any bundle listed inside it is one
+# Installer will chase to a stale copy elsewhere on the volume.
+check "and neither relocates"    "1"                          "$(/usr/bin/grep -c '<relocate/>' "$reloc_info" | /usr/bin/tr -d ' ')"
+omc_run PackageBuilder.step.component
+/bin/rm -rf "$OMCTEST_WORK/app-expand"
+/usr/sbin/pkgutil --expand "$(built_pkg)" "$OMCTEST_WORK/app-expand" >/dev/null 2>&1
+check "the app's agrees"         "1"                          "$(/usr/bin/grep -c '<relocate/>' "$OMCTEST_WORK/app-expand/PackageInfo" | /usr/bin/tr -d ' ')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 

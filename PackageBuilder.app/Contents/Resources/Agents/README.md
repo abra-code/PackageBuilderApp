@@ -94,6 +94,11 @@ The artifact does not have to exist yet. If it is not on this disk the entry is
 still added, asserts nothing, and a note says so - that is the normal case when a
 document is written before the build machine has run.
 
+A symbolic link is refused, whether or not what it points to exists. A package
+carries a copy of what a link points to, not the link. Add the file itself, or
+make the link in a postinstall script. The build refuses a link that a
+hand-edited document names, too.
+
 Prints the new entry's 0-based index on stdout, for use in `set` key paths.
 
 ### add-component / remove-component - more than one part
@@ -220,8 +225,9 @@ there - before the payload verify, which is the part a dry run is for. Pass the
 dry run the same identity the real build will get.
 
 `--unsigned` turns signing off for this run only: no identity is required and
-`productsign` does not run. What comes out is a test package, named
-`<name>-<version>-unsigned.pkg` rather than the document's package name, and
+`productsign` does not run. What comes out is a test package, named after the
+document's package name with `-unsigned` before the extension
+(`widget_2.0-unsigned.pkg`), the same name an exported script gives it, and
 macOS will refuse to install it on another Mac. It skips the *installer*
 signature only - every payload `VERIFY` assertion still runs, `SIGNED_BY`
 included, so an unsigned build of a document that asserts Developer ID still

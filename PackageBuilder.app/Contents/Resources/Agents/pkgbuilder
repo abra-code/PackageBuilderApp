@@ -443,6 +443,13 @@ cmd_add_payload() {
     # once here is the whole of what --component has to do.
     PB_COMPONENT_INDEX=$((component - 1))
 
+    # Before canonical_path, which would quietly store what the link points to
+    # (is_symlink_source says why a link is refused).
+    if is_symlink_source "$artifact"; then
+        printf 'pkgbuilder: %s\n' "$(symlink_source_advice "$artifact")" >&2
+        return 1
+    fi
+
     # An absolute path, so store_path can decide whether it sits under the
     # artifacts folder or the document's own. canonical_path resolves what is
     # there; a path that is not on this disk yet - which is ordinary when a

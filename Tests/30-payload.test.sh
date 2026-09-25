@@ -369,6 +369,44 @@ check "the two it reached"       "2"                         "$(count /COMPONENT
 check "the deep tool is missing" "0"                         "$(payload_sources_matching 'betatool')"
 check "and the status owns it"   "1"                         "$(ui_value $STATUS_ID | /usr/bin/grep -c 'too large to search in full')"
 
+section "59. a symbolic link is refused as a source, whether or not it resolves"
+# A link from usr/local/bin into libexec is how a tool with resource bundles
+# goes on the PATH. Added as a source, the link used to be resolved to what it
+# points to - canonical_path at add time, ditto again at staging - so the
+# package shipped a second copy of the binary where a link was meant. A link to
+# something not there yet was reported as missing instead. Both are refused now,
+# with the postinstall advice. Found packaging actionui-mcp, 2026-09-24.
+reset_state
+omc_object ""
+omc_run PackageBuilder.main.init
+omc_dialog_answer save_as "$OMCTEST_WORK/Links.pkgbld"
+omc_run PackageBuilder.save.as
+links_dir="$OMCTEST_WORK/links"
+/bin/rm -rf "$links_dir"
+/bin/mkdir -p "$links_dir/libexec/tool" "$links_dir/bin"
+/bin/cp /bin/echo "$links_dir/libexec/tool/tool"
+/bin/ln -s ../libexec/tool/tool "$links_dir/bin/tool"
+/bin/ln -s ../libexec/later/later "$links_dir/bin/later"
+omc_drop "$links_dir/bin/tool" "$links_dir/bin/later" "$links_dir/libexec/tool/tool"
+omc_run PackageBuilder.payload.drop
+check "only the real file"       "1"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and it is the target"     "links/libexec/tool/tool"   "$(payload_field 0 SOURCE)"
+check "the links are named"      "1"                         "$(ui_value $STATUS_ID | /usr/bin/grep -c '2 symbolic link(s) refused')"
+omc_drop "$links_dir/bin/later"
+omc_run PackageBuilder.payload.drop
+check "a lone link adds nothing" "1"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and is not called unreadable" "Nothing was added - 1 symbolic link(s) refused - add what they point to, or make the links in a postinstall script" "$(ui_value $STATUS_ID)"
+omc_dialog_answer choose_object "$links_dir/bin/tool"
+omc_run PackageBuilder.payload.add
+check "[+] refuses a link"       "1"                         "$(count /COMPONENTS/0/PAYLOAD)"
+check "and says what to do"      "That item is a symbolic link - add what it points to, or make the link in a postinstall script" "$(ui_value $STATUS_ID)"
+omc_dialog_answer choose_object "$links_dir/bin/later"
+omc_run PackageBuilder.payload.add
+check "a dangling one too, as a link" "That item is a symbolic link - add what it points to, or make the link in a postinstall script" "$(ui_value $STATUS_ID)"
+omc_dialog_answer choose_object "$links_dir/bin/tool"
+omc_run PackageBuilder.payload.browse
+check "Browse will not repoint to one" "links/libexec/tool/tool"   "$(payload_field 0 SOURCE)"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 # unknown_ids.log accumulates across the whole file and nothing resets it, so
 # one assertion here covers every section above. The per-section copy in the

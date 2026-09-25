@@ -26,12 +26,19 @@ dropped_paths "$OMC_ACTIONUI_TRIGGER_CONTEXT" > "$items"
 added=0
 unreadable=0
 noguess=0
+links=0
 last=""
 
 # A path may contain anything except a newline, so lines are read whole and IFS
 # is cleared to keep leading and trailing spaces in a name.
 while IFS= read -r p; do
     [ -n "$p" ] || continue
+    # Before the existence test, so a dangling link is counted as a link.
+    if is_symlink_source "$p"; then
+        dbg "payload.drop: [$p] is a symbolic link"
+        links=$((links + 1))
+        continue
+    fi
     if [ ! -e "$p" ]; then
         dbg "payload.drop: [$p] does not exist"
         unreadable=$((unreadable + 1))
@@ -69,10 +76,20 @@ fi
 
 model_unlock
 
-# Both counts are reported when both are non-zero: an "n need a destination"
-# that quietly swallowed "m could not be read" would describe half the outcome.
+# Every non-zero count is reported: an "n need a destination" that quietly
+# swallowed "m could not be read" would describe half the outcome.
+links_note=""
+if [ "$links" -gt 0 ]; then
+    links_note="$links symbolic link(s) refused - add what they point to, or make the links in a postinstall script"
+fi
 if [ "$added" = "0" ]; then
-    set_status "Nothing was added - the dropped items could not be read"
+    if [ "$unreadable" -gt 0 ] && [ -n "$links_note" ]; then
+        set_status "Nothing was added - $unreadable could not be read; $links_note"
+    elif [ -n "$links_note" ]; then
+        set_status "Nothing was added - $links_note"
+    else
+        set_status "Nothing was added - the dropped items could not be read"
+    fi
 else
     summary="Added $added item(s)"
     if [ "$noguess" -gt 0 ]; then
@@ -80,6 +97,9 @@ else
     fi
     if [ "$unreadable" -gt 0 ]; then
         summary="$summary; $unreadable could not be read"
+    fi
+    if [ -n "$links_note" ]; then
+        summary="$summary; $links_note"
     fi
     set_status "$summary"
 fi
