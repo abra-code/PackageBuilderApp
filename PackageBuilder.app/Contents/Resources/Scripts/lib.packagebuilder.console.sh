@@ -26,6 +26,12 @@ show_build_tab() { :; }
 enable_view() { :; }
 show_view() { :; }
 show_progress() { :; }
+# Defined in lib.packagebuilder.sh rather than behind this interface, so until
+# this line the CLI called omc_dialog_control on every document it loaded or
+# saved. That left an OMC/CLI-<pid>.plist in the user's temp folder per run, and
+# inside an agent's sandbox, where omc_dialog_control cannot save at all, it
+# printed "An error occurred when writing property list" on every command.
+refresh_window_title() { :; }
 
 # The status line becomes a progress line, marked so it can be told apart from
 # log output when both arrive on the same stream.

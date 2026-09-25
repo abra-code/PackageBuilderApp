@@ -935,6 +935,23 @@ check "the exported script refuses it" "1"                    "$?"
 check "and says so"              "1"                          "$(/usr/bin/grep -c 'tool is a symbolic link' "$lk/export.txt" | /usr/bin/tr -d ' ')"
 check "and nothing landed there either" "0"                   "$(/bin/ls -A "$lk/dist" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
 
+section "160. the CLI does not reach for a window it does not have"
+# refresh_window_title lived in the shared library, outside the presentation
+# interface, so every CLI command that loaded or saved a document ran the real
+# omc_dialog_control against its synthetic window. That left an
+# OMC/CLI-<pid>.plist in the temp folder per run, and inside an agent's sandbox
+# printed an error on every command. The CLI uses the real tool from the bundle,
+# not the harness stub, so the evidence is the file it would leave: each run
+# gets a temp folder of its own, and none may appear there.
+cw="$OMCTEST_WORK/cli/window"
+/bin/rm -rf "$cw"
+/bin/mkdir -p "$cw/tmp"
+TMPDIR="$cw/tmp" pbcli new "$cw/W.pkgbld" --name w --identifier com.example.pkg.w --version 1.0 --no-signing >/dev/null 2>&1
+check "new succeeded"            "0"                          "$?"
+TMPDIR="$cw/tmp" pbcli set "$cw/W.pkgbld" /DISTRIBUTION/TITLE Win >/dev/null 2>&1
+TMPDIR="$cw/tmp" pbcli validate "$cw/W.pkgbld" >/dev/null 2>&1
+check "no window file was left"  "0"                          "$(/bin/ls "$cw/tmp/OMC" 2>/dev/null | /usr/bin/grep -c '^CLI-' | /usr/bin/tr -d ' ')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 
