@@ -31,6 +31,12 @@ plister="$support_path/plister"
 resources_dir="$app_bundle/Contents/Resources"
 new_document_template="$resources_dir/NewDocument.json"
 
+# The script Add to PATH ships inside a package, beside the postinstall that
+# runs it. It lives outside Scripts/ because it is not a handler: it runs on the
+# machine the package is installed on, never in this app.
+PB_ADD_TO_PATH_NAME="pb_add_to_path.sh"
+PB_ADD_TO_PATH_SCRIPT="$resources_dir/InstallerScripts/$PB_ADD_TO_PATH_NAME"
+
 # --- Debug logging ------------------------------------------------------------
 # Silent unless the flag file exists, so a shipped applet writes nothing. The log
 # lives under TMPDIR rather than /tmp: /tmp is world-writable, so on a shared
@@ -149,6 +155,8 @@ COMPONENT_VERSION_HINT_ID=190
 # saying when the two installer-choice controls inside it have no effect.
 COMPONENT_OPTIONS_ID=191
 COMPONENT_CHOICE_NOTE_ID=192
+# The folder a component puts on the user's PATH (ADD_TO_PATH).
+ADD_TO_PATH_ID=193
 
 # The component table's hidden index column (1-based, past the two visible ones).
 COMPONENT_INDEX_COLUMN=3
@@ -604,6 +612,7 @@ normalize_components() {
         ensure_string "/COMPONENTS/$component_index/INSTALL_LOCATION" "$default_location"
         ensure_string "/COMPONENTS/$component_index/PREINSTALL" ""
         ensure_string "/COMPONENTS/$component_index/POSTINSTALL" ""
+        ensure_string "/COMPONENTS/$component_index/ADD_TO_PATH" ""
         ensure_string "/COMPONENTS/$component_index/TITLE" ""
         ensure_string "/COMPONENTS/$component_index/DESCRIPTION" ""
         ensure_bool "/COMPONENTS/$component_index/OVERWRITE_PERMISSIONS" 0
@@ -1379,6 +1388,7 @@ push_component_to_window() {
     set_value "$COMPONENT_SELECTED_ID" "$(component_get_bool_str SELECTED)"
     set_value "$PREINSTALL_ID" "$(component_get PREINSTALL)"
     set_value "$POSTINSTALL_ID" "$(component_get POSTINSTALL)"
+    set_value "$ADD_TO_PATH_ID" "$(component_get ADD_TO_PATH)"
     set_value "$COMPONENT_VERSION_ID" "$(component_get VERSION)"
     set_value "$COMPONENT_VERSION_HINT_ID" "$(component_version_hint)"
     set_value "$COMPONENT_CHOICE_NOTE_ID" "$(choice_list_note)"
@@ -1433,6 +1443,7 @@ component_has_options() {
     [ "$(component_get_bool RELOCATABLE)" = "0" ] || { printf '1'; return 0; }
     [ -z "$(component_get PREINSTALL)" ] || { printf '1'; return 0; }
     [ -z "$(component_get POSTINSTALL)" ] || { printf '1'; return 0; }
+    [ -z "$(component_get ADD_TO_PATH)" ] || { printf '1'; return 0; }
     [ -z "$(component_get DESCRIPTION)" ] || { printf '1'; return 0; }
     # SELECTED defaults to on, so off is the choice worth revealing.
     [ "$(component_get_bool SELECTED)" = "1" ] || { printf '1'; return 0; }
@@ -1937,6 +1948,78 @@ count_domain_mismatches() {
         component_index=$((component_index + 1))
     done
     printf '%s' "$mismatches"
+}
+
+# --- Components that only run scripts, and Add to PATH -----------------------
+# Succeed when a component has something for Installer to run: a preinstall or
+# postinstall script of its own, or a folder to add to the PATH, for which the
+# build writes the postinstall. Such a component may have an empty payload and
+# is then built with pkgbuild --nopayload.
+# Arguments: optional component index, defaulting to the current one
+component_has_scripts() {
+    local component_index="$1"
+    [ -n "$(component_get PREINSTALL "$component_index")" ] && return 0
+    [ -n "$(component_get POSTINSTALL "$component_index")" ] && return 0
+    [ -n "$(component_get ADD_TO_PATH "$component_index")" ] && return 0
+    return 1
+}
+
+# The folder of an ADD_TO_PATH value relative to the home folder, as
+# pb_add_to_path.sh takes it: "~/.local/bin" gives ".local/bin".
+# Arguments: the value
+add_to_path_folder() {
+    local folder="${1#\~/}"
+    printf '%s' "${folder%/}"
+}
+
+# Print why a component's ADD_TO_PATH cannot be built, or nothing when it can
+# (or is empty). One reason, the first that applies.
+#
+# The value lands in a shell startup file that runs in every Terminal window the
+# user opens, so it is held to a character set that cannot carry shell syntax
+# rather than quoted and hoped for. pb_add_to_path.sh applies the same set.
+#
+# The install location has to be the home folder itself because of how the
+# postinstall learns which home folder that is: from $2, which Installer sets to
+# where it put the component - the home folder for a component installed at
+# "~", and somewhere below it otherwise.
+# Arguments: optional component index, defaulting to the current one
+add_to_path_problem() {
+    local component_index="$1"
+    local value="$(component_get ADD_TO_PATH "$component_index")"
+    [ -n "$value" ] || return 0
+    if [ "$(install_domain)" != "user" ]; then
+        printf 'Add to PATH needs a package that installs for the user - set Installs for to the user who runs it'
+        return 0
+    fi
+    local folder="$(add_to_path_folder "$value")"
+    case "$value" in
+        '~/'*) ;;
+        *) folder="" ;;
+    esac
+    case "$folder" in
+        ''|*[!A-Za-z0-9._/-]*) folder="" ;;
+    esac
+    case "/$folder/" in
+        */../*|*/./*|*//*) folder="" ;;
+    esac
+    if [ -z "$folder" ]; then
+        printf 'Add to PATH "%s" must be a folder in the home folder, written ~/ and then letters, digits, dot, underscore, hyphen and slash, such as ~/.local/bin' "$value"
+        return 0
+    fi
+    if [ -n "$(component_get POSTINSTALL "$component_index")" ]; then
+        printf 'Add to PATH writes this component'\''s postinstall script, so the component cannot also have one - give Add to PATH a component of its own'
+        return 0
+    fi
+    local location="$(expand_tokens "$(component_get INSTALL_LOCATION "$component_index")")"
+    case "$location" in
+        ''|'~'|'~/') ;;
+        *)
+            printf 'Add to PATH needs the component'\''s install location to be ~, the home folder itself - give it a component of its own'
+            return 0
+            ;;
+    esac
+    return 0
 }
 
 # Canonicalize a path, or print it unchanged when it cannot be resolved (it
@@ -3117,6 +3200,7 @@ field_key_path() {
         "$RELOCATABLE_ID")       component_key RELOCATABLE ;;
         "$PREINSTALL_ID")        component_key PREINSTALL ;;
         "$POSTINSTALL_ID")       component_key POSTINSTALL ;;
+        "$ADD_TO_PATH_ID")       component_key ADD_TO_PATH ;;
         "$COMPONENT_VERSION_ID")     component_key VERSION ;;
         "$COMPONENT_DESCRIPTION_ID") component_key DESCRIPTION ;;
         "$COMPONENT_SELECTED_ID")    component_key SELECTED ;;

@@ -118,8 +118,33 @@
                                            // auth="none".
       "PREINSTALL": "",                    // string. Path to a script, or "".
       "POSTINSTALL": "",                   // string. Path to a script, or "".
+      "ADD_TO_PATH": "",                   // string. A folder in the home
+                                           // folder to put on the user's shell
+                                           // PATH, such as "~/.local/bin", or
+                                           // "". PackageBuilder then writes this
+                                           // component's postinstall, which runs
+                                           // a script shipped in the package: it
+                                           // adds a marked block to the login
+                                           // shell's startup file (~/.zprofile,
+                                           // ~/.bash_profile or the one bash
+                                           // reads, a fish conf.d file), and
+                                           // leaves every file alone when one
+                                           // already mentions the folder. Needs
+                                           // DISTRIBUTION.DOMAIN "user",
+                                           // INSTALL_LOCATION "~", and no
+                                           // POSTINSTALL of its own; ~/ then
+                                           // letters, digits, . _ - and / only.
+                                           // Give it a component of its own with
+                                           // an empty PAYLOAD and CUSTOMIZE
+                                           // "allow", so the user can untick it.
 
       "PAYLOAD": [                         // array. One entry per artifact.
+                                           // May be empty only when the
+                                           // component has PREINSTALL,
+                                           // POSTINSTALL or ADD_TO_PATH: it then
+                                           // only runs scripts, is built with
+                                           // pkgbuild --nopayload, and leaves no
+                                           // receipt.
         {
           "SOURCE": "${ARTIFACTS_DIR}/widget", // string, required. A token path,
                                            // a path relative to the document,

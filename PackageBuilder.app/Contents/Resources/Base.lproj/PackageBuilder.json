@@ -753,6 +753,33 @@
                                                                         ]
                                                                     },
                                                                     {
+                                                                        "type": "HStack",
+                                                                        "properties": {
+                                                                            "spacing": 8
+                                                                        },
+                                                                        "children": [
+                                                                            {
+                                                                                "type": "Text",
+                                                                                "properties": {
+                                                                                    "text": "Add to PATH",
+                                                                                    "frame": {
+                                                                                        "width": 130,
+                                                                                        "alignment": "trailing"
+                                                                                    }
+                                                                                }
+                                                                            },
+                                                                            {
+                                                                                "type": "TextField",
+                                                                                "id": 193,
+                                                                                "properties": {
+                                                                                    "prompt": "optional, for example ~/.local/bin",
+                                                                                    "actionID": "PackageBuilder.field.changed",
+                                                                                    "help": "A folder in the home folder to add to the user's shell PATH. PackageBuilder writes this component's postinstall script for it, so the component has none of its own; give it a component of its own, with Customize set to allow, so it can be unticked"
+                                                                                }
+                                                                            }
+                                                                        ]
+                                                                    },
+                                                                    {
                                                                         "type": "Divider"
                                                                     },
                                                                     {

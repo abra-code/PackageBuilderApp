@@ -237,6 +237,24 @@ DOC=$("$PB" new ~/tool --name tool --identifier com.example.pkg.tool --domain us
   `CurrentUserHomeDirectory` and installs nothing. Never test by installing into
   your own home folder from a script.
 
+**Putting a folder on the user's PATH.** Do not write your own profile-editing
+postinstall. Give the package a component with an empty payload and
+`ADD_TO_PATH` set; PackageBuilder writes its postinstall and ships a tested
+script that edits the right startup file for the user's shell, once, between
+marker comments, and leaves alone a file that already mentions the folder.
+
+```sh
+N=$("$PB" add-component "$DOC" --identifier com.example.pkg.tool.path \
+      --title "Add ~/.local/bin to your shell's PATH")
+"$PB" set "$DOC" "/COMPONENTS/$((N - 1))/ADD_TO_PATH" "~/.local/bin"
+"$PB" set "$DOC" /DISTRIBUTION/CUSTOMIZE allow     # so the user can untick it
+```
+
+It needs `DOMAIN` `user`, the component's `INSTALL_LOCATION` `~`, and no
+`POSTINSTALL` of its own. A component with no payload is otherwise refused unless
+it has a `PREINSTALL` or `POSTINSTALL`; one that only runs scripts is built with
+`pkgbuild --nopayload` and leaves no receipt.
+
 ## Other things it does
 
 ```sh

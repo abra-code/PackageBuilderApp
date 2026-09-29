@@ -147,7 +147,7 @@ schema_check_enum() {
 # --- The document -------------------------------------------------------------
 SCHEMA_ROOT_KEYS="FORMAT_VERSION PROJECT COMPONENTS DISTRIBUTION SIGNING"
 SCHEMA_PROJECT_KEYS="NAME VERSION MIN_OS_VERSION ARTIFACTS_DIR OUTPUT_DIR PACKAGE_NAME"
-SCHEMA_COMPONENT_KEYS="IDENTIFIER VERSION TITLE DESCRIPTION SELECTED INSTALL_LOCATION OVERWRITE_PERMISSIONS RELOCATABLE AUTH PREINSTALL POSTINSTALL PAYLOAD"
+SCHEMA_COMPONENT_KEYS="IDENTIFIER VERSION TITLE DESCRIPTION SELECTED INSTALL_LOCATION OVERWRITE_PERMISSIONS RELOCATABLE AUTH PREINSTALL POSTINSTALL ADD_TO_PATH PAYLOAD"
 SCHEMA_PAYLOAD_KEYS="SOURCE DESTINATION OWNER GROUP MODE VERIFY"
 SCHEMA_VERIFY_KEYS="ARCHITECTURES SIGNED_BY HARDENED_RUNTIME SECURE_TIMESTAMP VERSION_FLAG"
 SCHEMA_DISTRIBUTION_KEYS="TITLE DOMAIN HOST_ARCHITECTURES CUSTOMIZE REQUIRE_SCRIPTS RESOURCES"
@@ -184,6 +184,44 @@ schema_check_domain_path() {
             '~'*) schema_error "$label \"$value\" is in a home folder - only a document whose DISTRIBUTION/DOMAIN is user may install there" ;;
         esac
     fi
+    return 0
+}
+
+# Report an ADD_TO_PATH the build would refuse - the same four rules as
+# add_to_path_problem, read from the file as written. The value ends up in a
+# shell startup file, so its character set is checked here too rather than
+# left for the build.
+# Arguments: the component's key path, the label for messages
+schema_check_add_to_path() {
+    local base="$1" label="$2"
+    [ "$(schema_type "$base/ADD_TO_PATH")" = "string" ] || return 0
+    local value="$(schema_value "$base/ADD_TO_PATH")"
+    [ -n "$value" ] || return 0
+    if [ "$schema_domain" != "user" ]; then
+        schema_error "$label/ADD_TO_PATH is set, but DISTRIBUTION/DOMAIN is not user - only a package that installs for the user can add a folder in the home folder to the PATH"
+    fi
+    local folder="${value#\~/}"
+    folder="${folder%/}"
+    case "$value" in
+        '~/'*) ;;
+        *) folder="" ;;
+    esac
+    case "$folder" in
+        ''|*[!A-Za-z0-9._/-]*) folder="" ;;
+    esac
+    case "/$folder/" in
+        */../*|*/./*|*//*) folder="" ;;
+    esac
+    if [ -z "$folder" ]; then
+        schema_error "$label/ADD_TO_PATH \"$value\" must be ~/ followed by letters, digits, dot, underscore, hyphen and slash, such as ~/.local/bin"
+    fi
+    if [ -n "$(schema_value "$base/POSTINSTALL")" ]; then
+        schema_error "$label has both ADD_TO_PATH and POSTINSTALL - Add to PATH writes the component's postinstall script, so give it a component of its own"
+    fi
+    case "$(schema_value "$base/INSTALL_LOCATION")" in
+        ''|'~'|'~/') ;;
+        *) schema_error "$label/ADD_TO_PATH needs INSTALL_LOCATION \"~\" - the script finds the home folder from where Installer put the component" ;;
+    esac
     return 0
 }
 
@@ -359,6 +397,8 @@ schema_check_document() {
         schema_check_type "$base/RELOCATABLE" bool "$label/RELOCATABLE" 0
         schema_check_type "$base/PREINSTALL" string "$label/PREINSTALL" 0
         schema_check_type "$base/POSTINSTALL" string "$label/POSTINSTALL" 0
+        schema_check_type "$base/ADD_TO_PATH" string "$label/ADD_TO_PATH" 0
+        schema_check_add_to_path "$base" "$label"
         schema_check_enum "$base/AUTH" "$label/AUTH" "Root User"
         if [ "$(schema_type "$base/INSTALL_LOCATION")" = "string" ]; then
             schema_check_domain_path "$(schema_value "$base/INSTALL_LOCATION")" "$label/INSTALL_LOCATION"
@@ -398,7 +438,9 @@ schema_check_document() {
 
         if [ "$(schema_type "$base/PAYLOAD")" = "array" ]; then
             payload_count="$(schema_count "$base/PAYLOAD")"
-            if [ "$payload_count" = "0" ]; then
+            # A component with install scripts may have no payload: it only
+            # runs them, and is built with pkgbuild --nopayload.
+            if [ "$payload_count" = "0" ] && [ -z "$(schema_value "$base/PREINSTALL")$(schema_value "$base/POSTINSTALL")$(schema_value "$base/ADD_TO_PATH")" ]; then
                 if [ "$component_count" -gt 1 ]; then
                     schema_warn "$label has an empty payload - the document is well-formed but that component builds nothing"
                 else

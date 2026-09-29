@@ -74,6 +74,15 @@ location from `/` to `~` and its authentication from Root to User; destinations
 you already entered are left for you to rewrite, and the build names any that do
 not fit.
 
+A package that installs into `~/.local/bin` usually also wants that folder on
+the user's PATH. Add a component with no payload and fill in **Add to PATH**
+under its options (`~/.local/bin`): PackageBuilder writes that component's
+postinstall, which adds a marked block to the login shell's startup file -
+`~/.zprofile` for zsh - unless one of the shell's files already mentions the
+folder. With Customize set to allow, the user can untick it. Any component with
+no payload but an install script of its own is built the same way, with
+`pkgbuild --nopayload`.
+
 ## Adding artifacts
 
 Drop files on the payload table, or use the buttons below it: `+` adds one

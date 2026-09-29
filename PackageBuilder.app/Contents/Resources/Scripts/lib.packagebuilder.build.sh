@@ -304,9 +304,15 @@ check_preconditions() {
     fi
 
     entry_count="$(payload_count)"
-    if [ "$entry_count" = "0" ]; then
-        fail_precondition "$(component_prefix)The payload is empty - add at least one artifact"
+    # A component with install scripts and no payload is a real thing - one
+    # that only runs a script, such as Add to PATH - and is built with
+    # pkgbuild --nopayload. Without either there is nothing to install at all.
+    if [ "$entry_count" = "0" ] && ! component_has_scripts; then
+        fail_precondition "$(component_prefix)The payload is empty - add at least one artifact, or an install script for a component that only runs scripts"
     fi
+
+    domain_problem="$(add_to_path_problem)"
+    [ -z "$domain_problem" ] || fail_precondition "$(component_prefix)$domain_problem"
 
     index=0
     while [ "$index" -lt "$entry_count" ]; do
@@ -1005,6 +1011,14 @@ verify_payload() {
         # was editing before.
         PB_COMPONENT_INDEX="$component_index"
         entry_count="$(payload_count)"
+        # A component that only runs scripts has no artifact to verify, and the
+        # preconditions have already allowed it. Said, so the log does not skip
+        # a component in silence.
+        if [ "$entry_count" = "0" ] && component_has_scripts; then
+            append_log "  $(component_prefix)no payload - this component only runs its install scripts"
+            component_index=$((component_index + 1))
+            continue
+        fi
         if [ "$entry_count" = "0" ]; then
             if [ "$total_components" -le 1 ]; then
                 verify_fail "the payload is empty - there is nothing to verify"
@@ -1239,11 +1253,32 @@ stage_component_scripts() {
     [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
     local preinstall="$(resolve_stored_path "$(component_get PREINSTALL "$component_index")")"
     local postinstall="$(resolve_stored_path "$(component_get POSTINSTALL "$component_index")")"
-    [ -n "$preinstall" ] || [ -n "$postinstall" ] || return 0
+    local add_to_path="$(component_get ADD_TO_PATH "$component_index")"
+    [ -n "$preinstall" ] || [ -n "$postinstall" ] || [ -n "$add_to_path" ] || return 0
 
     local scripts_dir="$(component_scratch scripts "$component_index")"
     /bin/rm -rf "$scripts_dir"
     /bin/mkdir -p "$scripts_dir" || return 1
+
+    # Add to PATH is a postinstall this app writes, running the tested script
+    # it ships. The preconditions have already refused it beside a postinstall
+    # of the document's own, since pkgbuild takes exactly one.
+    if [ -n "$add_to_path" ]; then
+        if [ -n "$(add_to_path_problem "$component_index")" ]; then
+            append_log "  ! $(add_to_path_problem "$component_index")"
+            return 1
+        fi
+        if [ ! -f "$PB_ADD_TO_PATH_SCRIPT" ]; then
+            append_log "  ! $PB_ADD_TO_PATH_SCRIPT is missing from the app"
+            return 1
+        fi
+        /bin/cp "$PB_ADD_TO_PATH_SCRIPT" "$scripts_dir/$PB_ADD_TO_PATH_NAME" || return 1
+        /bin/chmod 755 "$scripts_dir/$PB_ADD_TO_PATH_NAME" || return 1
+        add_to_path_postinstall "$(add_to_path_folder "$add_to_path")" "$(model_get /PROJECT/NAME)" \
+            > "$scripts_dir/postinstall" || return 1
+        /bin/chmod 755 "$scripts_dir/postinstall" || return 1
+        append_log "  postinstall adds $add_to_path to the user's PATH"
+    fi
 
     if [ -n "$preinstall" ]; then
         [ -f "$preinstall" ] || { append_log "  ! preinstall script $preinstall is not there"; return 1; }
@@ -1257,6 +1292,35 @@ stage_component_scripts() {
     fi
     printf '%s' "$scripts_dir"
     return 0
+}
+
+# Print the postinstall script of a component whose ADD_TO_PATH is set. It runs
+# pb_add_to_path.sh, which sits beside it in the package's scripts, for the home
+# folder the package was installed into.
+#
+# That home folder is $2: Installer passes where it put the component, and
+# add_to_path_problem has made sure this component's install location is the
+# home folder itself. $HOME is not used, because Installer runs scripts in an
+# environment of its own. The user is whoever owns that folder, so the files the
+# script creates are theirs even if it turns out to run as root.
+#
+# The two values are spliced in single quotes. Both have been held to a
+# character set with no quote in it - the folder by add_to_path_problem, the
+# name by valid_name - so neither can end the quoting. The exported script
+# calls this too, so the app and the script write the same file.
+# Arguments: folder relative to the home folder, product name
+add_to_path_postinstall() {
+    local folder="$1" name="$2"
+    printf '%s\n' '#!/bin/sh'
+    printf '%s\n' '# postinstall - written by PackageBuilder. Adds a folder in the home folder to'
+    printf '%s\n' '# the PATH of the user this package was installed for, by running'
+    printf '%s\n' "# $PB_ADD_TO_PATH_NAME, which is beside it. It always exits 0: a profile edit"
+    printf '%s\n' '# that did not happen must not look like a failed installation.'
+    printf '%s\n' 'home="${2%/}"'
+    printf '%s\n' '[ -n "$home" ] || home="/"'
+    printf '%s\n' 'user="$(/usr/bin/stat -f %Su "$home" 2>/dev/null)"'
+    printf '%s\n' "/bin/sh \"\$(/usr/bin/dirname \"\$0\")/$PB_ADD_TO_PATH_NAME\" --home \"\$home\" --user \"\$user\" --folder '$folder' --name '$name'"
+    printf '%s\n' 'exit 0'
 }
 
 # Produce a --component-plist that turns relocation off for every bundle in the
@@ -1388,9 +1452,16 @@ build_all_components() {
         fi
         set_status "Staging the payload..."
         append_log "Staging the payload root:"
+        # Staged all the same when there is no payload, so an empty root from a
+        # previous run cannot be mistaken for this one's and the install
+        # location still gets its checks; build_component_package is what
+        # passes --nopayload.
         if ! stage_payload_root "$component_index"; then
             pb_component_stage_failure=stage
             return 1
+        fi
+        if [ "$(payload_count "$component_index")" = "0" ]; then
+            append_log "  no payload - this component only runs its install scripts"
         fi
 
         append_log ""
@@ -1441,6 +1512,35 @@ build_component_package() {
     local package_path="$component_dir/$(component_package_basename "$component_index").pkg"
 
     scripts_dir="$(stage_component_scripts "$component_index")" || return 1
+
+    # A component that only runs scripts. pkgbuild --nopayload writes no Bom
+    # and no Payload, and Installer then keeps no receipt for it - there is
+    # nothing to record. With no bundles there is no relocation to turn off.
+    # The install location is still passed: it is what Installer hands the
+    # scripts as $2, and Add to PATH reads the home folder from it.
+    if [ "$(payload_count "$component_index")" = "0" ]; then
+        if [ -z "$scripts_dir" ]; then
+            append_log "  ! the component has no payload and no install scripts"
+            return 1
+        fi
+        run_tool "$pkgbuild_tool" --nopayload --identifier "$identifier" --version "$version" \
+            --install-location "$install_location" --ownership recommended \
+            --scripts "$scripts_dir" "$package_path"
+        if [ "$?" != "0" ]; then
+            stop_was_requested && return 1
+            append_log "  ! pkgbuild failed"
+            return 1
+        fi
+        if [ ! -f "$package_path" ]; then
+            append_log "  ! pkgbuild reported success but wrote no package"
+            return 1
+        fi
+        patch_overwrite_permissions "$package_path" \
+            "$(bool_str "$(component_get_bool OVERWRITE_PERMISSIONS "$component_index")")" \
+            "$component_index" || return 1
+        printf '%s' "$package_path"
+        return 0
+    fi
 
     if [ "$(component_get_bool RELOCATABLE "$component_index")" != "1" ]; then
         component_plist="$(component_plist_no_relocate "$root" "$component_index")" || {

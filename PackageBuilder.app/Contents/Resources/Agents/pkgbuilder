@@ -126,7 +126,19 @@ require_document() {
         printf 'pkgbuilder: no such document: %s\n' "$document_path" >&2
         return 1
     fi
-    if ! load_document "$document_path"; then
+    # Recorded absolute. Every relative path in the document is resolved
+    # against the document's folder, and a relative folder - "Packaging" for
+    # "Packaging/agent-vm.pkgbld" - made that resolution happen twice: the
+    # artifacts folder came out as "Packaging/../.build", and each source under
+    # it as "Packaging/Packaging/../.build/...", which does not exist. Not
+    # canonicalized, so a document reached through a symlink keeps its own
+    # folder, as it does in the window.
+    local loaded_path="$document_path"
+    case "$loaded_path" in
+        /*) ;;
+        *) loaded_path="$PWD/$loaded_path" ;;
+    esac
+    if ! load_document "$loaded_path"; then
         printf 'pkgbuilder: %s is not a readable PackageBuilder project.\n' "$document_path" >&2
         printf '  Run "pkgbuilder validate %s" to find out what is wrong with it.\n' "$document_path" >&2
         return 1
@@ -232,7 +244,7 @@ key_type_of() {
         # and be written into the payload entry as though it were a component's.
         /COMPONENTS/*/PAYLOAD/*) printf '' ;;
         /COMPONENTS/*/IDENTIFIER|/COMPONENTS/*/INSTALL_LOCATION|/COMPONENTS/*/AUTH|\
-/COMPONENTS/*/PREINSTALL|/COMPONENTS/*/POSTINSTALL|/COMPONENTS/*/VERSION|\
+/COMPONENTS/*/PREINSTALL|/COMPONENTS/*/POSTINSTALL|/COMPONENTS/*/ADD_TO_PATH|/COMPONENTS/*/VERSION|\
 /COMPONENTS/*/TITLE|/COMPONENTS/*/DESCRIPTION) printf 'string' ;;
         /COMPONENTS/*/OVERWRITE_PERMISSIONS|/COMPONENTS/*/RELOCATABLE|\
 /COMPONENTS/*/SELECTED) printf 'bool' ;;
@@ -943,6 +955,12 @@ build_dry_run() {
         fi
         install_location="$(component_install_location "$component_index")"
         entry_count="$(payload_count "$component_index")"
+        if [ "$entry_count" = "0" ]; then
+            printf '  (no payload - this component only runs its install scripts)\n' >&2
+        fi
+        if [ -n "$(component_get ADD_TO_PATH "$component_index")" ]; then
+            printf '  postinstall adds %s to the user'\''s PATH\n' "$(component_get ADD_TO_PATH "$component_index")" >&2
+        fi
         index=0
         while [ "$index" -lt "$entry_count" ]; do
             source="$(resolve_stored_path "$(payload_get "$index" SOURCE "$component_index")")"

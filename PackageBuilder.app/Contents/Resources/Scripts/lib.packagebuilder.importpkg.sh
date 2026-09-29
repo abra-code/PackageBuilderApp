@@ -880,7 +880,7 @@ import_pkg() {
     local identity project_name package_base payload_root
     local scripts_note resource_note component_index
     local whole_bundle payload_total payload_readable component_own_version
-    local scripts_seen refused_any first_package_info
+    local scripts_seen refused_any first_package_info add_to_path_folder_read
 
     # The write loop below assigns this per component, so nothing that runs
     # after it depends on the value coming in. The read pass does run first,
@@ -1179,7 +1179,23 @@ import_pkg() {
             fi
         fi
 
-        /usr/bin/grep -q '<scripts>' "$package_info" 2>/dev/null && scripts_seen=$((scripts_seen + 1))
+        # Add to PATH is scripts this app wrote, so it can be read back as the
+        # setting it came from rather than reported as scripts not extracted.
+        # Recognized by the helper beside the postinstall and by the one
+        # --folder argument that postinstall passes it; anything else about the
+        # component's scripts is still counted below.
+        add_to_path_folder_read=""
+        if [ -f "$component_dir/Scripts/$PB_ADD_TO_PATH_NAME" ] && [ -f "$component_dir/Scripts/postinstall" ]; then
+            add_to_path_folder_read="$(/usr/bin/sed -n "s/.*--folder '\([A-Za-z0-9._/-]*\)'.*/\1/p" "$component_dir/Scripts/postinstall" 2>/dev/null | /usr/bin/head -n 1)"
+        fi
+        if [ -n "$add_to_path_folder_read" ]; then
+            component_set ADD_TO_PATH "~/$add_to_path_folder_read"
+            append_log "  Add to PATH: ~/$add_to_path_folder_read"
+            [ ! -f "$component_dir/Scripts/preinstall" ] || scripts_seen=$((scripts_seen + 1))
+        else
+            component_set ADD_TO_PATH ""
+            /usr/bin/grep -q '<scripts>' "$package_info" 2>/dev/null && scripts_seen=$((scripts_seen + 1))
+        fi
 
         component_index=$((component_index + 1))
         [ "$component_index" -lt "$component_count" ] && append_log ""

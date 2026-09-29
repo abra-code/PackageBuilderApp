@@ -72,6 +72,32 @@ DOC=$(pkgbuilder new ~/tool --name tool --identifier com.example.pkg.tool --doma
 pkgbuilder add-payload "$DOC" build/tool        # guessed as ~/.local/bin/tool
 ```
 
+### Components that only run scripts, and Add to PATH
+
+A component with an empty `PAYLOAD` is refused unless it has something to run:
+`PREINSTALL`, `POSTINSTALL` or `ADD_TO_PATH`. Such a component is built with
+`pkgbuild --nopayload`, and Installer keeps no receipt for it.
+
+`ADD_TO_PATH` (for example `"~/.local/bin"`) puts a folder in the home folder on
+the user's shell PATH. PackageBuilder writes the component's postinstall, which
+runs a script it ships inside the package: it appends a block marked
+`# >>> <NAME> installer >>>` to the login shell's startup file (`~/.zprofile` for
+zsh; for bash the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`; for
+fish `~/.config/fish/conf.d/<NAME>.fish`), and changes nothing when one of the
+shell's files already mentions the folder or the file is a symbolic link. It
+never fails the install; what it did goes to `/var/log/install.log`.
+
+It needs `DOMAIN` `"user"`, an `INSTALL_LOCATION` of `"~"`, and no `POSTINSTALL`
+of its own, so give it a component of its own, and set `CUSTOMIZE` to `allow` so
+the user can untick it:
+
+```sh
+N=$(pkgbuilder add-component "$DOC" --identifier com.example.pkg.tool.path \
+      --title "Add ~/.local/bin to your shell's PATH")
+pkgbuilder set "$DOC" "/COMPONENTS/$((N - 1))/ADD_TO_PATH" "~/.local/bin"
+pkgbuilder set "$DOC" /DISTRIBUTION/CUSTOMIZE allow
+```
+
 ## Commands
 
 ### new - start a document

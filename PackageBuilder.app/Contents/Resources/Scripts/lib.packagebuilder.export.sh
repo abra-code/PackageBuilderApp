@@ -138,7 +138,8 @@ write_packaging_script() {
     local component_index identifier install_location auth choice_id
     local domain_problem
     local overwrite relocatable preinstall postinstall entry_count
-    local component_root component_basename component_label
+    local component_root component_basename component_label add_to_path
+    local component_scripts
     local component_own_version version_expression
     local total_components="$(component_count)"
     local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
@@ -659,14 +660,17 @@ PB_HELPERS
         # Found in review, 2026-08-07.
         preinstall="$(component_get PREINSTALL "$component_index")"
         postinstall="$(component_get POSTINSTALL "$component_index")"
+        add_to_path="$(component_get ADD_TO_PATH "$component_index")"
         entry_count="$(payload_count "$component_index")"
         component_basename="$(component_package_basename "$component_index")"
         # Component 0 keeps the unsuffixed staging root, so a single-component
         # export produces the script it always produced.
         if [ "$component_index" = "0" ]; then
             component_root="root"
+            component_scripts="scripts"
         else
             component_root="root-$component_index"
+            component_scripts="scripts-$component_index"
         fi
 
         if [ "$total_components" -gt 1 ]; then
@@ -763,9 +767,35 @@ PB_HELPERS
         printf '\n'
 
         # --- Component scripts, only when the document has any ----------------
-        if [ -n "$preinstall" ] || [ -n "$postinstall" ]; then
-            printf 'scripts_dir="$staging_dir/scripts"\n'
+        if [ -n "$preinstall" ] || [ -n "$postinstall" ] || [ -n "$add_to_path" ]; then
+            # One folder per component, cleared first. A single shared folder
+            # carried one component's scripts into the next component's
+            # package: a preinstall-only component after one with a
+            # postinstall shipped that postinstall too.
+            printf 'scripts_dir="$staging_dir"/%s\n' "$(sh_quote "$component_scripts")"
+            printf '/bin/rm -rf "$scripts_dir"\n'
             printf '/bin/mkdir -p "$scripts_dir" || fail "Could not create the scripts directory"\n'
+            # Add to PATH: the app's own postinstall and the script it runs,
+            # written into the script whole, since the machine running it has
+            # no PackageBuilder to copy them from. A value the app would refuse
+            # becomes a refusal here too, and nothing of it is written: its
+            # characters are what the refusal is about.
+            if [ -n "$add_to_path" ]; then
+                domain_problem="$(add_to_path_problem "$component_index")"
+                if [ -n "$domain_problem" ]; then
+                    printf 'fail %s\n' "$(sh_quote "Component $((component_index + 1)): $domain_problem")"
+                else
+                    printf "/bin/cat > \"\$scripts_dir/%s\" <<'PB_ADD_TO_PATH_SCRIPT' || fail \"Could not write %s\"\n" \
+                        "$PB_ADD_TO_PATH_NAME" "$PB_ADD_TO_PATH_NAME"
+                    /bin/cat "$PB_ADD_TO_PATH_SCRIPT" || return 1
+                    printf 'PB_ADD_TO_PATH_SCRIPT\n'
+                    printf '/bin/chmod 755 "$scripts_dir/%s"\n' "$PB_ADD_TO_PATH_NAME"
+                    printf "/bin/cat > \"\$scripts_dir/postinstall\" <<'PB_ADD_TO_PATH_POSTINSTALL' || fail \"Could not write the postinstall script\"\n"
+                    add_to_path_postinstall "$(add_to_path_folder "$add_to_path")" "$name"
+                    printf 'PB_ADD_TO_PATH_POSTINSTALL\n'
+                    printf '/bin/chmod 755 "$scripts_dir/postinstall"\n'
+                fi
+            fi
             # emit_runtime_path, not sh_quote: these are paths and may carry the
             # same ${ARTIFACTS_DIR} and ${PROJECT_DIR} tokens every other path in
             # the document may carry. sh_quote froze the token as literal text, so
@@ -786,7 +816,21 @@ PB_HELPERS
         # --- pkgbuild and the PackageInfo patch -------------------------------
         printf 'announce "PKGBUILD component package"\n'
         printf 'component_package="$component_dir"/%s\n' "$(sh_quote "$component_basename.pkg")"
-        if [ "$relocatable" != "1" ]; then
+        if [ "$entry_count" = "0" ]; then
+            # A component that only runs scripts, as the app builds it: no Bom,
+            # no Payload, nothing to relocate. The install location still goes
+            # in, because Installer hands it to the scripts as $2.
+            if [ -n "$preinstall" ] || [ -n "$postinstall" ] || [ -n "$add_to_path" ]; then
+                /bin/cat <<'PB_PKGBUILD_NOPAYLOAD'
+/usr/bin/pkgbuild --nopayload --identifier "$identifier" --version "$component_version" \
+    --install-location "$install_location" --ownership recommended \
+    --scripts "$scripts_dir" "$component_package" \
+    || fail "pkgbuild failed"
+PB_PKGBUILD_NOPAYLOAD
+            else
+                printf 'fail %s\n' "$(sh_quote "Component $((component_index + 1)): the payload is empty and there are no install scripts - there is nothing to install")"
+            fi
+        elif [ "$relocatable" != "1" ]; then
             /bin/cat <<'PB_RELOCATE'
 # Bundles must not be relocatable (the app's design 8.2): pkgbuild marks them
 # relocatable, which makes Installer follow Spotlight to any existing copy of
@@ -834,7 +878,10 @@ PB_RELOCATE
         # The scripts flag is frozen by whether the document has scripts; the
         # component plist branches at run time on whether --analyze found
         # bundles. No arrays in POSIX sh, so the branches are spelled out.
-        if [ -n "$preinstall" ] || [ -n "$postinstall" ]; then
+        # A component with no payload was built above, with --nopayload.
+        if [ "$entry_count" = "0" ]; then
+            :
+        elif [ -n "$preinstall" ] || [ -n "$postinstall" ] || [ -n "$add_to_path" ]; then
             /bin/cat <<'PB_PKGBUILD_SCRIPTS'
 if [ -n "$component_plist" ]; then
     /usr/bin/pkgbuild --root "$payload_root" --identifier "$identifier" --version "$component_version" \
