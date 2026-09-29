@@ -316,20 +316,6 @@ pl set string "system" "$path_doc" /DISTRIBUTION/DOMAIN
 pbcli validate "$path_doc" >/dev/null 2>"$OMCTEST_WORK/path-validate.txt"
 check "and a system document"    "1"                          "$(/usr/bin/grep -c 'ADD_TO_PATH is set, but DISTRIBUTION/DOMAIN is not user' "$OMCTEST_WORK/path-validate.txt" | /usr/bin/tr -d ' ')"
 
-section "205. the CLI resolves a relative document path once"
-# A document in a Packaging folder whose artifacts folder is "../art", named
-# relative to its parent - how agent-vm's own package is built. The folder
-# used to be resolved twice, into "Packaging/Packaging/../art".
-/bin/mkdir -p "$OMCTEST_WORK/rel/Packaging" "$OMCTEST_WORK/rel/art" "$OMCTEST_WORK/rel/out"
-/bin/cp /bin/echo "$OMCTEST_WORK/rel/art/tool"
-rel_doc="$(pbcli new "$OMCTEST_WORK/rel/Packaging/rel.pkgbld" --name tool --identifier com.example.pkg.rel --version 1.0 --output-dir "$OMCTEST_WORK/rel/out" --no-signing 2>/dev/null)"
-pbcli add-payload "$rel_doc" "$OMCTEST_WORK/rel/art/tool" --destination /usr/local/bin/tool --no-verify >/dev/null 2>&1
-pl set string "../art" "$rel_doc" /PROJECT/ARTIFACTS_DIR
-pl set string '${ARTIFACTS_DIR}/tool' "$rel_doc" /COMPONENTS/0/PAYLOAD/0/SOURCE
-( cd "$OMCTEST_WORK/rel" && pbcli validate Packaging/rel.pkgbld ) > /dev/null 2> "$OMCTEST_WORK/rel/validate.txt"
-check "validate finds the artifact" "0"                       "$(/usr/bin/grep -c 'is not there' "$OMCTEST_WORK/rel/validate.txt" | /usr/bin/tr -d ' ')"
-check "and is clean"             "1"                          "$(/usr/bin/grep -c '0 precondition(s) unmet' "$OMCTEST_WORK/rel/validate.txt" | /usr/bin/tr -d ' ')"
-
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 

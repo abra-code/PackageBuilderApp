@@ -495,6 +495,38 @@ pl set string "" "$(model_file)" /COMPONENTS/0/VERSION
 omc_run PackageBuilder.step.component
 check "empty is accepted"        "2"                         "$(built_pkg_count)"
 
+section "82. an unreadable component plist fails the build, not the relocation patch"
+# plister reads a file it cannot parse as a bare string and counts it as 0, so
+# an --analyze result that was not a plist was taken to mean "no bundles": the
+# component plist was dropped and pkgbuild's default BundleIsRelocatable=true
+# shipped with nothing said. Found in review, 2026-09-24. pkgbuild is replaced by
+# a stub that writes what it is told, so each case is exact.
+setup_replay_project
+reloc_stub="$OMCTEST_WORK/pkgbuild-stub"
+reloc_body="$OMCTEST_WORK/pkgbuild-stub-body"
+/bin/cat > "$reloc_stub" <<'STUB'
+#!/bin/sh
+# --analyze --root <root> <plist>: write the prepared body to <plist>.
+/bin/cp "$(/usr/bin/dirname "$0")/pkgbuild-stub-body" "$4"
+STUB
+/bin/chmod 755 "$reloc_stub"
+printf 'not a plist' > "$reloc_body"
+/bin/mkdir -p "$(state_dir)"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+check "garbage is a failure"     "1"                          "$?"
+check "and hands back no plist"  ""                           "$reloc_out"
+/usr/bin/plutil -create xml1 "$reloc_body" >/dev/null 2>&1
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+check "a dict is a failure too"  "1"                          "$?"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><array/></plist>\n' > "$reloc_body"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+check "an empty array is no bundles" "0"                      "$?"
+check "and passes no plist"      ""                           "$reloc_out"
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><array><dict><key>RootRelativeBundlePath</key><string>x/Foo.bundle</string></dict></array></plist>\n' > "$reloc_body"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+check "a bundle with no key is patched" "0"                   "$?"
+check "the key is created false" "false"                      "$(pl get value "$reloc_out" /0/BundleIsRelocatable 2>/dev/null)"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                          "$(ui_unknown_writes)"
 

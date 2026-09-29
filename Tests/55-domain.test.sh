@@ -330,7 +330,7 @@ check "validate refuses Root"    "1"                          "$(/usr/bin/grep -
 pl set string "User" "$cli_doc" /COMPONENTS/0/AUTH
 pbcli build "$cli_doc" --unsigned >/dev/null 2>&1
 check "the CLI builds it"        "0"                          "$?"
-pbcli inspect "$OMCTEST_WORK/cli/out/tool-unsigned.pkg" > "$OMCTEST_WORK/cli/inspect.txt" 2>&1
+pbcli inspect "$OMCTEST_WORK/cli/out/tool_1.0-unsigned.pkg" > "$OMCTEST_WORK/cli/inspect.txt" 2>&1
 check "inspect says who it is for" "1"                        "$(/usr/bin/grep -c '^Installs for: user$' "$OMCTEST_WORK/cli/inspect.txt" | /usr/bin/tr -d ' ')"
 
 section "190. a component added to a per-user document starts with its defaults"

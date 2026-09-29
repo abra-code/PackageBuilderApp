@@ -26,6 +26,12 @@ show_build_tab() { :; }
 enable_view() { :; }
 show_view() { :; }
 show_progress() { :; }
+# Defined in lib.packagebuilder.sh rather than behind this interface, so until
+# this line the CLI called omc_dialog_control on every document it loaded or
+# saved. That left an OMC/CLI-<pid>.plist in the user's temp folder per run, and
+# inside an agent's sandbox, where omc_dialog_control cannot save at all, it
+# printed "An error occurred when writing property list" on every command.
+refresh_window_title() { :; }
 
 # The status line becomes a progress line, marked so it can be told apart from
 # log output when both arrive on the same stream.
@@ -83,7 +89,18 @@ report_unsigned_result() {
         /bin/mkdir -p "$keep_dir"
         made_dir=$?
         if [ "$made_dir" -eq 0 ]; then
-            local kept="$keep_dir/$(/usr/bin/basename "$package_path")"
+            # The document's package name with "-unsigned" before the
+            # extension - "widget_2.0-unsigned.pkg" - which is what an exported
+            # script run from the same document lands. The scratch file's own
+            # name has no version in it, so two paths named one package two
+            # ways. A name with a path separator cannot land here, so it falls
+            # back to the scratch name rather than escaping the folder.
+            local kept_name="$(package_file_name)"
+            case "$kept_name" in
+                ''|*/*) kept_name="$(/usr/bin/basename "$package_path")" ;;
+                *) kept_name="${kept_name%.*}-unsigned.pkg" ;;
+            esac
+            local kept="$keep_dir/$kept_name"
             local copied
             /bin/cp "$package_path" "$kept"
             copied=$?

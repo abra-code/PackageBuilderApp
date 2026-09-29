@@ -676,8 +676,28 @@ doc_path() {
     return 0
 }
 
+# Recorded absolute. The window always hands over an absolute path, but the CLI
+# passes whatever was typed, and every relative value in the document is
+# resolved against document_dir: with "installer/x.pkgbld" typed from the
+# folder above, ARTIFACTS_DIR "artifacts" became "installer/artifacts", and
+# resolve_stored_path then put document_dir in front of that a second time -
+# "installer/installer/artifacts/...". Only the folder is resolved; the file's
+# own name is kept, so a document reached through a link keeps its name.
 set_doc_path() {
     local path="$1"
+    # Set only when the path is relative and its folder resolves.
+    local folder
+    case "$path" in
+        ''|/*) ;;
+        *)
+            folder="$(CDPATH= cd -P -- "$(/usr/bin/dirname -- "$path")" 2>/dev/null && /bin/pwd -P)"
+            if [ -n "$folder" ]; then
+                path="$folder/$(/usr/bin/basename -- "$path")"
+            else
+                path="$(/bin/pwd -P)/$path"
+            fi
+            ;;
+    esac
     printf '%s' "$path" > "$(state_dir)/doc_path.txt"
 }
 
@@ -2020,6 +2040,42 @@ add_to_path_problem() {
             ;;
     esac
     return 0
+}
+
+# Succeed when a payload source is itself a symbolic link.
+#
+# A package cannot carry such a source as a link. Every add path runs the
+# source through canonical_path, which stores what the link points to, and ditto
+# follows a link when staging - so a link from usr/local/bin into libexec
+# shipped as a second copy of the binary, with nothing said. A link whose
+# target does not exist yet failed later, as "is not there". Either way the
+# answer is a postinstall script that makes the link, so the source is refused
+# up front with that advice. Found packaging actionui-mcp, 2026-09-24.
+#
+# Trailing slashes are dropped first: "[ -L link/ ]" follows the link and says
+# no. Only the last component is asked about - a link higher up the path, such
+# as an artifacts folder that is itself a link, is ordinary and fine, and so are
+# the links inside a bundle, which ditto copies as links.
+is_symlink_source() {
+    local path="$1"
+    while :; do
+        case "$path" in
+            */) [ "$path" != "/" ] || break; path="${path%/}" ;;
+            *) break ;;
+        esac
+    done
+    [ -n "$path" ] && [ -L "$path" ]
+}
+
+# The advice that goes with refusing a symlink source, for the CLI and the log.
+symlink_source_advice() {
+    local path="$1"
+    local target="$(canonical_path "$path")"
+    if [ -n "$target" ]; then
+        printf '%s is a symbolic link. A package carries a copy of what a link points to, not the link: add %s to ship that file, or make the link in a postinstall script' "$path" "$target"
+    else
+        printf '%s is a symbolic link to something that is not there. A package cannot carry the link itself: make it in a postinstall script' "$path"
+    fi
 }
 
 # Canonicalize a path, or print it unchanged when it cannot be resolved (it

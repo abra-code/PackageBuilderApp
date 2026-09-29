@@ -126,19 +126,7 @@ require_document() {
         printf 'pkgbuilder: no such document: %s\n' "$document_path" >&2
         return 1
     fi
-    # Recorded absolute. Every relative path in the document is resolved
-    # against the document's folder, and a relative folder - "Packaging" for
-    # "Packaging/agent-vm.pkgbld" - made that resolution happen twice: the
-    # artifacts folder came out as "Packaging/../.build", and each source under
-    # it as "Packaging/Packaging/../.build/...", which does not exist. Not
-    # canonicalized, so a document reached through a symlink keeps its own
-    # folder, as it does in the window.
-    local loaded_path="$document_path"
-    case "$loaded_path" in
-        /*) ;;
-        *) loaded_path="$PWD/$loaded_path" ;;
-    esac
-    if ! load_document "$loaded_path"; then
+    if ! load_document "$document_path"; then
         printf 'pkgbuilder: %s is not a readable PackageBuilder project.\n' "$document_path" >&2
         printf '  Run "pkgbuilder validate %s" to find out what is wrong with it.\n' "$document_path" >&2
         return 1
@@ -465,6 +453,13 @@ cmd_add_payload() {
     # Every payload accessor below reads the current component, so selecting it
     # once here is the whole of what --component has to do.
     PB_COMPONENT_INDEX=$((component - 1))
+
+    # Before canonical_path, which would quietly store what the link points to
+    # (is_symlink_source says why a link is refused).
+    if is_symlink_source "$artifact"; then
+        printf 'pkgbuilder: %s\n' "$(symlink_source_advice "$artifact")" >&2
+        return 1
+    fi
 
     # An absolute path, so store_path can decide whether it sits under the
     # artifacts folder or the document's own. canonical_path resolves what is

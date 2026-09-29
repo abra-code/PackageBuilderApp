@@ -33,6 +33,12 @@ the exit code is `0` ok / `2` warnings / `1` errors. The full reference is
 `Contents/Resources/Agents/README.md` in the bundle - read it when you need a flag
 you do not see here.
 
+Inside an agent's command sandbox, run `pkgbuilder`, and any script it exported,
+with the sandbox off. The OMC tools `pkgbuilder` drives write scratch files the
+sandbox refuses, and the first write fails with "could not save the result plist
+file" and "the document was not written". `pkgbuild` itself is refused the same
+way, in a build and in an exported script.
+
 **Read the schema before writing a document by hand.** It is a file you can open
 directly, beside the tool:
 
@@ -114,8 +120,9 @@ run there - before the payload verify, which is the part worth knowing about.
    does not accept the other.
 9. **Nothing reaches the output folder under the document's package name unless
    it is signed and signature-checked** (design 8.3). An unsigned build from the
-   CLI or from an exported script does land there, but as `<name>-unsigned.pkg`,
-   so a test package can never be mistaken for a release. In the window an
+   CLI or from an exported script does land there, but with `-unsigned` before
+   the extension (`widget_2.0-unsigned.pkg`), so a test package can never be
+   mistaken for a release. In the window an
    unsigned build is an intermediate and stays in the scratch directory.
 10. **One component covers more than it looks like it does.** With
     `INSTALL_LOCATION` `/` and absolute destinations, a single component already
@@ -127,6 +134,12 @@ run there - before the payload verify, which is the part worth knowing about.
     one choice id and one package file name, so one would quietly overwrite the
     other. Rule 2 also holds across components: two of them may not install to
     the same path, or one inside another.
+12. **A payload source may not be a symbolic link.** A package carries a copy
+    of what a link points to, not the link, so a link from `/usr/local/bin` into
+    `libexec` would ship a second copy of the binary. `add-payload`, the window
+    and the build all refuse one. To put a tool on the `PATH` that lives in a
+    folder with its resources, make the link in a postinstall script - see
+    "A link on the PATH" below.
 
 ## The verify block is the point
 
@@ -149,7 +162,8 @@ accepts only that one.
 `VERSION_FLAG` is opt-in per entry because a payload may legitimately carry a 1.0
 helper beside a 2.2 app. When set, the artifact's reported version must equal
 `PROJECT.VERSION`. A bundle answers from its `Info.plist`; a bare executable is run
-with the flag.
+with the flag, and only the first line of its **stdout** is read: a tool that
+prints its version to stderr reports none.
 
 Set these with `pkgbuilder set`, which validates the value:
 
@@ -254,6 +268,44 @@ It needs `DOMAIN` `user`, the component's `INSTALL_LOCATION` `~`, and no
 `POSTINSTALL` of its own. A component with no payload is otherwise refused unless
 it has a `PREINSTALL` or `POSTINSTALL`; one that only runs scripts is built with
 `pkgbuild --nopayload` and leaves no receipt.
+
+## A link on the PATH
+
+A tool that reads resource bundles next to it installs as a folder, such as
+`/usr/local/libexec/widget/`, and a link `/usr/local/bin/widget` puts it on the
+`PATH`. The link cannot be a payload item (rule 12). Make it in a postinstall
+script instead, kept beside the document:
+
+```sh
+#!/bin/sh
+# postinstall - link the tool onto the PATH. $3 is the volume being installed on.
+bin_dir="$3/usr/local/bin"
+link="$bin_dir/widget"
+/bin/mkdir -p "$bin_dir" || exit 1
+if [ -e "$link" ] && [ ! -L "$link" ]; then
+    printf 'Leaving %s alone: it is a real file, not a link\n' "$link" >&2
+    exit 0
+fi
+/bin/ln -sfn ../libexec/widget/widget "$link"
+```
+
+```sh
+"$PB" set "$DOC" /COMPONENTS/0/POSTINSTALL '${PROJECT_DIR}/scripts/postinstall'
+```
+
+- Use `"$3"`, never a bare `/usr/local/bin`: the user may install on another
+  volume.
+- `/usr/local/bin` does not exist on every Mac, so create it.
+- Do not replace a real file someone else put there. A stale link from an
+  earlier version is replaced, which is what `-sfn` is for.
+- The target is relative, so the link still works on another volume.
+- Installer does not record the link in the package receipt, so
+  `pkgutil --files` does not list it. An uninstall has to remove it by name.
+- In a package that installs for the user, the link goes in the home folder,
+  such as `~/.local/bin`, and the script finds that folder from `"$2"`: where
+  Installer put the component, which is the home folder itself when
+  `INSTALL_LOCATION` is `~`. To also put that folder on the user's `PATH`, use
+  `ADD_TO_PATH` (see Installing for the user).
 
 ## Other things it does
 

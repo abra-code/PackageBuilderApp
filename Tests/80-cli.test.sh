@@ -853,6 +853,105 @@ check "the only one is refused"  "1"                          "$?"
 check "and says why"             "1"                          "$(/usr/bin/grep -c 'a project needs one component' "$mc/last.txt" | /usr/bin/tr -d ' ')"
 check "and it is still there"    "1"                          "$(pl get count "$mc/Two.pkgbld" /COMPONENTS)"
 
+section "157. a relative document path from another folder resolves once"
+# Typed from the folder above, "installer/R.pkgbld" gave document_dir the
+# relative "installer", ARTIFACTS_DIR "artifacts" became "installer/artifacts",
+# and resolve_stored_path then put document_dir in front a second time:
+# "installer/installer/artifacts/tool is not there". The same happened to
+# OUTPUT_DIR and to ${PROJECT_DIR} resources. Found packaging actionui-mcp,
+# 2026-09-24. Every command that takes a document is run from the parent, with
+# a relative artifacts folder, a relative output folder and a ${PROJECT_DIR}
+# readme, so each resolution rule is exercised.
+rel="$OMCTEST_WORK/cli/rel"
+/bin/rm -rf "$rel"
+/bin/mkdir -p "$rel/installer/artifacts" "$rel/installer/resources"
+/bin/cp /bin/echo "$rel/installer/artifacts/reltool"
+printf '{\\rtf1\\ansi readme}\n' > "$rel/installer/resources/readme.rtf"
+( CDPATH= cd -- "$rel" && pbcli new installer/R.pkgbld --name reltool --identifier com.example.pkg.reltool \
+    --version 1.0 --min-os 10.15 --no-signing ) >/dev/null 2>&1
+check "new took a relative path" "yes"                        "$([ -f "$rel/installer/R.pkgbld" ] && echo yes || echo no)"
+( CDPATH= cd -- "$rel" && pbcli set installer/R.pkgbld /PROJECT/ARTIFACTS_DIR artifacts ) >/dev/null 2>&1
+( CDPATH= cd -- "$rel" && pbcli set installer/R.pkgbld /PROJECT/OUTPUT_DIR dist ) >/dev/null 2>&1
+( CDPATH= cd -- "$rel" && pbcli set installer/R.pkgbld /DISTRIBUTION/RESOURCES/README '${PROJECT_DIR}/resources/readme.rtf' ) >/dev/null 2>&1
+( CDPATH= cd -- "$rel" && pbcli add-payload installer/R.pkgbld installer/artifacts/reltool \
+    --destination /usr/local/bin/reltool --no-verify ) >/dev/null 2>&1
+check "the source is tokenized"  '${ARTIFACTS_DIR}/reltool'   "$(field_of "$rel/installer/R.pkgbld" /COMPONENTS/0/PAYLOAD/0/SOURCE)"
+( CDPATH= cd -- "$rel" && pbcli validate installer/R.pkgbld ) >/dev/null 2>"$rel/validate.txt"
+check "validate is clean"        "0"                          "$?"
+check "and doubles no folder"    "0"                          "$(/usr/bin/grep -c 'installer/installer' "$rel/validate.txt" | /usr/bin/tr -d ' ')"
+( CDPATH= cd -- "$rel" && pbcli build installer/R.pkgbld ) >"$rel/build-out.txt" 2>"$rel/build.txt"
+check "build succeeds"           "0"                          "$?"
+# The kept test package carries the document's package name with -unsigned
+# before the extension, the same name an exported script lands - it was
+# "reltool-unsigned.pkg" here and "reltool_1.0-unsigned.pkg" there.
+check "unsigned lands by package name" "yes"                  "$([ -f "$rel/installer/dist/reltool_1.0-unsigned.pkg" ] && echo yes || echo no)"
+check "and nothing by the bare name" "no"                     "$([ -f "$rel/installer/dist/reltool-unsigned.pkg" ] && echo yes || echo no)"
+/bin/rm -rf "$rel/expand"
+/usr/sbin/pkgutil --expand "$rel/installer/dist/reltool_1.0-unsigned.pkg" "$rel/expand" >/dev/null 2>&1
+check "the readme came along"    "yes"                        "$([ -f "$rel/expand/Resources/readme.rtf" ] && echo yes || echo no)"
+( CDPATH= cd -- "$rel" && pbcli export-script installer/R.pkgbld installer/makepkg.sh ) >/dev/null 2>&1
+check "export-script took it too" "yes"                       "$([ -f "$rel/installer/makepkg.sh" ] && echo yes || echo no)"
+check "and froze the real artifacts folder" "1"               "$(/usr/bin/grep -c "^artifacts_dir='$(real_path "$rel/installer/artifacts")'\$" "$rel/installer/makepkg.sh" | /usr/bin/tr -d ' ')"
+( CDPATH= cd -- "$rel" && /bin/sh installer/makepkg.sh --unsigned ) >/dev/null 2>"$rel/export-run.txt"
+check "and the script builds"    "0"                          "$?"
+
+section "159. a symbolic link is refused as a source by the CLI, the build and the export"
+# The CLI half of section 59 in 30-payload, plus the document that names a link
+# anyway - edited by hand, or the file became a link after it was added. The
+# build and an exported script refuse it before ditto can stage a copy of what
+# it points to.
+lk="$OMCTEST_WORK/cli/links"
+/bin/rm -rf "$lk"
+/bin/mkdir -p "$lk/build/libexec/tool" "$lk/build/bin" "$lk/dist"
+/bin/cp /bin/echo "$lk/build/libexec/tool/tool"
+/bin/ln -s ../libexec/tool/tool "$lk/build/bin/tool"
+/bin/ln -s ../libexec/later/later "$lk/build/bin/later"
+pbcli new "$lk/L.pkgbld" --name linked --identifier com.example.pkg.linked --version 1.0 \
+    --artifacts-dir "$lk/build" --output-dir "$lk/dist" --no-signing >/dev/null 2>&1
+pbcli add-payload "$lk/L.pkgbld" "$lk/build/bin/tool" --no-verify >/dev/null 2>"$lk/add.txt"
+check "add-payload refuses a link" "1"                        "$?"
+check "and names what it points to" "1"                       "$(/usr/bin/grep -c "add $(real_path "$lk/build/libexec/tool")/tool to ship that file" "$lk/add.txt" | /usr/bin/tr -d ' ')"
+pbcli add-payload "$lk/L.pkgbld" "$lk/build/bin/later" --no-verify >/dev/null 2>"$lk/add2.txt"
+check "a dangling link too"      "1"                          "$?"
+check "as a link, not as missing" "1"                         "$(/usr/bin/grep -c 'is a symbolic link to something that is not there' "$lk/add2.txt" | /usr/bin/tr -d ' ')"
+check "with a trailing slash too" "1"                         "$(pbcli add-payload "$lk/L.pkgbld" "$lk/build/bin/tool/" --no-verify >/dev/null 2>&1; echo $?)"
+check "nothing was added"        "0"                          "$(pl get count "$lk/L.pkgbld" /COMPONENTS/0/PAYLOAD 2>/dev/null)"
+pbcli add-payload "$lk/L.pkgbld" "$lk/build/libexec/tool/tool" --destination /usr/local/libexec/tool/tool --no-verify >/dev/null 2>&1
+check "the real file is accepted" "0"                         "$?"
+pbcli export-script "$lk/L.pkgbld" "$lk/makepkg.sh" >/dev/null 2>&1
+pbcli set "$lk/L.pkgbld" /COMPONENTS/0/PAYLOAD/0/SOURCE '${ARTIFACTS_DIR}/bin/tool' >/dev/null 2>&1
+pbcli validate "$lk/L.pkgbld" >/dev/null 2>"$lk/validate.txt"
+check "validate refuses a named link" "1"                     "$(/usr/bin/grep -c 'is a symbolic link - point the source at what it links to' "$lk/validate.txt" | /usr/bin/tr -d ' ')"
+pbcli build "$lk/L.pkgbld" >/dev/null 2>"$lk/build.txt"
+check "and so does the build"    "1"                          "$?"
+check "and nothing landed"       "0"                          "$(/bin/ls -A "$lk/dist" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+# The script was exported while the source was the real file; the artifacts
+# folder is swapped under it for one where that path is a link, which is the
+# case a CI machine meets when its build step makes the link.
+/bin/mv "$lk/build/libexec/tool/tool" "$lk/build/libexec/tool/tool.real"
+/bin/ln -s tool.real "$lk/build/libexec/tool/tool"
+/bin/sh "$lk/makepkg.sh" --unsigned >/dev/null 2>"$lk/export.txt"
+check "the exported script refuses it" "1"                    "$?"
+check "and says so"              "1"                          "$(/usr/bin/grep -c 'tool is a symbolic link' "$lk/export.txt" | /usr/bin/tr -d ' ')"
+check "and nothing landed there either" "0"                   "$(/bin/ls -A "$lk/dist" | /usr/bin/wc -l | /usr/bin/tr -d ' ')"
+
+section "160. the CLI does not reach for a window it does not have"
+# refresh_window_title lived in the shared library, outside the presentation
+# interface, so every CLI command that loaded or saved a document ran the real
+# omc_dialog_control against its synthetic window. That left an
+# OMC/CLI-<pid>.plist in the temp folder per run, and inside an agent's sandbox
+# printed an error on every command. The CLI uses the real tool from the bundle,
+# not the harness stub, so the evidence is the file it would leave: each run
+# gets a temp folder of its own, and none may appear there.
+cw="$OMCTEST_WORK/cli/window"
+/bin/rm -rf "$cw"
+/bin/mkdir -p "$cw/tmp"
+TMPDIR="$cw/tmp" pbcli new "$cw/W.pkgbld" --name w --identifier com.example.pkg.w --version 1.0 --no-signing >/dev/null 2>&1
+check "new succeeded"            "0"                          "$?"
+TMPDIR="$cw/tmp" pbcli set "$cw/W.pkgbld" /DISTRIBUTION/TITLE Win >/dev/null 2>&1
+TMPDIR="$cw/tmp" pbcli validate "$cw/W.pkgbld" >/dev/null 2>&1
+check "no window file was left"  "0"                          "$(/bin/ls "$cw/tmp/OMC" 2>/dev/null | /usr/bin/grep -c '^CLI-' | /usr/bin/tr -d ' ')"
+
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
 

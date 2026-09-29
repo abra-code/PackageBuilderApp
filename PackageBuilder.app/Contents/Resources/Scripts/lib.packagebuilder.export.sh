@@ -15,8 +15,16 @@
 #
 # The emitted script targets macOS /bin/sh and uses only tools present on every
 # Mac: pkgbuild, productbuild, productsign, pkgutil, codesign, lipo, ditto,
-# PlistBuddy. Not plister - that is an OMC tool, and the whole point is having
-# no dependency on this app.
+# plutil. Not plister - that is an OMC tool, and the whole point is having no
+# dependency on this app.
+#
+# plutil and not PlistBuddy, on purpose. PlistBuddy's "Set" fails on a key that
+# is not there, and pkgbuild --analyze leaves BundleIsRelocatable out for a
+# bundle it does not consider relocatable - a SwiftPM resource bundle, for one -
+# so every export of such a payload failed while the in-app build of the same
+# document, whose plister "set" creates the key, succeeded. plutil's "-replace"
+# creates a missing key the same way. Its "-extract ... raw" needs macOS 12,
+# which is below what the app itself requires.
 #
 # POSIX sh only, here and in what is emitted. Validate with "sh -n".
 
@@ -344,7 +352,7 @@ info_plist_of() {
 executable_of() {
     if [ -f "$1" ]; then printf '%s' "$1"; return 0; fi
     exe_info="$(info_plist_of "$1")" || return 1
-    exe_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$exe_info" 2>/dev/null)" || exe_name=""
+    exe_name="$(/usr/bin/plutil -extract CFBundleExecutable raw -expect string "$exe_info" 2>/dev/null)" || exe_name=""
     if [ -z "$exe_name" ]; then
         exe_name="$(/usr/bin/basename "$1")"
         exe_name="${exe_name%.*}"
@@ -402,6 +410,12 @@ verify_entry() {
     v_source="$1"; v_archs="$2"; v_signed_by="$3"
     v_hardened="$4"; v_timestamp="$5"; v_version_flag="$6"
     v_label="$(/usr/bin/basename "$v_source")"
+    # The app's rule, transcribed: a link would be staged as a copy of what it
+    # points to, so it is refused before -e, which follows it. Every trailing
+    # slash is dropped, as the app does: "[ -L link/ ]" follows the link.
+    v_link="$v_source"
+    while [ "$v_link" != "/" ] && [ "${v_link%/}" != "$v_link" ]; do v_link="${v_link%/}"; done
+    [ ! -L "$v_link" ] || fail "$v_label is a symbolic link: $v_source - point the source at what it links to, or make the link in a postinstall script"
     [ -e "$v_source" ] || fail "$v_label is not on disk: $v_source"
     [ -r "$v_source" ] || fail "$v_label cannot be read: $v_source"
 
@@ -462,7 +476,7 @@ verify_entry() {
         v_info="$(info_plist_of "$v_source")" || v_info=""
         if [ -n "$v_info" ]; then
             # A bundle answers from its Info.plist rather than by being run.
-            v_reported="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$v_info" 2>/dev/null)" || v_reported=""
+            v_reported="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -expect string "$v_info" 2>/dev/null)" || v_reported=""
         else
             v_line="$("$v_source" "$v_version_flag" </dev/null 2>/dev/null | /usr/bin/head -n 1)" || v_line=""
             v_reported="$(printf '%s' "$v_line" | /usr/bin/grep -oE '[0-9]+(\.[0-9]+)+([0-9A-Za-z.+_-]*)?' 2>/dev/null | /usr/bin/head -n 1)" || v_reported=""
@@ -841,33 +855,40 @@ PB_PKGBUILD_NOPAYLOAD
 component_plist="$staging_dir/component.plist"
 /usr/bin/pkgbuild --analyze --root "$payload_root" "$component_plist" >/dev/null 2>&1 \
     || fail "pkgbuild --analyze failed"
-# A non-zero PlistBuddy answers two different questions the same way: "that key
-# is not there" and "this file could not be read". Treating both as "no bundles"
-# would drop --component-plist and ship pkgbuild's default
-# BundleIsRelocatable=true - the exact hazard this block exists to prevent, with
-# nothing printed. So the file is proved readable first, and only then is an
-# absent :0 taken to mean there are no bundles.
-/usr/libexec/PlistBuddy -c 'Print' "$component_plist" >/dev/null 2>&1
-plist_readable=$?
-if [ "$plist_readable" -ne 0 ]; then
+# Treating an unreadable plist as "no bundles" would drop --component-plist and
+# ship pkgbuild's default BundleIsRelocatable=true - the exact hazard this block
+# exists to prevent, with nothing printed. And "readable" is not enough: plutil
+# reads a file of garbage as an old-style plist holding one bare string. So the
+# file is converted to XML, and the root must be an array, which is what
+# --analyze always writes - "<array/>" when there are no bundles. Only then is a
+# missing entry 0 taken to mean there are no bundles. The root element is the
+# only one at column 0; everything inside it is indented.
+component_xml="$staging_dir/component.xml"
+/usr/bin/plutil -convert xml1 -o "$component_xml" "$component_plist" >/dev/null 2>&1
+converted=$?
+if [ "$converted" -ne 0 ]; then
     fail "Could not read the component plist that pkgbuild --analyze wrote: $component_plist"
 fi
+/usr/bin/grep -q '^<array' "$component_xml"
+is_array=$?
+if [ "$is_array" -ne 0 ]; then
+    fail "The component plist that pkgbuild --analyze wrote is not an array: $component_plist"
+fi
 
-/usr/libexec/PlistBuddy -c 'Print :0' "$component_plist" >/dev/null 2>&1
-has_bundles=$?
-if [ "$has_bundles" -eq 0 ]; then
-    reloc_index=0
-    while true; do
-        /usr/libexec/PlistBuddy -c "Print :$reloc_index" "$component_plist" >/dev/null 2>&1
-        entry_present=$?
-        if [ "$entry_present" -ne 0 ]; then
-            break
-        fi
-        /usr/libexec/PlistBuddy -c "Set :$reloc_index:BundleIsRelocatable false" "$component_plist" \
-            || fail "Could not mark bundle $reloc_index non-relocatable"
-        reloc_index=$((reloc_index + 1))
-    done
-else
+reloc_index=0
+while true; do
+    /usr/bin/plutil -extract "$reloc_index" xml1 -o /dev/null "$component_plist" >/dev/null 2>&1
+    entry_present=$?
+    if [ "$entry_present" -ne 0 ]; then
+        break
+    fi
+    # "-replace" creates the key when --analyze left it out, which it does for
+    # a bundle it does not consider relocatable in the first place.
+    /usr/bin/plutil -replace "$reloc_index.BundleIsRelocatable" -bool NO "$component_plist" \
+        || fail "Could not mark bundle $reloc_index non-relocatable"
+    reloc_index=$((reloc_index + 1))
+done
+if [ "$reloc_index" -eq 0 ]; then
     component_plist=""
 fi
 PB_RELOCATE
