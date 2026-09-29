@@ -39,13 +39,38 @@ pseudo-JSON giving every key with its type, default and constraint, which
   `/usr/local/bin`, `/Applications` and `/Library/Frameworks`.
 - Each payload entry - `SOURCE`, `DESTINATION`, `MODE`, and a `VERIFY` block
   saying what must be true of that artifact.
-- `DISTRIBUTION` - installer presentation and host architectures.
+- `DISTRIBUTION` - installer presentation, host architectures, and `DOMAIN`: who
+  the package installs for (see below).
 - `SIGNING` - whether to sign, and with which Developer ID Installer identity.
 
 Paths may use `${ARTIFACTS_DIR}`, `${PROJECT_DIR}`, `${NAME}`, `${VERSION}` and
 `${DATE}`. A path under the artifacts folder is stored as `${ARTIFACTS_DIR}/...`
 automatically, which is what makes a document portable to the machine that builds
 the artifacts.
+
+### Installing for the user
+
+`DISTRIBUTION.DOMAIN` is `"system"` by default: the package installs onto the Mac's
+disk, and nothing about it changes. Set it to `"user"` and the package installs into
+the home folder of whoever runs the installer, with no administrator password - the
+shape for a command-line tool that updates often, such as one in `~/.local/bin`.
+
+- Every `DESTINATION` and `INSTALL_LOCATION` is written `~/...`
+  (`"~/.local/bin/tool"`), and in a system package none is. The build and
+  `validate` refuse a path of the wrong kind rather than guess where it belongs.
+- Every `AUTH` is `"User"`. A component still saying `"Root"` is refused; the
+  Distribution carries `auth="none"` for all of them.
+- The Distribution gains `<domains enable_anywhere="false"
+  enable_currentUserHome="true" enable_localSystem="false"/>`. `installer -dominfo
+  -pkg <pkg>` prints `CurrentUserHomeDirectory` for such a package, and nothing for
+  a system one.
+- `INSTALL_LOCATION` accepts tokens, so a versioned layout such as
+  `~/.local/share/tool/versions/${VERSION}` follows the version.
+
+```sh
+DOC=$(pkgbuilder new ~/tool --name tool --identifier com.example.pkg.tool --domain user)
+pkgbuilder add-payload "$DOC" build/tool        # guessed as ~/.local/bin/tool
+```
 
 ## Commands
 
@@ -55,11 +80,12 @@ the artifacts.
 pkgbuilder new <doc.pkgbld> --name <N> --identifier <ID>
                [--version <V>] [--min-os <V>] [--artifacts-dir <D>]
                [--output-dir <D>] [--install-location <L>] [--title <T>]
-               [--identity <I>] [--no-signing] [--force]
+               [--domain system|user] [--identity <I>] [--no-signing] [--force]
 ```
 
 `--name` and `--identifier` are required; everything else has the same default the
-app's New Document has. The artifacts and output folders are stored relative to the
+app's New Document has. `--domain user` starts a package that installs for the
+user: the first component gets `INSTALL_LOCATION` `~` and `AUTH` `User`. The artifacts and output folders are stored relative to the
 document when they sit below it, exactly as the window stores them.
 
 A destination with no extension gets `.pkgbld`; one you spelled yourself is kept
@@ -143,7 +169,11 @@ pkgbuilder get <doc> [<keypath>]
 `set` knows the type of every key the app reads and refuses anything else, which is
 the point of it: writing a string where the app reads a boolean produces a document
 that loads, displays correctly, and behaves as though the flag were off. It also
-rejects out-of-range enumerations (`AUTH`, `CUSTOMIZE`) and architecture names.
+rejects out-of-range enumerations (`AUTH`, `CUSTOMIZE`, `DOMAIN`) and architecture
+names. Setting `/DISTRIBUTION/DOMAIN` does what the window's Installs for menu does:
+every component still at the other domain's defaults moves to this one's (`/` and
+`Root`, or `~` and `User`), and a count of the destinations that no longer fit goes
+to stderr.
 
 The two architecture arrays take a comma-separated value:
 
@@ -233,9 +263,11 @@ fails on a machine whose artifacts are ad-hoc signed.
 pkgbuilder inspect <package.pkg>
 ```
 
-Expands the package and prints its `Distribution`, each component's `PackageInfo`,
-the payload file list, and the signature check. Useful for confirming that
-`overwrite-permissions` and `relocatable` really came out `false`.
+Expands the package and prints who it installs for (`Installs for: system`, `user`
+or `both`), its `Distribution`, each component's `PackageInfo`, the payload file
+list, and the signature check. Useful for confirming that `overwrite-permissions`
+and `relocatable` really came out `false`. A per-user package's install locations
+and payload paths are relative to the home folder.
 
 ### export-script - the standalone packaging script
 

@@ -26,6 +26,7 @@
   ],
   "DISTRIBUTION": {
     "TITLE": "",
+    "DOMAIN": "system",
     "HOST_ARCHITECTURES": [
       "arm64",
       "x86_64"

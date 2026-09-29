@@ -193,6 +193,20 @@ if [ "$vid" = "$IDENTITY_PICKER_ID" ]; then
     fi
 fi
 
+# Who the package installs for. Only the two tags are a gesture; anything else
+# is a picker being written to, and writing it would turn a per-user document
+# into a system one, since install_domain reads every other value as "system".
+if [ "$vid" = "$DOMAIN_ID" ]; then
+    case "$value" in
+        system|user) ;;
+        *)
+            dbg "field.changed: domain picker delivered [$value]"
+            model_unlock
+            exit 0
+            ;;
+    esac
+fi
+
 keypath="$(field_key_path "$vid")"
 if [ -z "$keypath" ]; then
     dbg "field.changed: view $vid is not in the field map"
@@ -253,6 +267,27 @@ fi
 # next time a component is selected.
 if [ "$vid" = "$CUSTOMIZE_ID" ]; then
     set_value "$COMPONENT_CHOICE_NOTE_ID" "$(choice_list_note)"
+fi
+
+# A new domain moves every component still at the other domain's defaults - an
+# install location of "/" becomes "~", AUTH Root becomes User, and back - so the
+# common case is one gesture. Destinations are the user's to rewrite: where
+# "/usr/local/bin/tool" belongs in a home folder is not something to guess, so
+# the status line counts the ones that no longer fit and the build names them.
+if [ "$vid" = "$DOMAIN_ID" ]; then
+    if apply_domain_defaults "$value"; then
+        push_component_to_window
+        mismatches="$(count_domain_mismatches)"
+        if [ "$mismatches" -gt 0 ]; then
+            if [ "$value" = "user" ]; then
+                set_status "$mismatches destination(s) still name system paths - a package that installs for the user needs ~/ paths"
+            else
+                set_status "$mismatches destination(s) still start with ~/ - a package for the whole Mac needs absolute paths"
+            fi
+        fi
+    else
+        set_status "Could not move the components to the new install defaults"
+    fi
 fi
 
 # Two components may not share an identifier, nor have identifiers that differ

@@ -136,6 +136,7 @@ write_packaging_script() {
 
     # Set once per iteration of the component loops below.
     local component_index identifier install_location auth choice_id
+    local domain_problem
     local overwrite relocatable preinstall postinstall entry_count
     local component_root component_basename component_label
     local component_own_version version_expression
@@ -193,6 +194,12 @@ write_packaging_script() {
         printf '%s\n' '# in the output folder. It ends at a signed package: notarization is a'
         printf '%s\n' '# separate step, and the command to run is printed at the end.'
         printf '#\n'
+        if [ "$(install_domain)" = "user" ]; then
+            printf '%s\n' '# The package installs for the user who runs it, into their home folder,'
+            printf '%s\n' '# with no administrator password. Its install locations and destinations'
+            printf '%s\n' '# below are relative to that home folder: "/.local/bin" is ~/.local/bin.'
+            printf '#\n'
+        fi
         printf '%s\n' '# Usage: sh '"$(comment_safe "$(/usr/bin/basename "$script_path")")"' [options]'
         printf '#   --version <v>        Package version. Default: %s\n' "$(comment_safe "$version")"
         printf '#   --artifacts-dir <d>  Where the payload artifacts are. Default: %s\n' "$(comment_safe "${artifacts:-(not set - required)}")"
@@ -607,6 +614,26 @@ stage_entry() {
 PB_HELPERS
         printf '\n'
 
+        # --- What the app refuses about the domain -----------------------------
+        # The same two refusals check_distribution_preconditions makes, written
+        # into the script because this generator runs no preconditions. Without
+        # them a misspelled domain exported a system package, and a Root
+        # component under "user" was quietly given auth="none".
+        local stated_domain="$(model_get /DISTRIBUTION/DOMAIN)"
+        case "$stated_domain" in
+            ''|system|user) ;;
+            *) printf 'fail %s\n' "$(sh_quote "Installs for (DISTRIBUTION/DOMAIN) is \"$stated_domain\" - it must be system or user")" ;;
+        esac
+        if [ "$stated_domain" = "user" ]; then
+            component_index=0
+            while [ "$component_index" -lt "$total_components" ]; do
+                if [ "$(component_get AUTH "$component_index")" = "Root" ]; then
+                    printf 'fail %s\n' "$(sh_quote "Component $((component_index + 1)): Authentication is Root, but a package that installs for the user cannot ask for an administrator password - set it to User")"
+                fi
+                component_index=$((component_index + 1))
+            done
+        fi
+
         # --- One block per component ------------------------------------------
         # Unrolled here at generation time, the same way the payload entries
         # are. The emitted script has no loop of its own, so what it does to
@@ -615,8 +642,12 @@ PB_HELPERS
         component_index=0
         while [ "$component_index" -lt "$total_components" ]; do
         identifier="$(component_get IDENTIFIER "$component_index")"
+        # As the document writes it, domain root standing in for empty. It is
+        # emitted in the form pkgbuild takes - "~/x" becomes "/x" for a package
+        # that installs for the user - with its tokens left for the script to
+        # expand, so --version moves a versioned install location too.
         install_location="$(component_get INSTALL_LOCATION "$component_index")"
-        [ -n "$install_location" ] || install_location="/"
+        [ -n "$install_location" ] || install_location="$(domain_root)"
         overwrite="$(bool_str "$(component_get_bool OVERWRITE_PERMISSIONS "$component_index")")"
         relocatable="$(component_get_bool RELOCATABLE "$component_index")"
         # The stored values, not the resolved ones: these go through
@@ -666,7 +697,28 @@ PB_HELPERS
         else
             printf 'component_version="$package_version"\n'
         fi
-        printf 'install_location=%s\n' "$(sh_quote "$install_location")"
+        # A location that does not fit the domain is refused in the script, the
+        # way the app refuses it, rather than exported as a build of the wrong
+        # thing: this generator runs no preconditions of its own.
+        domain_problem="$(domain_path_problem "$(expand_tokens "$install_location")" "Install location")"
+        if [ -n "$domain_problem" ]; then
+            printf 'fail %s\n' "$(sh_quote "$domain_problem")"
+        fi
+        printf 'install_location=%s\n' "$(emit_runtime_text "$(target_path "$install_location")")"
+        # pkgbuild would take a ".." in the location wherever it led - out of
+        # the home folder, for a per-user package. A literal one is judged here,
+        # since the app's own refusal needs a build this export does not run;
+        # one carrying a token is text this script has not seen until it runs.
+        case "$install_location" in
+            *'${'*)
+                printf '%s\n' 'case "/$install_location/" in */../*) fail "Install location $install_location must not contain \"..\"" ;; esac'
+                ;;
+            *)
+                if path_has_dotdot "$install_location"; then
+                    printf 'fail %s\n' "$(sh_quote "Install location \"$install_location\" must not contain \"..\"")"
+                fi
+                ;;
+        esac
         printf 'overwrite_permissions=%s\n' "$(sh_quote "$overwrite")"
         printf 'payload_root="$staging_dir"/%s\n' "$(sh_quote "$component_root")"
         printf '/bin/mkdir -p "$payload_root" || fail "Could not create the staging directory"\n'
@@ -693,9 +745,18 @@ PB_HELPERS
             # emit_runtime_path: it names a place on the *installed* volume,
             # not a file on the machine running the build, so resolving it
             # against the document's folder would be meaningless.
+            #
+            # Written in the form pkgbuild takes, so the script's own checks
+            # compare it with the install location as they always have. One
+            # that does not fit the domain becomes a refusal instead.
+            stored="$(payload_get "$index" DESTINATION "$component_index")"
+            domain_problem="$(domain_path_problem "$(expand_tokens "$stored")" "Destination")"
+            if [ -n "$domain_problem" ]; then
+                printf 'fail %s\n' "$(sh_quote "Item $((index + 1)): $domain_problem")"
+            fi
             printf 'stage_entry %s %s %s\n' \
                 "$(emit_runtime_path "$(payload_get "$index" SOURCE "$component_index")")" \
-                "$(emit_runtime_text "$(payload_get "$index" DESTINATION "$component_index")")" \
+                "$(emit_runtime_text "$(target_path "$stored")")" \
                 "$(sh_quote "$(payload_get "$index" MODE "$component_index")")"
             index=$((index + 1))
         done
@@ -850,6 +911,11 @@ PB_PATCH
             options_line="$options_line hostArchitectures=\"$(xml_escape "$architectures")\""
         fi
         emit_xml_line "$options_line customize=\"$(xml_escape "$customize")\" require-scripts=\"$require_scripts\"/>"
+        # The same line the app writes, from the same constant, and only when
+        # the package installs for the user.
+        if [ "$(install_domain)" = "user" ]; then
+            emit_xml_line "$DISTRIBUTION_USER_DOMAINS"
+        fi
         if [ -n "$min_os" ]; then
             emit_xml_line '    <volume-check>'
             emit_xml_line '        <allowed-os-versions>'
@@ -909,8 +975,7 @@ PB_PATCH
         component_index=0
         while [ "$component_index" -lt "$total_components" ]; do
             identifier="$(component_get IDENTIFIER "$component_index")"
-            auth="$(component_get AUTH "$component_index")"
-            [ -n "$auth" ] || auth="Root"
+            auth="$(component_pkgref_auth "$component_index")"
             # Not "$component_version": the per-component regions all assign
             # that one variable, so by the time the Distribution is written it
             # holds the LAST component's value. What is chosen here is the

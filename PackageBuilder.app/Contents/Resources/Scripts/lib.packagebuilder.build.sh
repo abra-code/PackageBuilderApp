@@ -247,6 +247,7 @@ check_preconditions() {
     local source destination mode stored_source item_number
     local other_index other_destination
     local folded_destination folded_other probe_root
+    local stored_location domain_problem
 
     precondition_failures=0
 
@@ -274,8 +275,12 @@ check_preconditions() {
     while [ "$component_index" -lt "$total_components" ]; do
     PB_COMPONENT_INDEX="$component_index"
     identifier="$(component_get IDENTIFIER)"
-    install_location="$(component_get INSTALL_LOCATION)"
-    [ -n "$install_location" ] || install_location="/"
+    # As the document writes it, with tokens expanded, so the domain check
+    # below can name what the reader typed; then in the form every other check
+    # compares against.
+    stored_location="$(expand_tokens "$(component_get INSTALL_LOCATION)")"
+    [ -n "$stored_location" ] || stored_location="$(domain_root)"
+    install_location="$(target_path "$stored_location")"
 
     valid_identifier "$identifier" || fail_precondition \
         "$(component_prefix)Identifier \"$identifier\" does not look like a reverse-DNS string, for example com.example.pkg.tool"
@@ -288,10 +293,15 @@ check_preconditions() {
             "$(component_prefix)Version \"$component_own_version\" is not accepted - it must start with a digit and hold only letters, digits, . + _ or -"
     fi
 
-    case "$install_location" in
-        /*) ;;
-        *) fail_precondition "$(component_prefix)Install location \"$install_location\" must be an absolute path" ;;
-    esac
+    domain_problem="$(domain_path_problem "$stored_location" "Install location")"
+    if [ -n "$domain_problem" ]; then
+        fail_precondition "$(component_prefix)$domain_problem"
+    elif path_has_dotdot "$install_location"; then
+        # The install location is now token-expanded, and a token is text the
+        # document does not show at this site. pkgbuild would take a ".." in it
+        # relative to the volume or the home folder and install wherever it led.
+        fail_precondition "$(component_prefix)Install location \"$stored_location\" must not contain \"..\""
+    fi
 
     entry_count="$(payload_count)"
     if [ "$entry_count" = "0" ]; then
@@ -329,10 +339,15 @@ check_preconditions() {
         if [ -z "$destination" ]; then
             fail_precondition "$(component_prefix)Item $item_number has no destination"
         else
-            case "$destination" in
-                /*) ;;
-                *) fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" must be an absolute path" ;;
-            esac
+            # Judged as the document writes it, then converted: a per-user
+            # package's "~/.local/bin/x" is "/.local/bin/x" to pkgbuild, and
+            # every check after this one works in that form. Messages convert
+            # back with shown_target_path, so they name what the reader typed.
+            domain_problem="$(domain_path_problem "$destination" "Destination")"
+            if [ -n "$domain_problem" ]; then
+                fail_precondition "$(component_prefix)Item $item_number: $domain_problem"
+            fi
+            destination="$(target_path "$destination")"
             # A ".." component escapes the staging root, and the install-location
             # test below cannot see it: that test is a literal prefix match, so
             # "/usr/local/../.." passes it while naming the root. Staging is a
@@ -341,7 +356,7 @@ check_preconditions() {
             # anything already there. Refused here, where the message can name
             # the real objection, and again in stage_payload_root.
             if path_has_dotdot "$destination"; then
-                fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" must not contain \"..\""
+                fail_precondition "$(component_prefix)Item $item_number: destination \"$(shown_target_path "$destination")\" must not contain \"..\""
             else
                 # Every test below compares strings, so they are given the one
                 # spelling. "/opt/a/./b" and "/opt/a//b" name a path under
@@ -351,7 +366,7 @@ check_preconditions() {
                 # straight out of the staging root.
                 destination="$(normalize_path "$destination")"
                 if ! path_is_under "$destination" "$install_location"; then
-                    fail_precondition "$(component_prefix)Item $item_number: destination \"$destination\" is not under the install location \"$install_location\""
+                    fail_precondition "$(component_prefix)Item $item_number: destination \"$(shown_target_path "$destination")\" is not under the install location \"$stored_location\""
                 fi
             fi
         fi
@@ -368,7 +383,7 @@ check_preconditions() {
             # Normalized on both sides, for the reason given above: the nesting
             # test is the gate that stops one entry writing into another's
             # directory, and it is a literal prefix comparison.
-            other_destination="$(normalize_path "$(expand_tokens "$(payload_get "$other_index" DESTINATION)")")"
+            other_destination="$(normalize_path "$(target_path "$(expand_tokens "$(payload_get "$other_index" DESTINATION)")")")"
             if [ -n "$destination" ] && [ -n "$other_destination" ]; then
                 # Compared in the spelling the file system will use, not the one
                 # the document holds. The messages still name what the document
@@ -381,11 +396,11 @@ check_preconditions() {
                     folded_other="$other_destination"
                 fi
                 if [ "$folded_destination" = "$folded_other" ]; then
-                    fail_precondition "$(component_prefix)Items $item_number and $((other_index + 1)) install to the same path: $destination"
+                    fail_precondition "$(component_prefix)Items $item_number and $((other_index + 1)) install to the same path: $(shown_target_path "$destination")"
                 elif path_is_under "$folded_other" "$folded_destination"; then
-                    fail_precondition "$(component_prefix)Item $((other_index + 1)) installs inside item $item_number: $other_destination is under $destination"
+                    fail_precondition "$(component_prefix)Item $((other_index + 1)) installs inside item $item_number: $(shown_target_path "$other_destination") is under $(shown_target_path "$destination")"
                 elif path_is_under "$folded_destination" "$folded_other"; then
-                    fail_precondition "$(component_prefix)Item $item_number installs inside item $((other_index + 1)): $destination is under $other_destination"
+                    fail_precondition "$(component_prefix)Item $item_number installs inside item $((other_index + 1)): $(shown_target_path "$destination") is under $(shown_target_path "$other_destination")"
                 fi
             fi
             other_index=$((other_index + 1))
@@ -439,7 +454,7 @@ check_cross_component_destinations() {
                 # a destination may hold any character a path may hold, and a
                 # list in a file or a variable would have to pick a separator
                 # that one of them could be.
-                first_destination="$(normalize_path "$(expand_tokens "$(payload_get "$first_index" DESTINATION "$first")")")"
+                first_destination="$(normalize_path "$(target_path "$(expand_tokens "$(payload_get "$first_index" DESTINATION "$first")")")")"
                 if [ -z "$first_destination" ]; then
                     first_index=$((first_index + 1))
                     continue
@@ -451,7 +466,7 @@ check_cross_component_destinations() {
                 fi
                 second_index=0
                 while [ "$second_index" -lt "$second_count" ]; do
-                    second_destination="$(normalize_path "$(expand_tokens "$(payload_get "$second_index" DESTINATION "$second")")")"
+                    second_destination="$(normalize_path "$(target_path "$(expand_tokens "$(payload_get "$second_index" DESTINATION "$second")")")")"
                     if [ -z "$second_destination" ]; then
                         second_index=$((second_index + 1))
                         continue
@@ -462,11 +477,11 @@ check_cross_component_destinations() {
                         folded_second="$second_destination"
                     fi
                     if [ "$folded_first" = "$folded_second" ]; then
-                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) and component $((second + 1)) item $((second_index + 1)) install to the same path: $first_destination"
+                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) and component $((second + 1)) item $((second_index + 1)) install to the same path: $(shown_target_path "$first_destination")"
                     elif path_is_under "$folded_second" "$folded_first"; then
-                        fail_precondition "Component $((second + 1)) item $((second_index + 1)) installs inside component $((first + 1)) item $((first_index + 1)): $second_destination is under $first_destination"
+                        fail_precondition "Component $((second + 1)) item $((second_index + 1)) installs inside component $((first + 1)) item $((first_index + 1)): $(shown_target_path "$second_destination") is under $(shown_target_path "$first_destination")"
                     elif path_is_under "$folded_first" "$folded_second"; then
-                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) installs inside component $((second + 1)) item $((second_index + 1)): $first_destination is under $second_destination"
+                        fail_precondition "Component $((first + 1)) item $((first_index + 1)) installs inside component $((second + 1)) item $((second_index + 1)): $(shown_target_path "$first_destination") is under $(shown_target_path "$second_destination")"
                     fi
                     second_index=$((second_index + 1))
                 done
@@ -529,6 +544,31 @@ check_distribution_preconditions() {
         never|allow|always) ;;
         *) fail_precondition "Customize must be never, allow or always" ;;
     esac
+
+    # Refused rather than read as the default: install_domain takes anything
+    # but "user" as "system", so "User" or "users" would otherwise build a
+    # package that asks for a password and installs onto the whole Mac.
+    local domain="$(model_get /DISTRIBUTION/DOMAIN)"
+    case "$domain" in
+        ''|system|user) ;;
+        *) fail_precondition "Installs for (DISTRIBUTION/DOMAIN) is \"$domain\" - it must be system or user" ;;
+    esac
+
+    # A per-user package installs as the user who runs it, and Installer has no
+    # administrator to ask for: the pkg-ref's auth is written "none" whatever the
+    # component says. A component still saying Root is contradicting that, so it
+    # is refused with the reason rather than silently overridden.
+    if [ "$domain" = "user" ]; then
+        component_index=0
+        while [ "$component_index" -lt "$total_components" ]; do
+            if [ "$(component_get AUTH "$component_index")" = "Root" ]; then
+                PB_COMPONENT_INDEX="$component_index"
+                fail_precondition "$(component_prefix)Authentication is Root, but a package that installs for the user cannot ask for an administrator password - set it to User"
+            fi
+            component_index=$((component_index + 1))
+        done
+        PB_COMPONENT_INDEX="$saved_component"
+    fi
 
     # The minimum OS goes straight into an os-version attribute, so it has to
     # look like a version rather than merely be escapable: "10.15 or later"
@@ -1028,8 +1068,20 @@ stage_payload_root() {
     local component_index="$1"
     [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
     local root="$(component_scratch root "$component_index")"
-    local install_location="$(component_get INSTALL_LOCATION "$component_index")"
-    [ -n "$install_location" ] || install_location="/"
+    local install_location="$(component_install_location "$component_index")"
+
+    # The same re-check as the destinations get below: the install location is
+    # token-expanded now, and it decides what every staged path is relative to.
+    local stored_location="$(expand_tokens "$(component_get INSTALL_LOCATION "$component_index")")"
+    [ -n "$stored_location" ] || stored_location="$(domain_root)"
+    if [ -n "$(domain_path_problem "$stored_location" "Install location")" ]; then
+        append_log "  ! $(domain_path_problem "$stored_location" "Install location")"
+        return 1
+    fi
+    if path_has_dotdot "$install_location"; then
+        append_log "  ! Install location \"$stored_location\" must not contain \"..\""
+        return 1
+    fi
 
     /bin/rm -rf "$root"
     /bin/mkdir -p "$root" || {
@@ -1047,13 +1099,21 @@ stage_payload_root() {
             return 1
         fi
         destination="$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")"
+        # A destination that does not fit the domain would stage somewhere
+        # nobody meant - a folder literally named "~" in a system package - so
+        # it is refused here too, for the reason the ".." check below gives.
+        if [ -n "$(domain_path_problem "$destination" Destination)" ]; then
+            append_log "  ! Item $((index + 1)): $(domain_path_problem "$destination" Destination)"
+            return 1
+        fi
+        destination="$(target_path "$destination")"
         # Second line of defense. The preconditions already refused this, but
         # they read the model at the start of the run and this re-reads it, so
         # the same reasoning that makes sign_package re-check applies: the one
         # place that turns a destination into a path we write to should not
         # trust that somebody else looked.
         if path_has_dotdot "$destination"; then
-            append_log "  ! Item $((index + 1)): destination \"$destination\" must not contain \"..\""
+            append_log "  ! Item $((index + 1)): destination \"$(shown_target_path "$destination")\" must not contain \"..\""
             return 1
         fi
         # The same normalization the preconditions compared against, so that the
@@ -1086,11 +1146,11 @@ stage_payload_root() {
         real_parent="$(canonical_path "$ancestor")"
         real_root="$(canonical_path "$root")"
         if [ -z "$real_parent" ] || [ -z "$real_root" ]; then
-            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$destination\""
+            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$(shown_target_path "$destination")\""
             return 1
         fi
         if ! path_is_under "$real_parent" "$real_root"; then
-            append_log "  ! Item $((index + 1)): destination \"$destination\" resolves outside the payload root"
+            append_log "  ! Item $((index + 1)): destination \"$(shown_target_path "$destination")\" resolves outside the payload root"
             return 1
         fi
 
@@ -1119,11 +1179,11 @@ stage_payload_root() {
         real_parent="$(canonical_path "$target_parent")"
         real_root="$(canonical_path "$root")"
         if [ -z "$real_parent" ] || [ -z "$real_root" ]; then
-            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$destination\""
+            append_log "  ! Item $((index + 1)): could not resolve the staging path for \"$(shown_target_path "$destination")\""
             return 1
         fi
         if ! path_is_under "$real_parent" "$real_root"; then
-            append_log "  ! Item $((index + 1)): destination \"$destination\" resolves outside the payload root"
+            append_log "  ! Item $((index + 1)): destination \"$(shown_target_path "$destination")\" resolves outside the payload root"
             return 1
         fi
         # And the leaf itself, which the parent check cannot cover: "ditto" of a
@@ -1132,7 +1192,7 @@ stage_payload_root() {
         # already sitting where this entry is about to write was put there by an
         # earlier entry and is never legitimate.
         if [ -L "$target" ]; then
-            append_log "  ! Item $((index + 1)): destination \"$destination\" is a symlink staged by an earlier item"
+            append_log "  ! Item $((index + 1)): destination \"$(shown_target_path "$destination")\" is a symlink staged by an earlier item"
             return 1
         fi
 
@@ -1373,8 +1433,9 @@ build_component_package() {
     local component_dir="$(state_dir)/component"
     local identifier="$(component_get IDENTIFIER "$component_index")"
     local version="$(component_version "$component_index")"
-    local install_location="$(component_get INSTALL_LOCATION "$component_index")"
-    [ -n "$install_location" ] || install_location="/"
+    # For a per-user package this is home-relative - "/.local/share/tool" -
+    # which is how Installer reads it once only the home folder is enabled.
+    local install_location="$(component_install_location "$component_index")"
 
     /bin/mkdir -p "$component_dir" || return 1
     local package_path="$component_dir/$(component_package_basename "$component_index").pkg"
@@ -1571,6 +1632,26 @@ stage_distribution_resources() {
     return 0
 }
 
+# The <domains> line of a package that installs for the user, whole. One string
+# so the app's generator and the exported script cannot write it differently.
+DISTRIBUTION_USER_DOMAINS='    <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>'
+
+# The auth attribute one component's pkg-ref carries. A per-user package is
+# "none" throughout: it runs as the user and there is nobody to authenticate,
+# and check_distribution_preconditions has already refused a component that
+# says Root. A system package carries the component's AUTH as it always has.
+# Arguments: component index
+component_pkgref_auth() {
+    local component_index="$1"
+    if [ "$(install_domain)" = "user" ]; then
+        printf 'none'
+        return 0
+    fi
+    local auth="$(component_get AUTH "$component_index")"
+    [ -n "$auth" ] || auth="Root"
+    printf '%s' "$auth"
+}
+
 # Write the Distribution XML for the document and print its path.
 #
 # The shape follows replay's hand-written Distribution.xml, which is the file
@@ -1585,6 +1666,7 @@ generate_distribution_xml() {
     local customize="$(model_get /DISTRIBUTION/CUSTOMIZE)"
     local architectures="$(host_architectures_attr)"
     local total_components="$(component_count)"
+    local domain="$(install_domain)"
     # Set once per iteration of the resource and component loops below.
     local pair model_key element source base
     local component_index identifier auth choice_id choice_title
@@ -1607,6 +1689,17 @@ generate_distribution_xml() {
         fi
         printf ' customize="%s" require-scripts="%s"/>\n' \
             "$(xml_escape "$customize")" "$require_scripts"
+
+        # Only for a package that installs for the user. Without a <domains>
+        # element Installer installs onto the system volume, which is what
+        # every document written before DOMAIN existed builds - so nothing is
+        # written for "system", for the same reason start_selected is written
+        # only when false. With only the home folder enabled, Installer takes
+        # each component's install location relative to it and asks for no
+        # password.
+        if [ "$domain" = "user" ]; then
+            printf '%s\n' "$DISTRIBUTION_USER_DOMAINS"
+        fi
 
         if [ -n "$min_os" ]; then
             printf '%s\n' '    <volume-check>'
@@ -1670,8 +1763,7 @@ generate_distribution_xml() {
         component_index=0
         while [ "$component_index" -lt "$total_components" ]; do
             identifier="$(component_get IDENTIFIER "$component_index")"
-            auth="$(component_get AUTH "$component_index")"
-            [ -n "$auth" ] || auth="Root"
+            auth="$(component_pkgref_auth "$component_index")"
             # The component's version, not the project's: this is the number
             # macOS records in its receipt database for this component, and two
             # components of one product may legitimately carry different ones.
@@ -2385,6 +2477,41 @@ xml_element_text() {
         | { IFS= read -r raw_text || true; xml_unescape "$raw_text"; }
 }
 
+# Print "user", "system" or "both" for the install domains a Distribution
+# enables. No <domains> element at all is how Installer spells "system", and it
+# is what every package without the element has always meant. "anywhere" -
+# another volume - is not something this app builds, so a package enabling it
+# is described by the other two, and the inspector's own line says the rest.
+# Arguments: Distribution path
+distribution_domain() {
+    local distribution="$1"
+    local home="$(xml_element_attribute "$distribution" domains enable_currentUserHome)"
+    local system="$(xml_element_attribute "$distribution" domains enable_localSystem)"
+    local anywhere="$(xml_element_attribute "$distribution" domains enable_anywhere)"
+    if [ -z "$home$system$anywhere" ]; then
+        printf 'system'
+        return 0
+    fi
+    case "$home" in true|TRUE) home=1 ;; *) home=0 ;; esac
+    case "$system" in true|TRUE) system=1 ;; *) system=0 ;; esac
+    if [ "$home" = "1" ] && [ "$system" = "1" ]; then
+        printf 'both'
+    elif [ "$home" = "1" ]; then
+        printf 'user'
+    else
+        printf 'system'
+    fi
+}
+
+# The inspector's words for distribution_domain. Arguments: Distribution path
+distribution_domain_description() {
+    case "$(distribution_domain "$1")" in
+        user) printf 'the user who runs it, in their home folder (no password)' ;;
+        both) printf 'the user or the whole Mac - Installer asks which' ;;
+        *) printf 'the whole Mac' ;;
+    esac
+}
+
 # Rewrite a file with every line prefixed. Used to indent a tool's output before
 # it goes into the log, so a report reads as one document rather than as a
 # transcript with things pasted into it.
@@ -2548,6 +2675,7 @@ inspect_package() {
         append_log "  hostArchitectures:     ${architectures:-(any)}"
         append_log "  customize:             $(xml_element_attribute "$distribution" options customize)"
         append_log "  require-scripts:       $(xml_element_attribute "$distribution" options require-scripts)"
+        append_log "  installs for:          $(distribution_domain_description "$distribution")"
         local min_os="$(xml_element_attribute "$distribution" os-version min)"
         append_log "  minimum macOS:         ${min_os:-(none declared)}"
         # This is where auth really lives, and the label says so because a user

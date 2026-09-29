@@ -838,6 +838,36 @@ importpkg_total_payload_entries() {
 
 # --- the import ---------------------------------------------------------------
 
+# Rewrite every install location and destination of a just-imported per-user
+# package from the form the package records - "/.local/bin/x", relative to the
+# home folder - into the form the document writes: "~/.local/bin/x". Only paths
+# starting with "/" are touched, so nothing is converted twice.
+# Arguments: how many components the import wrote
+importpkg_home_relative() {
+    local total="$1"
+    local component_index=0
+    # Set by the loops below.
+    local location entry_count index destination
+    while [ "$component_index" -lt "$total" ]; do
+        location="$(component_get INSTALL_LOCATION "$component_index")"
+        case "$location" in
+            /) component_set INSTALL_LOCATION '~' "$component_index" ;;
+            /*) component_set INSTALL_LOCATION "~$location" "$component_index" ;;
+        esac
+        entry_count="$(payload_count "$component_index")"
+        index=0
+        while [ "$index" -lt "$entry_count" ]; do
+            destination="$(payload_get "$index" DESTINATION "$component_index")"
+            case "$destination" in
+                /*) payload_set "$index" DESTINATION "~$destination" "$component_index" ;;
+            esac
+            index=$((index + 1))
+        done
+        component_index=$((component_index + 1))
+    done
+    return 0
+}
+
 # Read a built package into the current document's model. The window is not
 # touched here - the handler pushes the model once the import has succeeded.
 # Arguments: absolute path of the .pkg
@@ -846,7 +876,7 @@ import_pkg() {
     # Set below, all read before anything is written.
     local components_file component_dir component_count package_info distribution
     local identifier version install_location overwrite relocatable auth
-    local title min_os architectures customize require_scripts
+    local title min_os architectures customize require_scripts domain
     local identity project_name package_base payload_root
     local scripts_note resource_note component_index
     local whole_bundle payload_total payload_readable component_own_version
@@ -947,7 +977,11 @@ import_pkg() {
     architectures=""
     customize=""
     require_scripts=""
+    # A component package has no Distribution, and no <domains> element is how
+    # Installer spells "system".
+    domain=system
     if [ -f "$distribution" ]; then
+        domain="$(distribution_domain "$distribution")"
         title="$(xml_element_text "$distribution" title)"
         min_os="$(xml_element_attribute "$distribution" os-version min)"
         architectures="$(xml_element_attribute "$distribution" options hostArchitectures)"
@@ -1073,7 +1107,11 @@ import_pkg() {
 
         case "$auth" in
             Root|root|Admin|admin) component_set AUTH "Root" ;;
-            '') ;;
+            # Unstated - a component package, or a pkg-ref with no auth - takes
+            # the imported domain's default. The document may have been "user"
+            # before, and a "User" left over from it would make a system
+            # package that asks for no password.
+            '') if [ "$domain" = "user" ]; then component_set AUTH User; else component_set AUTH Root; fi ;;
             *) component_set AUTH "User" ;;
         esac
 
@@ -1181,6 +1219,19 @@ import_pkg() {
         fi
     fi
 
+    # Who the package installs for. Written either way, because the document
+    # being imported into may have said "user" before, and a system package
+    # imported under it would come out refusing every destination it just got.
+    # A package that installs for the user records its install locations
+    # relative to the home folder, so they and every destination built from
+    # them are rewritten into the "~/" form the document uses.
+    if [ "$domain" = "user" ]; then
+        model_set /DISTRIBUTION/DOMAIN user
+        importpkg_home_relative "$component_count"
+    else
+        model_set /DISTRIBUTION/DOMAIN system
+    fi
+
     # The output folder is where this package was found, which is where the next
     # one should go. The artifacts folder is the one thing a package cannot tell
     # us and is deliberately left empty: design 4.3 makes ${ARTIFACTS_DIR} a hard
@@ -1233,6 +1284,8 @@ import_pkg() {
     fi
     [ -z "$resource_note" ] || \
         printf '%s\n' "  the presentation resources - $resource_note" >> "$dropped_file"
+    [ "$domain" != "both" ] || \
+        printf '%s\n' "  the choice to install for one user only - the package offers both, and this document installs for the whole Mac" >> "$dropped_file"
     [ "$importpkg_payload_opaque" = "0" ] || \
         printf '%s\n' "  the verify assertions - the payload could not be unpacked to read them" >> "$dropped_file"
 

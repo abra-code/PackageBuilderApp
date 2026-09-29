@@ -391,6 +391,11 @@ import_pkgproj() {
         model_set /PROJECT/OUTPUT_DIR "$(store_path "$(import_resolve "$build_path" "$(import_get "/PROJECT/PROJECT_SETTINGS/BUILD_PATH/PATH_TYPE")")")"
     fi
 
+    # A Packages.app project installs for the system as this importer reads it,
+    # so a document that said "user" before is put back, rather than left
+    # refusing every absolute path the project just brought in.
+    model_set /DISTRIBUTION/DOMAIN system
+
     local readme_path="$(import_get "/PROJECT/PROJECT_PRESENTATION/README/LOCALIZATIONS/0/VALUE/PATH")"
     if [ -n "$readme_path" ]; then
         model_set /DISTRIBUTION/RESOURCES/README "$(store_path "$(import_resolve "$readme_path" "$(import_get "/PROJECT/PROJECT_PRESENTATION/README/LOCALIZATIONS/0/VALUE/PATH_TYPE")")")"

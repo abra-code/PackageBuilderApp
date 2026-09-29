@@ -150,7 +150,7 @@ SCHEMA_PROJECT_KEYS="NAME VERSION MIN_OS_VERSION ARTIFACTS_DIR OUTPUT_DIR PACKAG
 SCHEMA_COMPONENT_KEYS="IDENTIFIER VERSION TITLE DESCRIPTION SELECTED INSTALL_LOCATION OVERWRITE_PERMISSIONS RELOCATABLE AUTH PREINSTALL POSTINSTALL PAYLOAD"
 SCHEMA_PAYLOAD_KEYS="SOURCE DESTINATION OWNER GROUP MODE VERIFY"
 SCHEMA_VERIFY_KEYS="ARCHITECTURES SIGNED_BY HARDENED_RUNTIME SECURE_TIMESTAMP VERSION_FLAG"
-SCHEMA_DISTRIBUTION_KEYS="TITLE HOST_ARCHITECTURES CUSTOMIZE REQUIRE_SCRIPTS RESOURCES"
+SCHEMA_DISTRIBUTION_KEYS="TITLE DOMAIN HOST_ARCHITECTURES CUSTOMIZE REQUIRE_SCRIPTS RESOURCES"
 SCHEMA_RESOURCE_KEYS="README LICENSE WELCOME CONCLUSION BACKGROUND"
 SCHEMA_SIGNING_KEYS="ENABLED INSTALLER_IDENTITY"
 
@@ -158,6 +158,34 @@ SCHEMA_SIGNING_KEYS="ENABLED INSTALLER_IDENTITY"
 # reported and still checked: refusing outright would leave an agent with no
 # way to find out what is actually wrong with it.
 SCHEMA_FORMAT_VERSION=1
+
+# Who the document installs for, read once per check by schema_check_document:
+# "user" or "system". Anything that is not "user" is judged as "system", which
+# is how the build reads it too; a value that is neither is reported by the
+# enum check on its own.
+schema_domain=system
+
+# Report a destination or install location that does not fit schema_domain: a
+# per-user document writes every path "~/...", a system one never does. A path
+# that starts with a token is left to the build, which judges it expanded.
+# Arguments: the value, the label for the message
+schema_check_domain_path() {
+    local value="$1" label="$2"
+    case "$value" in
+        ''|'${'*) return 0 ;;
+    esac
+    if [ "$schema_domain" = "user" ]; then
+        case "$value" in
+            '~'|'~/'*) ;;
+            *) schema_error "$label \"$value\" must start with ~/ - DISTRIBUTION/DOMAIN is user, so every path is in the home folder" ;;
+        esac
+    else
+        case "$value" in
+            '~'*) schema_error "$label \"$value\" is in a home folder - only a document whose DISTRIBUTION/DOMAIN is user may install there" ;;
+        esac
+    fi
+    return 0
+}
 
 # Arguments: payload entry index, component index, label prefix for messages
 schema_check_payload_entry() {
@@ -175,6 +203,9 @@ schema_check_payload_entry() {
     # is not a partial entry, it is a mistake that builds nothing.
     schema_check_type "$base/SOURCE" string "$label SOURCE" 1
     schema_check_type "$base/DESTINATION" string "$label DESTINATION" 1
+    if [ "$(schema_type "$base/DESTINATION")" = "string" ]; then
+        schema_check_domain_path "$(schema_value "$base/DESTINATION")" "$label DESTINATION"
+    fi
     schema_check_type "$base/OWNER" string "$label OWNER" 0
     schema_check_type "$base/GROUP" string "$label GROUP" 0
     schema_check_type "$base/MODE" string "$label MODE" 0
@@ -290,6 +321,10 @@ schema_check_document() {
         schema_error "PROJECT is missing or is not a dict"
     fi
 
+    # Read before the components, whose paths it judges.
+    schema_domain=system
+    [ "$(schema_value /DISTRIBUTION/DOMAIN)" != "user" ] || schema_domain=user
+
     # --- COMPONENTS ---
     local component_count=0
     if [ "$(schema_type /COMPONENTS)" = "array" ]; then
@@ -325,6 +360,14 @@ schema_check_document() {
         schema_check_type "$base/PREINSTALL" string "$label/PREINSTALL" 0
         schema_check_type "$base/POSTINSTALL" string "$label/POSTINSTALL" 0
         schema_check_enum "$base/AUTH" "$label/AUTH" "Root User"
+        if [ "$(schema_type "$base/INSTALL_LOCATION")" = "string" ]; then
+            schema_check_domain_path "$(schema_value "$base/INSTALL_LOCATION")" "$label/INSTALL_LOCATION"
+        fi
+        # A per-user package runs as the user and has nobody to ask for a
+        # password; the build refuses the contradiction rather than override it.
+        if [ "$schema_domain" = "user" ] && [ "$(schema_value "$base/AUTH")" = "Root" ]; then
+            schema_error "$label/AUTH is Root, but DISTRIBUTION/DOMAIN is user - a package that installs for the user cannot ask for an administrator password; use User"
+        fi
 
         # Both defaults are safety decisions with a design section behind them,
         # so a document turning either on is told what it is asking for rather
@@ -386,6 +429,7 @@ schema_check_document() {
         schema_check_type /DISTRIBUTION/TITLE string "DISTRIBUTION/TITLE" 0
         schema_check_type /DISTRIBUTION/REQUIRE_SCRIPTS bool "DISTRIBUTION/REQUIRE_SCRIPTS" 0
         schema_check_enum /DISTRIBUTION/CUSTOMIZE "DISTRIBUTION/CUSTOMIZE" "never allow always"
+        schema_check_enum /DISTRIBUTION/DOMAIN "DISTRIBUTION/DOMAIN" "system user"
 
         if [ "$(schema_type /DISTRIBUTION/HOST_ARCHITECTURES)" = "array" ]; then
             local host_count="$(schema_count /DISTRIBUTION/HOST_ARCHITECTURES)"

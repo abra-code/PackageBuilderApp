@@ -116,6 +116,7 @@ ARCH_ARM64_ID=153
 ARCH_X86_64_ID=154
 CUSTOMIZE_ID=155
 REQUIRE_SCRIPTS_ID=166
+DOMAIN_ID=167
 README_ID=156
 LICENSE_ID=158
 WELCOME_ID=160
@@ -555,6 +556,9 @@ model_normalize() {
     ensure_string /PROJECT/OUTPUT_DIR ""
     ensure_string /PROJECT/PACKAGE_NAME '${NAME}_${VERSION}.pkg'
     ensure_string /DISTRIBUTION/TITLE ""
+    # Absent means the package installs for the system, which is what every
+    # document written before the key existed has always built.
+    ensure_string /DISTRIBUTION/DOMAIN system
     ensure_string /DISTRIBUTION/RESOURCES/README ""
     ensure_string /DISTRIBUTION/RESOURCES/LICENSE ""
     ensure_string /DISTRIBUTION/RESOURCES/WELCOME ""
@@ -585,12 +589,19 @@ model_normalize() {
 normalize_components() {
     local total="$(component_count)"
     local component_index=0
+    # The two defaults that depend on who the package installs for. A per-user
+    # package cannot ask for a password and has no "/" to install into, so a
+    # component added to one must not arrive carrying a system component's
+    # defaults, which the build would then refuse.
+    local default_location="$(domain_root)"
+    local default_auth=Root
+    [ "$(install_domain)" != "user" ] || default_auth=User
     while [ "$component_index" -lt "$total" ]; do
         ensure_container "/COMPONENTS/$component_index" PAYLOAD array
         ensure_string "/COMPONENTS/$component_index/IDENTIFIER" ""
         # Empty means "the project's version" - see component_version.
         ensure_string "/COMPONENTS/$component_index/VERSION" ""
-        ensure_string "/COMPONENTS/$component_index/INSTALL_LOCATION" "/"
+        ensure_string "/COMPONENTS/$component_index/INSTALL_LOCATION" "$default_location"
         ensure_string "/COMPONENTS/$component_index/PREINSTALL" ""
         ensure_string "/COMPONENTS/$component_index/POSTINSTALL" ""
         ensure_string "/COMPONENTS/$component_index/TITLE" ""
@@ -610,7 +621,7 @@ normalize_components() {
         # exactly this case: its AUTHENTICATION is the integer 1, not "Root".
         case "$(model_get "/COMPONENTS/$component_index/AUTH")" in
             Root|User) ;;
-            *) model_set "/COMPONENTS/$component_index/AUTH" Root ;;
+            *) model_set "/COMPONENTS/$component_index/AUTH" "$default_auth" ;;
         esac
 
         normalize_payload_entries "$component_index"
@@ -850,6 +861,7 @@ push_model_to_window() {
     set_value "$ARCH_ARM64_ID" "$(bool_str "$(has_architecture arm64)")"
     set_value "$ARCH_X86_64_ID" "$(bool_str "$(has_architecture x86_64)")"
     set_value "$CUSTOMIZE_ID" "$(model_get /DISTRIBUTION/CUSTOMIZE)"
+    set_value "$DOMAIN_ID" "$(install_domain)"
     set_value "$REQUIRE_SCRIPTS_ID" "$(model_get_bool_str /DISTRIBUTION/REQUIRE_SCRIPTS)"
     set_value "$README_ID" "$(model_get /DISTRIBUTION/RESOURCES/README)"
     set_value "$LICENSE_ID" "$(model_get /DISTRIBUTION/RESOURCES/LICENSE)"
@@ -1776,6 +1788,157 @@ path_is_under() {
     return 1
 }
 
+# --- Who the package installs for (DISTRIBUTION/DOMAIN) ----------------------
+# "system" installs onto the Mac's disk, as every package did before the key
+# existed; "user" installs into the home folder of whoever runs the installer,
+# with no administrator password. Anything else - absent, empty, misspelled -
+# reads as "system" here, and check_distribution_preconditions refuses a value
+# that is present and wrong rather than letting a typo quietly build a
+# system-wide package.
+install_domain() {
+    case "$(model_get /DISTRIBUTION/DOMAIN)" in
+        user) printf 'user' ;;
+        *) printf 'system' ;;
+    esac
+}
+
+# The install location a component has when it does not state one: the root of
+# the volume, or the home folder.
+domain_root() {
+    if [ "$(install_domain)" = "user" ]; then
+        printf '~'
+    else
+        printf '/'
+    fi
+}
+
+# Print a path on the target in the form pkgbuild and every check below works
+# in. A per-user package writes its paths "~/..." in the document, so they
+# cannot be mistaken for system paths; Installer takes a per-user package's
+# install location relative to the home folder, so "~" becomes "/" and "~/x"
+# becomes "/x". Everything else is printed unchanged, including a "~" path in
+# a system package - domain_path_problem is what refuses that, by name.
+#
+# Only the leading "~" is touched, so a path still carrying a token such as
+# ${VERSION} converts the same way before or after expansion.
+target_path() {
+    local path="$1"
+    if [ "$(install_domain)" = "user" ]; then
+        case "$path" in
+            '~') printf '/'; return 0 ;;
+            '~/'*) printf '%s' "${path#\~}"; return 0 ;;
+        esac
+    fi
+    printf '%s' "$path"
+}
+
+# The inverse, for messages: a path in target_path's form, spelled the way the
+# document spells it. A per-user package's "/.local/bin" is shown as
+# "~/.local/bin", because that is what the reader has to go and find.
+shown_target_path() {
+    local path="$1"
+    if [ "$(install_domain)" = "user" ]; then
+        case "$path" in
+            /) printf '~'; return 0 ;;
+            /*) printf '~%s' "$path"; return 0 ;;
+        esac
+    fi
+    printf '%s' "$path"
+}
+
+# Print why a destination or install location, as the document writes it
+# (tokens expanded), does not fit who the package installs for. Prints nothing
+# when it fits. Arguments: the path, and what to call it in the message.
+#
+# The two spellings are kept apart on purpose. A "~/" path in a system package
+# would stage as a folder literally named "~" under the root, and a "/" path in
+# a per-user package would land inside the home folder under a system-looking
+# name - both install somewhere nobody meant, and neither fails on its own.
+domain_path_problem() {
+    local path="$1" what="$2"
+    if [ "$(install_domain)" = "user" ]; then
+        case "$path" in
+            '~'|'~/'*) return 0 ;;
+        esac
+        printf '%s "%s" must start with ~/ - this package installs for the user, into their home folder' "$what" "$path"
+        return 0
+    fi
+    case "$path" in
+        '~'|'~/'*)
+            printf '%s "%s" is in a home folder, which only a package that installs for the user can install into - set Installs for to the user, or use an absolute path' "$what" "$path"
+            return 0
+            ;;
+        /*) return 0 ;;
+    esac
+    printf '%s "%s" must be an absolute path' "$what" "$path"
+}
+
+# A component's install location in target_path's form, with the domain's root
+# standing in for an empty one. Tokens are expanded, so a location such as
+# "~/.local/share/tool/versions/${VERSION}" follows the version like the
+# destinations under it do.
+# Arguments: optional component index, defaulting to the current one
+component_install_location() {
+    local location="$(expand_tokens "$(component_get INSTALL_LOCATION "$1")")"
+    [ -n "$location" ] || location="$(domain_root)"
+    target_path "$location"
+}
+
+# Bring every component in line with a domain that was just chosen: an install
+# location still at the other domain's root moves to this one's, and an AUTH
+# still at the other domain's default moves to this one's. Anything a component
+# states beyond those defaults is left for the preconditions to judge, because
+# guessing where "/usr/local/bin/tool" belongs in a home folder is not this
+# function's call to make. Destinations are not touched for the same reason.
+# Returns non-zero when a write failed. Arguments: the new domain
+apply_domain_defaults() {
+    local domain="$1"
+    local total="$(component_count)"
+    local component_index=0
+    # Set by the loop below.
+    local location auth
+    while [ "$component_index" -lt "$total" ]; do
+        location="$(component_get INSTALL_LOCATION "$component_index")"
+        auth="$(component_get AUTH "$component_index")"
+        if [ "$domain" = "user" ]; then
+            case "$location" in
+                ''|/) component_set INSTALL_LOCATION '~' "$component_index" || return 1 ;;
+            esac
+            [ "$auth" != "Root" ] || component_set AUTH User "$component_index" || return 1
+        else
+            case "$location" in
+                '~'|'~/') component_set INSTALL_LOCATION / "$component_index" || return 1 ;;
+            esac
+            [ "$auth" != "User" ] || component_set AUTH Root "$component_index" || return 1
+        fi
+        component_index=$((component_index + 1))
+    done
+    return 0
+}
+
+# How many payload destinations, across every component, do not fit the
+# document's domain. Used to warn when the domain changes under a payload that
+# was written for the other one.
+count_domain_mismatches() {
+    local total="$(component_count)"
+    local mismatches=0 component_index=0
+    # Set by the loops below.
+    local entry_count index destination
+    while [ "$component_index" -lt "$total" ]; do
+        entry_count="$(payload_count "$component_index")"
+        index=0
+        while [ "$index" -lt "$entry_count" ]; do
+            destination="$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")"
+            if [ -n "$destination" ] && [ -n "$(domain_path_problem "$destination" x)" ]; then
+                mismatches=$((mismatches + 1))
+            fi
+            index=$((index + 1))
+        done
+        component_index=$((component_index + 1))
+    done
+    printf '%s' "$mismatches"
+}
+
 # Canonicalize a path, or print it unchanged when it cannot be resolved (it
 # does not exist yet, or a component is unreadable).
 canonical_or_self() {
@@ -2030,24 +2193,50 @@ artifact_executable() {
     return 0
 }
 
-# Where a dropped or browsed artifact installs, by its kind (design 5.3).
+# The folder in a home folder that stands for a system folder, for a package
+# that installs for the user: ~/Applications for /Applications, ~/.local/bin for
+# /usr/local/bin, and ~/Library/... for /Library/.... A system package gets the
+# folder back unchanged, and so does a folder with no per-user counterpart,
+# which the preconditions then refuse by name.
+# Arguments: system folder
+domain_directory() {
+    local directory="$1"
+    if [ "$(install_domain)" = "user" ]; then
+        case "$directory" in
+            /Applications|/Applications/*) printf '~%s' "$directory"; return 0 ;;
+            /usr/local/bin) printf '~/.local/bin'; return 0 ;;
+            /Library/LaunchDaemons) ;;
+            /Library/*) printf '~%s' "$directory"; return 0 ;;
+        esac
+    fi
+    printf '%s' "$directory"
+}
+
+# Where a dropped or browsed artifact installs, by its kind (design 5.3), in the
+# home folder when the package installs for the user.
 # Arguments: absolute source path, fallback destination directory
 guess_destination() {
     local artifact_path="$1" fallback_dir="$2"
     local base_name="$(/usr/bin/basename "$artifact_path")"
+    # Set by the case below when the artifact's kind names a folder.
+    local kind_dir=""
     case "$base_name" in
-        *.app)         printf '/Applications/%s' "$base_name"; return 0 ;;
-        *.framework)   printf '/Library/Frameworks/%s' "$base_name"; return 0 ;;
-        *.prefPane)    printf '/Library/PreferencePanes/%s' "$base_name"; return 0 ;;
-        *.qlgenerator) printf '/Library/QuickLook/%s' "$base_name"; return 0 ;;
-        *.mdimporter)  printf '/Library/Spotlight/%s' "$base_name"; return 0 ;;
-        *.saver)       printf '/Library/Screen Savers/%s' "$base_name"; return 0 ;;
+        *.app)         kind_dir=/Applications ;;
+        *.framework)   kind_dir=/Library/Frameworks ;;
+        *.prefPane)    kind_dir=/Library/PreferencePanes ;;
+        *.qlgenerator) kind_dir=/Library/QuickLook ;;
+        *.mdimporter)  kind_dir=/Library/Spotlight ;;
+        *.saver)       kind_dir="/Library/Screen Savers" ;;
     esac
-    if [ -f "$artifact_path" ] && [ -x "$artifact_path" ]; then
+    if [ -z "$kind_dir" ] && [ -f "$artifact_path" ] && [ -x "$artifact_path" ]; then
         case "$base_name" in
             *.*) ;;
-            *) printf '/usr/local/bin/%s' "$base_name"; return 0 ;;
+            *) kind_dir=/usr/local/bin ;;
         esac
+    fi
+    if [ -n "$kind_dir" ]; then
+        printf '%s/%s' "$(domain_directory "$kind_dir")" "$base_name"
+        return 0
     fi
     if [ -n "$fallback_dir" ]; then
         printf '%s/%s' "${fallback_dir%/}" "$base_name"
@@ -2076,8 +2265,11 @@ last_destination_dir() {
     [ "$entry_count" -gt 0 ] || return 0
     local destination="$(payload_get "$((entry_count - 1))" DESTINATION)"
     [ -n "$destination" ] || return 0
+    # "~/x" is a destination too, in a package that installs for the user.
+    # dirname treats the "~" as an ordinary first component, so "~/.local/bin/x"
+    # gives "~/.local/bin" and a bare "~/x" gives "~".
     case "$destination" in
-        /*) ;;
+        /*|'~/'*) ;;
         *) return 0 ;;
     esac
     /usr/bin/dirname "$destination"
@@ -2931,6 +3123,7 @@ field_key_path() {
         "$TITLE_ID")             printf '/DISTRIBUTION/TITLE' ;;
         "$MIN_OS_ID")            printf '/PROJECT/MIN_OS_VERSION' ;;
         "$CUSTOMIZE_ID")         printf '/DISTRIBUTION/CUSTOMIZE' ;;
+        "$DOMAIN_ID")            printf '/DISTRIBUTION/DOMAIN' ;;
         "$REQUIRE_SCRIPTS_ID")   printf '/DISTRIBUTION/REQUIRE_SCRIPTS' ;;
         "$README_ID")            printf '/DISTRIBUTION/RESOURCES/README' ;;
         "$LICENSE_ID")           printf '/DISTRIBUTION/RESOURCES/LICENSE' ;;

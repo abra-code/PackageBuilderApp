@@ -88,8 +88,13 @@
                                            // ticked. Only visible when CUSTOMIZE
                                            // is "allow" or "always"; false
                                            // writes start_selected="false".
-      "INSTALL_LOCATION": "/",             // string. Absolute. Every payload
-                                           // DESTINATION must be under it.
+      "INSTALL_LOCATION": "/",             // string. Absolute, or "~" / "~/..."
+                                           // when DISTRIBUTION.DOMAIN is "user".
+                                           // Every payload DESTINATION must be
+                                           // under it. Tokens allowed, so
+                                           // "~/.local/share/tool/versions/${VERSION}"
+                                           // follows the version. Empty means
+                                           // "/" or "~".
       "OVERWRITE_PERMISSIONS": false,      // bool. Keep false. True tells
                                            // Installer to apply the payload's
                                            // owner and mode to directories that
@@ -107,7 +112,10 @@
                                            // the target (design 8.2).
       "AUTH": "Root",                      // string. "Root" or "User". Root
                                            // means the install asks for an
-                                           // administrator password.
+                                           // administrator password. Must be
+                                           // "User" when DISTRIBUTION.DOMAIN is
+                                           // "user"; the pkg-ref then says
+                                           // auth="none".
       "PREINSTALL": "",                    // string. Path to a script, or "".
       "POSTINSTALL": "",                   // string. Path to a script, or "".
 
@@ -117,7 +125,10 @@
                                            // a path relative to the document,
                                            // or absolute.
           "DESTINATION": "/usr/local/bin/widget", // string, required. Absolute,
-                                           // and under INSTALL_LOCATION. Two
+                                           // and under INSTALL_LOCATION. When
+                                           // DISTRIBUTION.DOMAIN is "user" it
+                                           // starts with ~/ instead, and only
+                                           // then: "~/.local/bin/widget". Two
                                            // entries may not share one, and one
                                            // may not nest inside another: both
                                            // stage with ditto and would race.
@@ -176,6 +187,24 @@
   "DISTRIBUTION": {
     "TITLE": "Widget",                     // string. Shown by the installer.
                                            // Defaults to PROJECT.NAME when empty.
+    "DOMAIN": "system",                    // string. Who the package installs
+                                           // for. "system" (the default, and
+                                           // what an absent key means) installs
+                                           // onto the Mac's disk. "user"
+                                           // installs into the home folder of
+                                           // whoever runs the installer, with no
+                                           // administrator password: every
+                                           // DESTINATION and INSTALL_LOCATION is
+                                           // written "~/...", every AUTH is
+                                           // "User", and the Distribution gains
+                                           // a <domains> element enabling only
+                                           // the home folder. "pkgbuilder set"
+                                           // on this key moves each component
+                                           // still at the other domain's
+                                           // INSTALL_LOCATION and AUTH defaults;
+                                           // destinations are left to you, and
+                                           // "validate" names the ones that do
+                                           // not fit.
     "HOST_ARCHITECTURES": ["arm64", "x86_64"], // array of strings. "arm64" and
                                            // "x86_64" only. NEVER EMPTY:
                                            // productbuild refuses a document
@@ -213,8 +242,9 @@
 
 // Tokens
 // ------
-// Usable in PAYLOAD SOURCE and DESTINATION, PROJECT.PACKAGE_NAME, the
-// DISTRIBUTION.RESOURCES paths, PREINSTALL and POSTINSTALL:
+// Usable in PAYLOAD SOURCE and DESTINATION, INSTALL_LOCATION,
+// PROJECT.PACKAGE_NAME, the DISTRIBUTION.RESOURCES paths, PREINSTALL and
+// POSTINSTALL:
 //
 //   ${NAME}           PROJECT.NAME
 //   ${VERSION}        PROJECT.VERSION

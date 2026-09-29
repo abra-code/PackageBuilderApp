@@ -62,6 +62,18 @@ to the sources it packages, so a version bump is a one-line diff.
 `ARTIFACTS_DIR` is the one field that changes between releases: repoint it and
 every payload source follows.
 
+### Installing for the user
+
+The Distribution tab's **Installs for** menu chooses between the whole Mac (the
+default) and the user who runs the installer. A package that installs for the
+user puts everything in that user's home folder and asks for no administrator
+password, which suits a command-line tool that is updated often. Its paths are
+written `~/...` - `"~/.local/bin/replay"` - and the document says so with
+`"DOMAIN": "user"` in `DISTRIBUTION`. Choosing it moves each component's install
+location from `/` to `~` and its authentication from Root to User; destinations
+you already entered are left for you to rewrite, and the build names any that do
+not fit.
+
 ## Adding artifacts
 
 Drop files on the payload table, or use the buttons below it: `+` adds one

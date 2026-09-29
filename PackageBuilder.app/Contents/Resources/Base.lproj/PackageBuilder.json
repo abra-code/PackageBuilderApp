@@ -1355,6 +1355,50 @@
                                             {
                                                 "type": "Text",
                                                 "properties": {
+                                                    "text": "Installs for",
+                                                    "frame": {
+                                                        "width": 130,
+                                                        "alignment": "trailing"
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "type": "Picker",
+                                                "id": 167,
+                                                "properties": {
+                                                    "pickerStyle": "menu",
+                                                    "labelsHidden": true,
+                                                    "options": [
+                                                        {
+                                                            "title": "The whole Mac",
+                                                            "tag": "system"
+                                                        },
+                                                        {
+                                                            "title": "The user who runs it, in their home folder",
+                                                            "tag": "user"
+                                                        }
+                                                    ],
+                                                    "actionID": "PackageBuilder.field.changed",
+                                                    "help": "The user choice needs no administrator password: every destination starts with ~/ and installs into the home folder of whoever runs the installer",
+                                                    "frame": {
+                                                        "width": 320
+                                                    }
+                                                }
+                                            },
+                                            {
+                                                "type": "Spacer"
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "type": "HStack",
+                                        "properties": {
+                                            "spacing": 8
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "Text",
+                                                "properties": {
                                                     "text": "Host architectures",
                                                     "frame": {
                                                         "width": 130,

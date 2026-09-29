@@ -20,6 +20,20 @@ if [ -z "$dir" ]; then
     exit 0
 fi
 
+# The same folder in the home folder when the package installs for the user.
+# One preset has no such folder: a launch daemon runs as root for the whole
+# Mac, and a package that installs for one user cannot put one in place.
+dir="$(domain_directory "$dir")"
+if [ "$(install_domain)" = "user" ]; then
+    case "$dir" in
+        '~/'*) ;;
+        *)
+            set_status "$dir has no per-user counterpart - a package that installs for the user cannot install there"
+            exit 0
+            ;;
+    esac
+fi
+
 if ! model_lock; then
     set_status "Busy - the destination was not changed, please try again"
     exit 0

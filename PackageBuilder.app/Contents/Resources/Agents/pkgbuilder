@@ -205,7 +205,7 @@ key_type_of() {
     case "$key_path" in
         /PROJECT/NAME|/PROJECT/VERSION|/PROJECT/MIN_OS_VERSION|/PROJECT/ARTIFACTS_DIR|\
 /PROJECT/OUTPUT_DIR|/PROJECT/PACKAGE_NAME) printf 'string' ;;
-        /DISTRIBUTION/TITLE|/DISTRIBUTION/CUSTOMIZE) printf 'string' ;;
+        /DISTRIBUTION/TITLE|/DISTRIBUTION/CUSTOMIZE|/DISTRIBUTION/DOMAIN) printf 'string' ;;
         /DISTRIBUTION/REQUIRE_SCRIPTS) printf 'bool' ;;
         /DISTRIBUTION/RESOURCES/README|/DISTRIBUTION/RESOURCES/LICENSE|\
 /DISTRIBUTION/RESOURCES/WELCOME|/DISTRIBUTION/RESOURCES/CONCLUSION|\
@@ -254,7 +254,7 @@ Usage:
   pkgbuilder new <doc.pkgbld> --name <N> --identifier <ID>
                  [--version <V>] [--min-os <V>] [--artifacts-dir <D>]
                  [--output-dir <D>] [--install-location <L>] [--title <T>]
-                 [--identity <I>] [--no-signing] [--force]
+                 [--domain system|user] [--identity <I>] [--no-signing] [--force]
   pkgbuilder add-payload <doc> <artifact> [--destination <P>] [--mode <M>]
                  [--owner <O>] [--group <G>] [--component <N>] [--no-verify]
   pkgbuilder add-component <doc> --identifier <ID> [--install-location <L>]
@@ -319,7 +319,7 @@ cmd_new() {
         ''|-*) fail_usage "new: a destination path is required"; return 2 ;;
     esac
     local name="" identifier="" version="" min_os="" artifacts="" output="" \
-          install_location="" title="" identity="" signing="1" force="0"
+          install_location="" title="" identity="" signing="1" force="0" domain=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --name)             need_value "$1" $# "$2" || return 2; name="$2"; shift 2 ;;
@@ -330,6 +330,7 @@ cmd_new() {
             --output-dir)       need_value "$1" $# "$2" || return 2; output="$2"; shift 2 ;;
             --install-location) need_value "$1" $# "$2" || return 2; install_location="$2"; shift 2 ;;
             --title)            need_value "$1" $# "$2" || return 2; title="$2"; shift 2 ;;
+            --domain)           need_value "$1" $# "$2" || return 2; domain="$2"; shift 2 ;;
             --identity)         need_value "$1" $# "$2" || return 2; identity="$2"; shift 2 ;;
             --no-signing)       signing="0"; shift ;;
             --force)            force="1"; shift ;;
@@ -339,6 +340,10 @@ cmd_new() {
     done
     [ -n "$name" ] || { fail_usage "new: --name is required"; return 2; }
     [ -n "$identifier" ] || { fail_usage "new: --identifier is required"; return 2; }
+    case "$domain" in
+        ''|system|user) ;;
+        *) fail_usage "new: --domain must be system or user"; return 2 ;;
+    esac
     # Settled before anything acts on the path: the existence check has to test
     # the file that will really be written, set_doc_path has to record it, and
     # the caller captures the printed path and passes it to every later command.
@@ -359,6 +364,12 @@ cmd_new() {
 
     new_set /PROJECT/NAME "$name"
     new_set /COMPONENTS/0/IDENTIFIER "$identifier"
+    # Before the install location, so an explicit --install-location lands on
+    # top of the domain's default rather than being moved by it.
+    if [ "$domain" = "user" ]; then
+        new_set /DISTRIBUTION/DOMAIN user
+        apply_domain_defaults user || new_write_failed=1
+    fi
     [ -z "$version" ] || new_set /PROJECT/VERSION "$version"
     [ -z "$min_os" ] || new_set /PROJECT/MIN_OS_VERSION "$min_os"
     [ -z "$install_location" ] || new_set /COMPONENTS/0/INSTALL_LOCATION "$install_location"
@@ -482,8 +493,8 @@ cmd_add_payload() {
     local stored_destination="$(payload_get "$entry_index" DESTINATION)"
     if [ -z "$stored_destination" ]; then
         printf 'pkgbuilder: added entry %s with no destination - set one with:\n' "$((entry_index + 1))" >&2
-        printf '  pkgbuilder set %s /COMPONENTS/%s/PAYLOAD/%s/DESTINATION /usr/local/bin/name\n' \
-            "$document_path" "$PB_COMPONENT_INDEX" "$entry_index" >&2
+        printf '  pkgbuilder set %s /COMPONENTS/%s/PAYLOAD/%s/DESTINATION %s/name\n' \
+            "$document_path" "$PB_COMPONENT_INDEX" "$entry_index" "$(domain_directory /usr/local/bin)" >&2
     else
         printf 'Added entry %s: %s -> %s\n' "$((entry_index + 1))" \
             "$(payload_get "$entry_index" SOURCE)" "$stored_destination" >&2
@@ -757,11 +768,31 @@ cmd_set() {
                         *) printf 'pkgbuilder: CUSTOMIZE is "%s"; it must be never, allow or always.\n' "$new_value" >&2; return 1 ;;
                     esac
                     ;;
+                /DISTRIBUTION/DOMAIN)
+                    case "$new_value" in
+                        system|user) ;;
+                        *) printf 'pkgbuilder: DOMAIN is "%s"; it must be system or user.\n' "$new_value" >&2; return 1 ;;
+                    esac
+                    ;;
             esac
             model_set "$key_path" "$new_value" || {
                 printf 'pkgbuilder: %s could not be written - is its parent container present?\n' "$key_path" >&2
                 return 1
             }
+            # What the window does when the same choice is made there: every
+            # component still at the other domain's install location and AUTH
+            # defaults moves to this one's. Destinations are left as they are,
+            # and "validate" names any that no longer fit.
+            if [ "$key_path" = "/DISTRIBUTION/DOMAIN" ]; then
+                apply_domain_defaults "$new_value" || {
+                    printf 'pkgbuilder: the components could not be moved to the %s defaults\n' "$new_value" >&2
+                    return 1
+                }
+                local mismatches="$(count_domain_mismatches)"
+                if [ "$mismatches" -gt 0 ]; then
+                    printf 'pkgbuilder: %s destination(s) do not fit DOMAIN %s yet - "validate" names them\n' "$mismatches" "$new_value" >&2
+                fi
+            fi
             ;;
     esac
 
@@ -910,13 +941,12 @@ build_dry_run() {
         else
             printf 'Would stage into the payload root:\n' >&2
         fi
-        install_location="$(component_get INSTALL_LOCATION "$component_index")"
-        [ -n "$install_location" ] || install_location="/"
+        install_location="$(component_install_location "$component_index")"
         entry_count="$(payload_count "$component_index")"
         index=0
         while [ "$index" -lt "$entry_count" ]; do
             source="$(resolve_stored_path "$(payload_get "$index" SOURCE "$component_index")")"
-            destination="$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")"
+            destination="$(target_path "$(expand_tokens "$(payload_get "$index" DESTINATION "$component_index")")")"
             # Normalized first, exactly as stage_payload_root does before it
             # builds the write path. Without this a destination carrying "." or
             # a doubled slash prints one path here and stages to another, which
@@ -1045,6 +1075,9 @@ cmd_inspect() {
     printf 'Package: %s\n' "$package_path"
     if [ -f "$expand_dir/Distribution" ]; then
         printf 'Kind: distribution package\n'
+        # Said in words as well as left in the XML below, because the answer is
+        # partly an absence: no <domains> element means the whole Mac.
+        printf 'Installs for: %s\n' "$(distribution_domain "$expand_dir/Distribution")"
         printf 'Distribution:\n'
         # The trailing newline is added rather than assumed: productbuild
         # writes the document without one, so the next heading would otherwise

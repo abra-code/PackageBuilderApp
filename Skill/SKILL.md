@@ -94,7 +94,9 @@ run there - before the payload verify, which is the part worth knowing about.
 2. **Two payload destinations may not be equal, and one may not be a prefix of
    another.** Staging is a sequence of `ditto` calls, so a nested pair silently
    races. The preconditions refuse it.
-3. **Every destination must be under `INSTALL_LOCATION`.**
+3. **Every destination must be under `INSTALL_LOCATION`**, and both are written
+   `~/...` in a package that installs for the user and never otherwise (see
+   Installing for the user).
 4. **`OVERWRITE_PERMISSIONS` must stay `false`** unless you know exactly why not.
    `pkgbuild` always writes `true`, which tells Installer to apply the payload's
    owner and mode to directories that *already exist* - with a payload under
@@ -209,6 +211,31 @@ N=$("$PB" add-component "$DOC" --identifier com.example.pkg.cli --title "Command
 `--component` takes; key paths are 0-based, hence the `- 1`. `TITLE` and
 `SELECTED` only show up in the installer when `CUSTOMIZE` is `allow` or
 `always` - with the default `never` the choice list is not drawn at all.
+
+## Installing for the user
+
+A package can install into the home folder of whoever runs it, with no
+administrator password - the right shape for a command-line tool that updates
+often. Set `DISTRIBUTION.DOMAIN` to `"user"` (default `"system"`):
+
+```sh
+DOC=$("$PB" new ~/tool --name tool --identifier com.example.pkg.tool --domain user)
+"$PB" add-payload "$DOC" build/tool       # destination guessed as ~/.local/bin/tool
+```
+
+- **Every path on the target is written `~/...`** - each `DESTINATION` and each
+  `INSTALL_LOCATION` (`"~"` is the home folder itself). A system package may not
+  use `~` at all. Both the build and `validate` refuse the wrong kind.
+- **Every `AUTH` is `"User"`.** `"Root"` is refused; the Distribution says
+  `auth="none"`.
+- **Switching the domain moves defaults, not destinations.** `set
+  /DISTRIBUTION/DOMAIN user` turns an install location of `/` into `~` and `Root`
+  into `User`, then tells you how many destinations still need rewriting.
+- **`INSTALL_LOCATION` takes tokens**, so a versioned layout works:
+  `~/.local/share/tool/versions/${VERSION}`.
+- **Check it with `installer -dominfo -pkg <pkg>`**, which prints
+  `CurrentUserHomeDirectory` and installs nothing. Never test by installing into
+  your own home folder from a script.
 
 ## Other things it does
 
