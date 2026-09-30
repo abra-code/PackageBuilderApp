@@ -91,8 +91,8 @@ VERIFY_TIMESTAMP_ID=119
 VERSION_FLAG_ID=120
 DESTINATION_MENU_ID=121
 
-# The payload table's hidden index column (1-based, past the three visible ones).
-PAYLOAD_INDEX_COLUMN=4
+# The payload table's hidden index column (1-based, past the two visible ones).
+PAYLOAD_INDEX_COLUMN=3
 
 # One id per item of the destination presets menu, so the item that fired says
 # which directory was chosen.
@@ -977,35 +977,52 @@ set_architectures() {
     return 0
 }
 
-# Fill the payload table from the model. Three visible columns plus a hidden
-# fourth carrying the item's index into the current component's PAYLOAD, per
-# design 5.2.
-# getElementColumnCount counts the data columns, hidden ones included, so the
-# index comes back as $OMC_ACTIONUI_TABLE_100_COLUMN_4_VALUE on selection.
 # Flatten one value for one table cell.
 #
 # Rows are tab-joined and newline-separated, so a tab in a path would add a
-# field and shift the hidden index column onto MODE - which is numeric, passes
-# the digit check, fails the range check, and clears the selection. The row
-# could then never be selected, and so never removed or repaired through the
-# UI. A newline would split the feed into a phantom row. Both are legal in an
-# APFS filename. This is display only; the model keeps the real string.
+# field and shift the hidden index column onto the destination - which fails
+# the digit check and clears the selection. The row could then never be
+# selected, and so never removed or repaired through the UI. A newline would
+# split the feed into a phantom row. Both are legal in an APFS filename. This
+# is display only; the model keeps the real string.
 table_cell() {
     local raw_value="$1"
     printf '%s' "$raw_value" | /usr/bin/tr '\t\n' '  '
 }
 
+# The name the payload table shows for a source: its last path component,
+# "agent-vm" for "${ARTIFACTS_DIR}/agent-vm" and "Recipes" for "../Recipes/".
+# The whole path is in the Source field beside the table, and a column of
+# paths that mostly start with the same "${ARTIFACTS_DIR}/" showed nothing but
+# that prefix at any usable width. Arguments: the source as stored
+artifact_name() {
+    local name="$1"
+    while :; do
+        case "$name" in
+            ?*/) name="${name%/}" ;;
+            *) break ;;
+        esac
+    done
+    name="${name##*/}"
+    [ -n "$name" ] || name="$1"
+    printf '%s' "$name"
+}
+
+# Fill the payload table from the model: the artifact's name and the
+# destination, plus a hidden third column carrying the item's index into the
+# current component's PAYLOAD. The mode is shown with the item's details.
+# getElementColumnCount counts the data columns, hidden ones included, so the
+# index comes back as $OMC_ACTIONUI_TABLE_100_COLUMN_3_VALUE on selection.
 populate_payload_table() {
     local entry_count="$(payload_count)"
     local index=0
     # Set once per iteration, so they carry their own "local" up here.
-    local source destination mode
+    local artifact destination
     {
         while [ "$index" -lt "$entry_count" ]; do
-            source="$(table_cell "$(payload_get "$index" SOURCE)")"
+            artifact="$(table_cell "$(artifact_name "$(payload_get "$index" SOURCE)")")"
             destination="$(table_cell "$(payload_get "$index" DESTINATION)")"
-            mode="$(table_cell "$(payload_get "$index" MODE)")"
-            printf '%s\t%s\t%s\t%s\n' "$source" "$destination" "$mode" "$index"
+            printf '%s\t%s\t%s\n' "$artifact" "$destination" "$index"
             index=$((index + 1))
         done
     } | "$dialog_tool" "$document_uuid" "$PAYLOAD_TABLE_ID" omc_table_set_rows_from_stdin
@@ -3321,12 +3338,13 @@ is_component_column_field() {
     return 1
 }
 
-# Succeed when a view id edits one of the table's three visible columns, so an
-# edit to it has to be repeated in the table.
+# Succeed when a view id edits what one of the table's two visible columns
+# shows - the source's name or the destination - so an edit to it has to be
+# repeated in the table.
 is_payload_column_field() {
     local view_id="$1"
     case "$view_id" in
-        "$SOURCE_ID"|"$DESTINATION_ID"|"$MODE_ID") return 0 ;;
+        "$SOURCE_ID"|"$DESTINATION_ID") return 0 ;;
     esac
     return 1
 }

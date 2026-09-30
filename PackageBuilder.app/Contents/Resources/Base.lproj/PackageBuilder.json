@@ -5,9 +5,9 @@
         "properties": {
             "spacing": 0,
             "frame": {
-                "minWidth": 1000,
+                "minWidth": 1120,
                 "minHeight": 640,
-                "idealWidth": 1240,
+                "idealWidth": 1320,
                 "idealHeight": 820,
                 "maxWidth": "infinity",
                 "maxHeight": "infinity"
@@ -878,8 +878,8 @@
                                                         "spacing": 0,
                                                         "alignment": "leading",
                                                         "frame": {
-                                                            "minWidth": 300,
-                                                            "idealWidth": 400,
+                                                            "minWidth": 400,
+                                                            "idealWidth": 480,
                                                             "maxHeight": "infinity"
                                                         }
                                                     },
@@ -889,19 +889,16 @@
                                                             "id": 100,
                                                             "properties": {
                                                                 "columns": [
-                                                                    "Source",
-                                                                    "Destination",
-                                                                    "Mode"
+                                                                    "Artifact",
+                                                                    "Destination"
                                                                 ],
                                                                 "widths": [
-                                                                    100,
                                                                     130,
-                                                                    50
+                                                                    300
                                                                 ],
                                                                 "minWidths": [
-                                                                    70,
-                                                                    90,
-                                                                    45
+                                                                    80,
+                                                                    160
                                                                 ],
                                                                 "actionID": "PackageBuilder.payload.select",
                                                                 "onDropTypes": [
@@ -919,11 +916,7 @@
                                                         {
                                                             "type": "HStack",
                                                             "properties": {
-                                                                "spacing": 6,
-                                                                "controlSize": "small",
-                                                                "frame": {
-                                                                    "height": 28
-                                                                }
+                                                                "spacing": 0
                                                             },
                                                             "children": [
                                                                 {
@@ -931,9 +924,15 @@
                                                                     "id": 101,
                                                                     "properties": {
                                                                         "systemImage": "plus",
+                                                                        "imageScale": "medium",
+                                                                        "buttonStyle": "plain",
                                                                         "disabled": true,
                                                                         "actionID": "PackageBuilder.payload.add",
-                                                                        "help": "Add an artifact to the payload"
+                                                                        "help": "Add an artifact to the payload",
+                                                                        "frame": {
+                                                                            "width": 32,
+                                                                            "height": 28
+                                                                        }
                                                                     }
                                                                 },
                                                                 {
@@ -941,9 +940,15 @@
                                                                     "id": 107,
                                                                     "properties": {
                                                                         "systemImage": "folder.badge.plus",
+                                                                        "imageScale": "medium",
+                                                                        "buttonStyle": "plain",
                                                                         "disabled": true,
                                                                         "actionID": "PackageBuilder.payload.scan",
-                                                                        "help": "Add every bundle and executable found in a folder"
+                                                                        "help": "Add every bundle and executable found in a folder",
+                                                                        "frame": {
+                                                                            "width": 32,
+                                                                            "height": 28
+                                                                        }
                                                                     }
                                                                 },
                                                                 {
@@ -951,9 +956,23 @@
                                                                     "id": 102,
                                                                     "properties": {
                                                                         "systemImage": "minus",
+                                                                        "imageScale": "medium",
+                                                                        "buttonStyle": "plain",
                                                                         "disabled": true,
                                                                         "actionID": "PackageBuilder.payload.remove",
-                                                                        "help": "Remove the selected payload item"
+                                                                        "help": "Remove the selected payload item",
+                                                                        "frame": {
+                                                                            "width": 32,
+                                                                            "height": 28
+                                                                        }
+                                                                    }
+                                                                },
+                                                                {
+                                                                    "type": "Divider",
+                                                                    "properties": {
+                                                                        "frame": {
+                                                                            "height": 16
+                                                                        }
                                                                     }
                                                                 },
                                                                 {
@@ -961,9 +980,15 @@
                                                                     "id": 103,
                                                                     "properties": {
                                                                         "systemImage": "chevron.up",
+                                                                        "imageScale": "medium",
+                                                                        "buttonStyle": "plain",
                                                                         "disabled": true,
                                                                         "actionID": "PackageBuilder.payload.move",
-                                                                        "help": "Move the selected item up"
+                                                                        "help": "Move the selected item up",
+                                                                        "frame": {
+                                                                            "width": 32,
+                                                                            "height": 28
+                                                                        }
                                                                     }
                                                                 },
                                                                 {
@@ -971,9 +996,15 @@
                                                                     "id": 104,
                                                                     "properties": {
                                                                         "systemImage": "chevron.down",
+                                                                        "imageScale": "medium",
+                                                                        "buttonStyle": "plain",
                                                                         "disabled": true,
                                                                         "actionID": "PackageBuilder.payload.move",
-                                                                        "help": "Move the selected item down"
+                                                                        "help": "Move the selected item down",
+                                                                        "frame": {
+                                                                            "width": 32,
+                                                                            "height": 28
+                                                                        }
                                                                     }
                                                                 },
                                                                 {

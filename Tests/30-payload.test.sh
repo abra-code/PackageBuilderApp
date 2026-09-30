@@ -40,6 +40,13 @@ check "data file mode"           "0644"                      "$(payload_field 2 
 check "last row selected"        "2"                         "$(selected_index)"
 # New in the port: the drop has to reach the table, not just the model.
 check "the table shows three rows" "3"                       "$(ui_row_count $PAYLOAD_TABLE_ID)"
+# The artifact's name, not its path, then the destination and the hidden index.
+check "a row is name, destination, index" "$(printf 'Widget.app\t/Applications/Widget.app\t0')" "$(ui_rows $PAYLOAD_TABLE_ID | /usr/bin/sed -n 1p)"
+# The handler reads the index from the column just past the window's visible
+# ones; the harness takes both from the app, so only this ties them together.
+check "the index is the first hidden column" "$PAYLOAD_INDEX_COLUMN" "$(( $(/usr/bin/jq '[.. | objects | select(.id == 100) | .properties.columns | length][0]' "$OMC_APP_BUNDLE_PATH/Contents/Resources/Base.lproj/PackageBuilder.json") + 1 ))"
+names_of() { /bin/sh -c '. "$1"; shift; for s in "$@"; do printf "[%s]" "$(artifact_name "$s")"; done' sh "$OMC_APP_BUNDLE_PATH/Contents/Resources/Scripts/lib.packagebuilder.sh" "$@" 2>/dev/null; }
+check "names of odd sources" "[Recipes][agent-vm][tool][/]" "$(names_of '../Recipes/' '${ARTIFACTS_DIR}/agent-vm' 'tool' '/')"
 
 section "34. the verify toggles start on for a Mach-O and off otherwise"
 check "bundle is universal"      "2"                         "$(count /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES)"
@@ -81,6 +88,7 @@ select_payload_row 1
 omc_fire PackageBuilder.field.changed $DESTINATION_ID "/opt/local/bin/mytool"
 check "destination written"      "/opt/local/bin/mytool"     "$(payload_field 1 DESTINATION)"
 check "entry 0 untouched"        "/Applications/Widget.app"  "$(payload_field 0 DESTINATION)"
+check "the table shows it"       "$(printf 'mytool\t/opt/local/bin/mytool\t1')" "$(ui_rows $PAYLOAD_TABLE_ID | /usr/bin/sed -n 2p)"
 omc_fire PackageBuilder.field.changed $MODE_ID "0700"
 check "mode written"             "0700"                      "$(payload_field 1 MODE)"
 omc_fire PackageBuilder.field.changed $VERSION_FLAG_ID "--version"

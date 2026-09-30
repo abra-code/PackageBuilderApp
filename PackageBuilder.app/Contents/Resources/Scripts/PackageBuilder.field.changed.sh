@@ -102,9 +102,9 @@ if is_payload_field "$vid"; then
         exit 0
     fi
     mark_dirty
-    # Source, destination and mode are the table's three visible columns, so
-    # editing one has to be repeated there. Setting the rows drops the
-    # selection, hence the reselect.
+    # The table shows the source's name and the destination, so editing either
+    # has to be repeated there. Setting the rows drops the selection, hence the
+    # reselect.
     if is_payload_column_field "$vid"; then
         populate_payload_table
         select_payload_row "$idx"
