@@ -148,9 +148,12 @@ write_packaging_script() {
     local overwrite relocatable preinstall postinstall entry_count
     local component_root component_basename component_label add_to_path
     local component_scripts
+    # Set only when the document signs artifacts.
+    local delimiter_lines
     local component_own_version version_expression
     local total_components="$(component_count)"
     local identity="$(model_get /SIGNING/INSTALLER_IDENTITY)"
+    local application_identity="$(model_get /SIGNING/APPLICATION_IDENTITY)"
     local artifacts="$(artifacts_dir_abs)"
     local output_dir="$(output_dir_abs)"
     local name_pattern="$(model_get /PROJECT/PACKAGE_NAME)"
@@ -214,6 +217,9 @@ write_packaging_script() {
         printf '#   --artifacts-dir <d>  Where the payload artifacts are. Default: %s\n' "$(comment_safe "${artifacts:-(not set - required)}")"
         printf '#   --output-dir <d>     Where the signed package lands. Default: %s\n' "$(comment_safe "${output_dir:-(not set - required)}")"
         printf '#   --identity <i>       Installer signing identity. Default: %s\n' "$(comment_safe "${identity:-(none)}")"
+        printf '%s\n' '#   --application-identity <i>'
+        printf '#                        Developer ID Application identity that signs the staged\n'
+        printf '#                        copy of an item with no signature. Default: %s\n' "$(comment_safe "${application_identity:-(none - such items are refused)}")"
         printf '%s\n' '#   --project-dir <d>    Folder the installer resources are read from.'
         printf '%s\n' '#                        Default: the folder holding this script.'
         printf '%s\n' '#   --unsigned           Skip the identity check and productsign; the result is a'
@@ -226,6 +232,7 @@ write_packaging_script() {
         printf 'project_name=%s\n' "$(sh_quote "$name")"
         printf 'package_version=%s\n' "$(sh_quote "$version")"
         printf 'installer_identity=%s\n' "$(sh_quote "$identity")"
+        printf 'application_identity=%s\n' "$(sh_quote "$application_identity")"
         printf 'artifacts_dir=%s\n' "$(sh_quote "$artifacts")"
         printf 'output_dir=%s\n' "$(sh_quote "$output_dir")"
         # Derived from the script rather than frozen at export time. ${PROJECT_DIR}
@@ -243,8 +250,11 @@ write_packaging_script() {
 
         # --- Static helpers ----------------------------------------------------
         /bin/cat <<'PB_HELPERS'
+# fail_hint, when set, is said under the error: what would have fixed it.
+fail_hint=""
 fail() {
     printf '\nERROR: %s\n' "$*" >&2
+    [ -z "$fail_hint" ] || printf '       %s\n' "$fail_hint" >&2
     exit 1
 }
 
@@ -279,6 +289,7 @@ while [ $# -gt 0 ]; do
         --project-dir)   require_option_value "$1" "${2-}"; project_dir="$(absolute_path "$2")"; shift 2 ;;
         --identity)      require_option_value "$1" "${2-}"; installer_identity="$2"; do_codesign=1; shift 2 ;;
         --unsigned)      do_codesign=0; shift ;;
+        --application-identity) require_option_value "$1" "${2-}"; application_identity="$2"; shift 2 ;;
         -h|--help)       usage; exit 0 ;;
         *)               usage >&2; fail "Unknown option: $1" ;;
     esac
@@ -307,6 +318,13 @@ if [ "$do_codesign" = "1" ]; then
     case "$(/usr/bin/security find-identity -p basic -v 2>/dev/null)" in
         *"$installer_identity"*) ;;
         *) fail "Identity not in this keychain: $installer_identity" ;;
+    esac
+fi
+# The one that signs staged artifacts, looked up where codesign looks for it.
+if [ -n "$application_identity" ]; then
+    case "$(/usr/bin/security find-identity -p codesigning -v 2>/dev/null)" in
+        *"\"$application_identity\""*) ;;
+        *) fail "Application identity not in this keychain: $application_identity" ;;
     esac
 fi
 
@@ -405,6 +423,133 @@ check_signature() {
     fi
 }
 
+# check_artifact_signature <path> <label> <signed_by> <hardened> <timestamp>
+#
+# Every slice, as the app checks it. Used on a source by verify_entry and on a
+# signed copy by stage_entry.
+check_artifact_signature() {
+    c_path="$1"; c_label="$2"
+    c_report="$staging_dir/codesign.txt"
+    c_executable="$(executable_of "$c_path")" || c_executable=""
+    c_slices=""
+    [ -z "$c_executable" ] || c_slices="$(/usr/bin/lipo -archs "$c_executable" 2>/dev/null)" || c_slices=""
+    case "$c_slices" in
+        *' '*) ;;
+        *) c_slices="" ;;
+    esac
+    if [ -z "$c_slices" ]; then
+        check_signature "$c_report" "$c_path" "" "$c_label" "$3" "$4" "$5"
+        return 0
+    fi
+    # The whole file first, then every slice: an --arch pass validates the slice
+    # it is aimed at and nothing else, so data appended after the signed region
+    # passes every per-slice check and is refused only by the whole-file strict
+    # validation.
+    /usr/bin/codesign --verify --strict --verbose=2 "$c_path" >"$c_report" 2>&1 \
+        || fail "$c_label: the code signature does not verify: $(/bin/cat "$c_report")"
+    set -f
+    for c_arch in $c_slices; do
+        set +f
+        check_signature "$c_report" "$c_path" "$c_arch" "$c_label" "$3" "$4" "$5"
+        set -f
+    done
+    set +f
+}
+
+# --- Signing what arrives unsigned -------------------------------------------
+# The app's staging step, transcribed. With an application identity, an item
+# whose assertions ask for a signature, and that has a slice with no
+# certificate's signature - none at all, or the ad-hoc one the linker writes - is signed as
+# a staged copy with the hardened runtime and a secure timestamp, then checked
+# against those assertions. The artifacts folder is only ever read.
+
+# is_signable <path>: a Mach-O file, or an app.
+is_signable() {
+    g_executable="$(executable_of "$1")" || return 1
+    /usr/bin/lipo -archs "$g_executable" >/dev/null 2>&1 || return 1
+    [ -f "$1" ] && return 0
+    case "${1%/}" in
+        *.app) [ -f "$1/Contents/Info.plist" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# lacks_certificate <path>: succeeds when some slice has no certificate's
+# signature.
+lacks_certificate() {
+    l_executable="$(executable_of "$1")" || l_executable=""
+    l_slices=""
+    [ -z "$l_executable" ] || l_slices="$(/usr/bin/lipo -archs "$l_executable" 2>/dev/null)" || l_slices=""
+    case "$l_slices" in
+        *' '*) ;;
+        *) l_slices="native" ;;
+    esac
+    l_report="$staging_dir/codesign-probe.txt"
+    set -f
+    for l_arch in $l_slices; do
+        set +f
+        if [ "$l_arch" = "native" ]; then
+            /usr/bin/codesign --display --verbose=4 "$1" >"$l_report" 2>&1
+        else
+            /usr/bin/codesign --display --verbose=4 --arch "$l_arch" "$1" >"$l_report" 2>&1
+        fi
+        l_status=$?
+        l_unsigned="$(/usr/bin/grep -c 'code object is not signed at all' "$l_report")"
+        l_authority="$(/usr/bin/grep -c '^Authority=' "$l_report")"
+        [ "$l_unsigned" = "0" ] || return 0
+        if [ "$l_status" = "0" ] && [ "$l_authority" = "0" ]; then
+            return 0
+        fi
+        set -f
+    done
+    set +f
+    return 1
+}
+
+# sign_staged <path> <label>
+#
+# Signing replaces a signature, so what the old one carried is handed back: its
+# entitlements, and a bare executable's identifier (one with no signature is
+# named after itself). An app goes through the signer written out below, which
+# signs its nested code inside out.
+sign_staged() {
+    t_entitlements="$staging_dir/sign-entitlements.plist"
+    t_details="$staging_dir/sign-details.txt"
+    t_log="$staging_dir/sign.txt"
+    /bin/rm -f "$t_entitlements"
+    /usr/bin/codesign --display --verbose=2 --entitlements - --xml "$1" >"$t_entitlements" 2>"$t_details"
+    [ -s "$t_entitlements" ] || /bin/rm -f "$t_entitlements"
+    # Except get-task-allow, a debug build's, which the notary service refuses.
+    [ ! -f "$t_entitlements" ] || /usr/bin/plutil -remove 'com\.apple\.security\.get-task-allow' "$t_entitlements" >/dev/null 2>&1
+    if [ -d "$1" ]; then
+        [ -f "$staging_dir/codesign_applet.sh" ] \
+            || fail "$2 is an app with no signature, and this script was exported from a document with no application identity, so it has no signer for apps. Export it again after choosing one, or sign $2 before running this script."
+        if [ -f "$t_entitlements" ]; then
+            /bin/sh "$staging_dir/codesign_applet.sh" --brief --no-entitlements-search "$1" "$application_identity" "$t_entitlements" >"$t_log" 2>&1
+        else
+            /bin/sh "$staging_dir/codesign_applet.sh" --brief --no-entitlements-search "$1" "$application_identity" >"$t_log" 2>&1
+        fi
+        t_status=$?
+        # The signer registers what it signed with Launch Services, which is
+        # wrong for a copy in a scratch folder.
+        /System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister -u "$1" >/dev/null 2>&1
+        [ "$t_status" = "0" ] || fail "Could not sign $2 with $application_identity: $(/bin/cat "$t_log")"
+        return 0
+    fi
+    t_identifier="$(/usr/bin/sed -n 's/^Identifier=//p' "$t_details" | /usr/bin/head -n 1)"
+    [ -n "$t_identifier" ] || t_identifier="$(/usr/bin/basename "$1")"
+    /bin/chmod u+w "$1"
+    if [ -f "$t_entitlements" ]; then
+        /usr/bin/codesign --force --options runtime --timestamp --identifier "$t_identifier" \
+            --entitlements "$t_entitlements" --sign "$application_identity" "$1" >"$t_log" 2>&1
+    else
+        /usr/bin/codesign --force --options runtime --timestamp --identifier "$t_identifier" \
+            --sign "$application_identity" "$1" >"$t_log" 2>&1
+    fi
+    t_status=$?
+    [ "$t_status" = "0" ] || fail "Could not sign $2 with $application_identity: $(/bin/cat "$t_log")"
+}
+
 # verify_entry <source> <archs> <signed_by> <hardened> <timestamp> <version_flag>
 verify_entry() {
     v_source="$1"; v_archs="$2"; v_signed_by="$3"
@@ -445,31 +590,26 @@ verify_entry() {
     fi
 
     if [ -n "$v_signed_by" ] || [ "$v_hardened" = "1" ] || [ "$v_timestamp" = "1" ]; then
-        v_report="$staging_dir/codesign.txt"
-        v_slices=""
-        [ -z "$v_executable" ] || v_slices="$(/usr/bin/lipo -archs "$v_executable" 2>/dev/null)" || v_slices=""
-        case "$v_slices" in
-            *' '*) ;;
-            *) v_slices="" ;;
-        esac
-        if [ -z "$v_slices" ]; then
-            check_signature "$v_report" "$v_source" "" "$v_label" "$v_signed_by" "$v_hardened" "$v_timestamp"
+        if [ -n "$application_identity" ] && is_signable "$v_source" && lacks_certificate "$v_source"; then
+            # Signed later, as a staged copy, and checked then. Whether the
+            # identity is one the entry accepts is known now, before anything
+            # is signed.
+            if [ -n "$v_signed_by" ]; then
+                case "$application_identity" in
+                    "$v_signed_by"*) ;;
+                    *) fail "$v_label: it would be signed with '$application_identity', but it has to be signed by '$v_signed_by'" ;;
+                esac
+            fi
+            printf '  %s: no signature of its own - the staged copy will be signed with %s\n' "$v_label" "$application_identity"
         else
-            set -f
-            # The whole file first, then every slice: an --arch pass validates
-            # the slice it is aimed at and nothing else, so data appended after
-            # the signed region passes every per-slice check and is refused
-            # only by the whole-file strict validation.
-            /usr/bin/codesign --verify --strict --verbose=2 "$v_source" >"$v_report" 2>&1 \
-                || fail "$v_label: the code signature does not verify: $(/bin/cat "$v_report")"
-            for v_arch in $v_slices; do
-                set +f
-                check_signature "$v_report" "$v_source" "$v_arch" "$v_label" "$v_signed_by" "$v_hardened" "$v_timestamp"
-                set -f
-            done
-            set +f
+            # Said only where signing the staged copy would have fixed it.
+            if [ -z "$application_identity" ] && is_signable "$v_source" && lacks_certificate "$v_source"; then
+                fail_hint="It has no signature, or only an ad-hoc one: pass --application-identity and this script signs the copy it packages."
+            fi
+            check_artifact_signature "$v_source" "$v_label" "$v_signed_by" "$v_hardened" "$v_timestamp"
+            printf '  %s: signature ok\n' "$v_label"
+            fail_hint=""
         fi
-        printf '  %s: signature ok\n' "$v_label"
     fi
 
     if [ -n "$v_version_flag" ]; then
@@ -539,7 +679,7 @@ pb_assert_inside() {
     esac
 }
 
-# stage_entry <source> <destination> <mode>
+# stage_entry <source> <destination> <mode> <signed_by> <hardened> <timestamp>
 #
 # This carries its own copy of the app's payload-root containment guard rather
 # than calling into a library, because it runs on a build machine where no
@@ -548,6 +688,7 @@ pb_assert_inside() {
 # buildable by the script the app exported from it.
 stage_entry() {
     s_source="$1"; s_destination="$2"; s_mode="$3"
+    s_signed_by="${4-}"; s_hardened="${5-}"; s_timestamp="${6-}"
     # Refused outright rather than resolved: resolving ".." lexically is wrong
     # wherever a symlink is involved.
     case "/$s_destination/" in
@@ -623,11 +764,48 @@ stage_entry() {
         fail "Destination $s_destination is a symlink staged by an earlier item"
     fi
     /usr/bin/ditto "$s_source" "$s_target" || fail "Could not copy $s_source"
+    # Signed before the mode is applied: signing rewrites the file, and a mode
+    # such as 0555 would forbid it. Decided on the source, with the test
+    # verify_entry used to leave the signature checks to this step: an app
+    # staged under a name without ".app" is not an app to is_signable, and the
+    # copy would ship unsigned and unchecked.
+    if [ -n "$application_identity" ] &&
+       { [ -n "$s_signed_by" ] || [ "$s_hardened" = "1" ] || [ "$s_timestamp" = "1" ]; } &&
+       is_signable "$s_source" && lacks_certificate "$s_source"; then
+        sign_staged "$s_target" "$s_relative"
+        check_artifact_signature "$s_target" "$s_relative" "$s_signed_by" "$s_hardened" "$s_timestamp"
+        printf '  signed %s with %s\n' "$s_relative" "$application_identity"
+    fi
     /bin/chmod "$s_mode" "$s_target" || fail "Could not set mode $s_mode on $s_relative"
     printf '  staged %s\n' "$s_relative"
 }
 PB_HELPERS
         printf '\n'
+
+        # --- The signer an app needs, only when it can be asked for ------------
+        # A bare executable is signed with one codesign call, but an app's nested
+        # code has to be signed inside out, which is what the app's bundled
+        # codesign_applet.sh does. The script has to run where PackageBuilder is
+        # not installed, so the signer is written into it whole, and only for a
+        # document that signs artifacts: the rest would carry a thousand lines
+        # nothing runs. The heredoc delimiter is checked against the signer's
+        # own lines, since one of them matching would end the text early.
+        if [ -n "$application_identity" ]; then
+            if [ ! -f "$codesign_applet" ]; then
+                printf 'export: the bundled signer is missing: %s\n' "$codesign_applet" >&2
+                return 1
+            fi
+            delimiter_lines="$(/usr/bin/grep -cx 'PB_CODESIGN_APPLET' "$codesign_applet")"
+            if [ "$delimiter_lines" != "0" ]; then
+                printf 'export: the bundled signer contains the line that would end its heredoc\n' >&2
+                return 1
+            fi
+            printf '%s\n' '# --- The signer for apps, from PackageBuilder'\''s bundled codesign_applet.sh ---'
+            printf '%s\n' '/bin/cat > "$staging_dir/codesign_applet.sh" <<'\''PB_CODESIGN_APPLET'\'' || fail "Could not write the signer for apps"'
+            /bin/cat "$codesign_applet" || return 1
+            printf '%s\n' 'PB_CODESIGN_APPLET'
+            printf '\n'
+        fi
 
         # --- What the app refuses about the domain -----------------------------
         # The same two refusals check_distribution_preconditions makes, written
@@ -772,10 +950,15 @@ PB_HELPERS
             if [ -n "$domain_problem" ]; then
                 printf 'fail %s\n' "$(sh_quote "Item $((index + 1)): $domain_problem")"
             fi
-            printf 'stage_entry %s %s %s\n' \
+            # The three signature assertions again, because an item signed as
+            # it is staged is checked against them once it has been.
+            printf 'stage_entry %s %s %s %s %s %s\n' \
                 "$(emit_runtime_path "$(payload_get "$index" SOURCE "$component_index")")" \
                 "$(emit_runtime_text "$(target_path "$stored")")" \
-                "$(sh_quote "$(payload_get "$index" MODE "$component_index")")"
+                "$(sh_quote "$(payload_get "$index" MODE "$component_index")")" \
+                "$(sh_quote "$(payload_get "$index" VERIFY/SIGNED_BY "$component_index")")" \
+                "$(sh_quote "$(payload_bool_get "$index" VERIFY/HARDENED_RUNTIME "$component_index")")" \
+                "$(sh_quote "$(payload_bool_get "$index" VERIFY/SECURE_TIMESTAMP "$component_index")")"
             index=$((index + 1))
         done
         printf '\n'

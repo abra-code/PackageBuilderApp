@@ -212,7 +212,7 @@ omc_run PackageBuilder.export.script
 check "the script was written"   "yes"                        "$([ -f "$user_script" ] && echo yes || echo no)"
 check "and sh accepts it"        "0"                          "$(/bin/sh -n "$user_script" 2>/dev/null; echo $?)"
 check "it says who it installs for" "1"                       "$(/usr/bin/grep -c 'installs for the user who runs it' "$user_script" | /usr/bin/tr -d ' ')"
-check "destinations are home-relative" "1"                    "$(/usr/bin/grep -c "^stage_entry .* '/.local/bin/replay' '0755'\$" "$user_script" | /usr/bin/tr -d ' ')"
+check "destinations are home-relative" "1"                    "$(/usr/bin/grep -c "^stage_entry .* '/.local/bin/replay' '0755' " "$user_script" | /usr/bin/tr -d ' ')"
 /bin/rm -rf "$OMCTEST_WORK/user-out"
 /bin/sh "$user_script" --unsigned --output-dir "$OMCTEST_WORK/user-out" > "$OMCTEST_WORK/user-run.log" 2>&1
 check "the script succeeded"     "0"                          "$?"

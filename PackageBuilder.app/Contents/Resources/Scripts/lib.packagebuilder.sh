@@ -132,6 +132,7 @@ BACKGROUND_ID=164
 OUTPUT_DIR_ID=170
 PACKAGE_NAME_ID=172
 IDENTITY_PICKER_ID=174
+APPLICATION_IDENTITY_ID=176
 
 # The component list in the sidebar and its button strip, plus the three
 # component fields that had no control before there was a list to tell one
@@ -574,6 +575,9 @@ model_normalize() {
     ensure_string /DISTRIBUTION/RESOURCES/BACKGROUND ""
     ensure_bool /SIGNING/ENABLED 1
     ensure_string /SIGNING/INSTALLER_IDENTITY ""
+    # Empty means artifacts are packaged as they are, which is what every
+    # document written before the key existed has always done.
+    ensure_string /SIGNING/APPLICATION_IDENTITY ""
 
     case "$(model_get /DISTRIBUTION/CUSTOMIZE)" in
         never|allow|always) ;;
@@ -918,6 +922,7 @@ push_model_to_window() {
     # rather than declared in the window JSON. This also selects the identity
     # the document names, which is why it runs inside the loading guard.
     refresh_identity_picker
+    refresh_application_identity_picker
 
     # Both start off: Reveal has nothing to reveal until a build succeeds, and
     # Notarize has nothing to hand over.
@@ -3256,6 +3261,107 @@ resolve_identity_value() {
     if [ -n "$line" ]; then printf '%s' "$line"; else printf '%s' "$NO_IDENTITY_TAG"; fi
 }
 
+# --- Application identity picker ---------------------------------------------
+# The identity the build signs staged artifacts with when they arrive with no
+# signature, or only an ad-hoc one (lib.packagebuilder.build.sh, "Signing what
+# arrives unsigned"). A Developer ID Application certificate, which codesign
+# looks up under the codesigning policy.
+list_application_identities() {
+    /usr/bin/security find-identity -v -p codesigning 2>/dev/null \
+        | /usr/bin/grep "Developer ID Application" \
+        | /usr/bin/sed 's/.*"\(.*\)".*/\1/'
+}
+
+# Succeed when the named application identity is in the keychain. Compared as a
+# whole line, for the reason identity_is_present gives.
+application_identity_is_present() {
+    local wanted="$1"
+    [ -n "$wanted" ] || return 1
+    list_application_identities | /usr/bin/grep -qxF "$wanted"
+}
+
+# The row that leaves artifacts as they are, and the tag it carries. The tag
+# cannot collide with an identity: every one of those holds "Developer ID
+# Application".
+NO_ARTIFACT_SIGN_LABEL="Don't Sign Artifacts"
+NO_ARTIFACT_SIGN_TAG="__pb_no_artifact_sign__"
+
+# Fill the application identity picker from the keychain and select the row the
+# document names.
+#
+# Simpler than the installer picker, because this one is off unless asked for:
+# an empty SIGNING.APPLICATION_IDENTITY is the "Don't Sign Artifacts" row, so
+# there is no separate flag to agree with and no default to pick. The rows are
+# every installed certificate, then the identity the document names when this
+# keychain lacks it (so the menu shows what the document says), then "Don't Sign
+# Artifacts". The ordered identities go to application_identities.txt for the
+# same reason identities.txt exists: a 1-based index resolves through it.
+refresh_application_identity_picker() {
+    local map_file="$(state_dir)/application_identities.txt"
+    local stored="$(model_get /SIGNING/APPLICATION_IDENTITY)"
+    # Set once per iteration below.
+    local identity
+
+    list_application_identities > "$map_file"
+
+    local options="" found=0
+    while IFS= read -r identity; do
+        [ -n "$identity" ] || continue
+        if [ -n "$options" ]; then options="$options,"; fi
+        options="$options{\"title\":\"$(json_escape "$identity")\",\"tag\":\"$(json_escape "$identity")\"}"
+        if [ "$identity" = "$stored" ]; then
+            found=1
+        fi
+    done < "$map_file"
+
+    if [ -n "$stored" ] && [ "$found" != "1" ]; then
+        if [ -n "$options" ]; then options="$options,"; fi
+        options="$options{\"title\":\"$(json_escape "$(missing_identity_title "$stored")")\",\"tag\":\"$(json_escape "$stored")\"}"
+        printf '%s\n' "$stored" >> "$map_file"
+    fi
+
+    if [ -n "$options" ]; then options="$options,"; fi
+    options="$options{\"title\":\"$(json_escape "$NO_ARTIFACT_SIGN_LABEL")\",\"tag\":\"$(json_escape "$NO_ARTIFACT_SIGN_TAG")\"}"
+
+    set_property "$APPLICATION_IDENTITY_ID" options "[$options]"
+    enable_view "$APPLICATION_IDENTITY_ID" 1
+
+    local selected="$stored"
+    [ -n "$selected" ] || selected="$NO_ARTIFACT_SIGN_TAG"
+    local previous_flag="$(pb_get pb_loading)"
+    pb_set pb_loading "$(/bin/date '+%s')"
+    set_value "$APPLICATION_IDENTITY_ID" "$selected"
+    pb_set pb_loading "$previous_flag"
+    return 0
+}
+
+# Turn what the application identity picker delivered into the value the model
+# stores: an identity, or empty for "Don't Sign Artifacts". A tag comes back as
+# itself; a 1-based index resolves through application_identities.txt, with the
+# row after the last line being "Don't Sign Artifacts". Prints NO_ARTIFACT_SIGN_TAG
+# for that row, so the caller can tell it from a value that matched nothing,
+# which prints nothing at all.
+resolve_application_identity_value() {
+    local delivered="$1"
+    [ -n "$delivered" ] || return 0
+    case "$delivered" in
+        ''|*[!0-9]*) printf '%s' "$delivered"; return 0 ;;
+    esac
+
+    local map_file="$(state_dir)/application_identities.txt"
+    local row_count="$(/usr/bin/grep -c '' "$map_file" 2>/dev/null)"
+    [ -n "$row_count" ] || row_count=0
+
+    if [ "$delivered" = "$((row_count + 1))" ]; then
+        printf '%s' "$NO_ARTIFACT_SIGN_TAG"
+        return 0
+    fi
+    if [ "$delivered" -lt 1 ] || [ "$delivered" -gt "$row_count" ]; then
+        return 0
+    fi
+    /usr/bin/sed -n "${delivered}p" "$map_file" 2>/dev/null
+}
+
 # --- Field map (design section 9.2) ------------------------------------------
 # The single place where the window's view ids and the document schema meet.
 # Print the model key path a scalar control writes to. Arguments: view id
@@ -3290,6 +3396,7 @@ field_key_path() {
         "$OUTPUT_DIR_ID")        printf '/PROJECT/OUTPUT_DIR' ;;
         "$PACKAGE_NAME_ID")      printf '/PROJECT/PACKAGE_NAME' ;;
         "$IDENTITY_PICKER_ID")   printf '/SIGNING/INSTALLER_IDENTITY' ;;
+        "$APPLICATION_IDENTITY_ID") printf '/SIGNING/APPLICATION_IDENTITY' ;;
         *) printf '' ;;
     esac
 }

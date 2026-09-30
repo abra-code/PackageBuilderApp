@@ -193,6 +193,20 @@ if [ "$vid" = "$IDENTITY_PICKER_ID" ]; then
     fi
 fi
 
+# The application identity picker, resolved the same way. "Don't Sign
+# Artifacts" is stored as the empty string, which is what turns signing the
+# staged copies off; a value that matches no row writes nothing.
+if [ "$vid" = "$APPLICATION_IDENTITY_ID" ]; then
+    delivered="$value"
+    value="$(resolve_application_identity_value "$value")"
+    if [ -z "$value" ]; then
+        dbg "field.changed: application identity picker delivered [$delivered], which matches no row"
+        model_unlock
+        exit 0
+    fi
+    [ "$value" != "$NO_ARTIFACT_SIGN_TAG" ] || value=""
+fi
+
 # Who the package installs for. Only the two tags are a gesture; anything else
 # is a picker being written to, and writing it would turn a per-user document
 # into a system one, since install_domain reads every other value as "system".

@@ -211,7 +211,7 @@ key_type_of() {
 /DISTRIBUTION/RESOURCES/WELCOME|/DISTRIBUTION/RESOURCES/CONCLUSION|\
 /DISTRIBUTION/RESOURCES/BACKGROUND) printf 'string' ;;
         /SIGNING/ENABLED) printf 'bool' ;;
-        /SIGNING/INSTALLER_IDENTITY) printf 'string' ;;
+        /SIGNING/INSTALLER_IDENTITY|/SIGNING/APPLICATION_IDENTITY) printf 'string' ;;
         # Payload scalars, whatever the component and whatever the entry.
         /COMPONENTS/*/PAYLOAD/*/SOURCE|/COMPONENTS/*/PAYLOAD/*/DESTINATION|\
 /COMPONENTS/*/PAYLOAD/*/OWNER|/COMPONENTS/*/PAYLOAD/*/GROUP|\
@@ -266,6 +266,7 @@ Usage:
   pkgbuilder verify <doc>
   pkgbuilder build <doc> [--dry-run] [--version <V>] [--artifacts-dir <D>]
                  [--output-dir <D>] [--identity <I>] [--unsigned]
+                 [--application-identity <I>]
   pkgbuilder inspect <package.pkg>
   pkgbuilder export-script <doc> <out.sh>
   pkgbuilder import-pkgproj <in.pkgproj> <out.pkgbld> [--force]
@@ -1001,6 +1002,7 @@ build_dry_run() {
 
 cmd_build() {
     local document_path="" dry_run="0" version="" artifacts="" output="" identity="" unsigned="0"
+    local application_identity=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --dry-run)       dry_run="1"; shift ;;
@@ -1009,6 +1011,7 @@ cmd_build() {
             --output-dir)    need_value "$1" $# "$2" || return 2; output="$2"; shift 2 ;;
             --identity)      need_value "$1" $# "$2" || return 2; identity="$2"; shift 2 ;;
             --unsigned)      unsigned="1"; shift ;;
+            --application-identity) need_value "$1" $# "$2" || return 2; application_identity="$2"; shift 2 ;;
             -h|--help)       usage; return 2 ;;
             -*) fail_usage "build: unknown option: $1"; return 2 ;;
             *) document_path="$1"; shift ;;
@@ -1028,6 +1031,9 @@ cmd_build() {
         model_set_bool /SIGNING/ENABLED 1
     fi
     [ "$unsigned" != "1" ] || model_set_bool /SIGNING/ENABLED 0
+    # Signs the staged copy of any item that has no signature of its own, for
+    # this run only, like every override above.
+    [ -z "$application_identity" ] || model_set /SIGNING/APPLICATION_IDENTITY "$application_identity"
 
     if [ "$dry_run" = "1" ]; then
         clear_log

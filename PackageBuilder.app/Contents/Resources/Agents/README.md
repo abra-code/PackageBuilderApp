@@ -41,7 +41,9 @@ pseudo-JSON giving every key with its type, default and constraint, which
   saying what must be true of that artifact.
 - `DISTRIBUTION` - installer presentation, host architectures, and `DOMAIN`: who
   the package installs for (see below).
-- `SIGNING` - whether to sign, and with which Developer ID Installer identity.
+- `SIGNING` - whether to sign, and with which Developer ID Installer identity;
+  and `APPLICATION_IDENTITY`, a Developer ID Application identity to sign
+  artifacts that arrive with no signature (see "Signing unsigned artifacts").
 
 Paths may use `${ARTIFACTS_DIR}`, `${PROJECT_DIR}`, `${NAME}`, `${VERSION}` and
 `${DATE}`. A path under the artifacts folder is stored as `${ARTIFACTS_DIR}/...`
@@ -259,6 +261,7 @@ except the version cross-check.
 ```
 pkgbuilder build <doc> [--dry-run] [--version <V>] [--artifacts-dir <D>]
                  [--output-dir <D>] [--identity <I>] [--unsigned]
+                 [--application-identity <I>]
 ```
 
 Verify, stage, `pkgbuild`, patch `PackageInfo`, `productbuild`, `productsign`, and
@@ -288,6 +291,34 @@ macOS will refuse to install it on another Mac. It skips the *installer*
 signature only - every payload `VERIFY` assertion still runs, `SIGNED_BY`
 included, so an unsigned build of a document that asserts Developer ID still
 fails on a machine whose artifacts are ad-hoc signed.
+
+`--application-identity` sets `SIGNING.APPLICATION_IDENTITY` for this run only.
+
+#### Signing unsigned artifacts
+
+A binary straight out of `swift build`, or an app from `xcodebuild build` set to
+sign to run locally, has no signature or only an ad-hoc one, and a `VERIFY` that
+asks for a Developer ID signature refuses it. With `SIGNING.APPLICATION_IDENTITY`
+set to a `Developer ID Application` identity in this keychain, the build signs the
+*staged copy* of such an item instead, and the file in the artifacts folder is
+never changed:
+
+- Only an item whose `VERIFY` asks for a signature (`SIGNED_BY`,
+  `HARDENED_RUNTIME` or `SECURE_TIMESTAMP`), and whose artifact has a
+  slice with no certificate's signature, is signed. One whose every slice is
+  signed with a certificate is left alone and verified as before, even when it
+  fails.
+- Only a single Mach-O file or an `.app` is signed. An app's nested code is signed
+  inside out; a framework or other bundle has to arrive signed.
+- The signature has the hardened runtime and a secure timestamp (which needs the
+  network). Entitlements the old ad-hoc signature carried are kept, except
+  `get-task-allow`, which the notary service refuses, and so is a
+  bare executable's identifier; one with no signature at all is named after
+  itself.
+- `verify` and the build's verify stage report such an item as "will be signed"
+  and check the rest of its assertions; the staging step signs the copy and then
+  holds it to every `VERIFY` assertion, so a `SIGNED_BY` the identity does not
+  match is refused before anything is signed.
 
 ### inspect - what is in a built package?
 

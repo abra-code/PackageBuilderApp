@@ -175,6 +175,27 @@ Set these with `pkgbuilder set`, which validates the value:
 
 For a plain resource file that asserts nothing, add it with `--no-verify`.
 
+### Artifacts that arrive unsigned
+
+A binary from `swift build`, or an app from `xcodebuild build` set to sign to run
+locally, has no signature or only an ad-hoc one, and a `VERIFY` that asks for a
+signature refuses it. Rather than signing the artifacts folder by hand, set a
+`Developer ID Application` identity in the document (or for one run with
+`build --application-identity`):
+
+```sh
+"$PB" set "$DOC" /SIGNING/APPLICATION_IDENTITY "Developer ID Application: Example Inc (TEAMID)"
+```
+
+The build then signs the **staged copy** of each such item, with the hardened
+runtime and a secure timestamp, keeping any entitlements the ad-hoc signature
+carried except `get-task-allow` (notarization refuses it), and checks the signed copy against its `VERIFY`. The artifacts folder is
+never written to. Only an item that asks for a signature and has no certificate's
+signature is touched; one signed with a certificate is verified as it is, even
+when that fails. A single Mach-O file and an `.app` can be signed this way; a
+framework or other bundle has to arrive signed. The identity must be in this
+machine's keychain, and signing needs the network for the timestamp.
+
 ## Paths and tokens
 
 Paths in a document may use `${ARTIFACTS_DIR}`, `${PROJECT_DIR}`, `${NAME}`,

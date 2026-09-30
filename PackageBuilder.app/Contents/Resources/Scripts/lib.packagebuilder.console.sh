@@ -134,3 +134,10 @@ report_next_step() {
     append_log "The profile is made once with: xcrun notarytool store-credentials"
     return 0
 }
+
+# --- Where signing the staged copies is turned on -----------------------------
+# Printed by the verify stage under a refusal that it would have fixed: an
+# artifact with no signature, or only an ad-hoc one.
+sign_artifacts_hint() {
+    printf '%s' "set SIGNING.APPLICATION_IDENTITY, or pass --application-identity to build, and pkgbuilder signs the copy it packages, leaving this file as it is"
+}

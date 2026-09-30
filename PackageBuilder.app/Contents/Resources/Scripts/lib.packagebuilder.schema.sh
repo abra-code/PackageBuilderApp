@@ -152,7 +152,7 @@ SCHEMA_PAYLOAD_KEYS="SOURCE DESTINATION OWNER GROUP MODE VERIFY"
 SCHEMA_VERIFY_KEYS="ARCHITECTURES SIGNED_BY HARDENED_RUNTIME SECURE_TIMESTAMP VERSION_FLAG"
 SCHEMA_DISTRIBUTION_KEYS="TITLE DOMAIN HOST_ARCHITECTURES CUSTOMIZE REQUIRE_SCRIPTS RESOURCES"
 SCHEMA_RESOURCE_KEYS="README LICENSE WELCOME CONCLUSION BACKGROUND"
-SCHEMA_SIGNING_KEYS="ENABLED INSTALLER_IDENTITY"
+SCHEMA_SIGNING_KEYS="ENABLED INSTALLER_IDENTITY APPLICATION_IDENTITY"
 
 # The format version this app writes. A document declaring a higher one is
 # reported and still checked: refusing outright would leave an agent with no
@@ -512,6 +512,7 @@ schema_check_document() {
         schema_check_keys /SIGNING "SIGNING" "$SCHEMA_SIGNING_KEYS"
         schema_check_type /SIGNING/ENABLED bool "SIGNING/ENABLED" 0
         schema_check_type /SIGNING/INSTALLER_IDENTITY string "SIGNING/INSTALLER_IDENTITY" 0
+        schema_check_type /SIGNING/APPLICATION_IDENTITY string "SIGNING/APPLICATION_IDENTITY" 0
         if [ "$(schema_value /SIGNING/ENABLED)" = "true" ] && [ -z "$(schema_value /SIGNING/INSTALLER_IDENTITY)" ]; then
             schema_warn "SIGNING/ENABLED is true but INSTALLER_IDENTITY is empty - the build will refuse until one is chosen"
         fi

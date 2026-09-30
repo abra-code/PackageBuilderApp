@@ -116,6 +116,14 @@ against `ARTIFACTS_DIR` when it lives below that folder.
   authority, hardened runtime, secure timestamp, and a cross-check that the
   binary's own reported version matches the document's. That last one is what
   catches a stale artifacts folder shipping old code under a new version number.
+- **Unsigned artifacts can be signed on the way in.** Choose an Application
+  identity on the Build tab, and an item whose Verify settings ask for a signature
+  but which arrived with none, or only the ad-hoc one `swift build` leaves, is
+  signed as it is copied into the package: hardened runtime, secure timestamp, its
+  entitlements kept (all but the debugger's `get-task-allow`, which notarization
+  refuses). Only the packaged copy is signed; the artifacts folder is
+  never written to. A single executable and an `.app` are supported; a framework
+  has to arrive signed.
 
 ## Status
 

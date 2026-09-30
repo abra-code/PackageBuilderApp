@@ -628,7 +628,8 @@
                                                                     ],
                                                                     "actionID": "PackageBuilder.field.changed",
                                                                     "frame": {
-                                                                        "width": 320
+                                                                        "width": 320,
+                                                                        "alignment": "leading"
                                                                     }
                                                                 }
                                                             },
@@ -1439,7 +1440,8 @@
                                                     "actionID": "PackageBuilder.field.changed",
                                                     "help": "The user choice needs no administrator password: every destination starts with ~/ and installs into the home folder of whoever runs the installer",
                                                     "frame": {
-                                                        "width": 320
+                                                        "width": 320,
+                                                        "alignment": "leading"
                                                     }
                                                 }
                                             },
@@ -1527,7 +1529,8 @@
                                                     ],
                                                     "actionID": "PackageBuilder.field.changed",
                                                     "frame": {
-                                                        "width": 140
+                                                        "width": 140,
+                                                        "alignment": "leading"
                                                     }
                                                 }
                                             },
@@ -1851,11 +1854,59 @@
                                                 ],
                                                 "actionID": "PackageBuilder.field.changed",
                                                 "frame": {
-                                                    "maxWidth": "infinity"
+                                                    "maxWidth": "infinity",
+                                                    "alignment": "leading"
                                                 }
                                             }
                                         }
                                     ]
+                                },
+                                {
+                                    "type": "HStack",
+                                    "properties": {
+                                        "spacing": 8
+                                    },
+                                    "children": [
+                                        {
+                                            "type": "Text",
+                                            "properties": {
+                                                "text": "Application identity",
+                                                "frame": {
+                                                    "width": 130,
+                                                    "alignment": "trailing"
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "type": "Picker",
+                                            "id": 176,
+                                            "properties": {
+                                                "pickerStyle": "menu",
+                                                "labelsHidden": true,
+                                                "options": [
+                                                    "Don't Sign Artifacts"
+                                                ],
+                                                "actionID": "PackageBuilder.field.changed",
+                                                "help": "Signs the packaged copy of an item that has no signature, or only an ad-hoc one, when its Verify settings ask for a signature",
+                                                "frame": {
+                                                    "maxWidth": "infinity",
+                                                    "alignment": "leading"
+                                                }
+                                            }
+                                        }
+                                    ]
+                                },
+                                {
+                                    "type": "Text",
+                                    "id": 177,
+                                    "properties": {
+                                        "text": "An item whose Verify settings ask for a signature, and that has none or only an ad-hoc one, is signed with this identity as it is staged, with the hardened runtime and a secure timestamp. The file in the artifacts folder is left as it is.",
+                                        "font": "footnote",
+                                        "foregroundStyle": "secondary",
+                                        "padding": {
+                                            "leading": 138
+                                        }
+                                    }
                                 },
                                 {
                                     "type": "Text",

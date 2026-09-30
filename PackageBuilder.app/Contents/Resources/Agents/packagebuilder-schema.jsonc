@@ -257,11 +257,25 @@
                                            // produces an unsigned package and
                                            // never writes it to OUTPUT_DIR
                                            // (design 8.3).
-    "INSTALLER_IDENTITY": "Developer ID Installer: Example Inc (T9NM2ZLDTY)"
+    "INSTALLER_IDENTITY": "Developer ID Installer: Example Inc (T9NM2ZLDTY)",
                                            // string. An INSTALLER identity, not
                                            // an Application one - productsign
                                            // needs "Developer ID Installer".
                                            // Must be in this machine's keychain.
+    "APPLICATION_IDENTITY": ""             // string, optional, default "". A
+                                           // "Developer ID Application" identity.
+                                           // When set, a payload item whose
+                                           // VERIFY asks for a signature, and
+                                           // that has none or only an ad-hoc
+                                           // one, is signed with it as it is
+                                           // staged (hardened runtime, secure
+                                           // timestamp, its entitlements kept
+                                           // except get-task-allow),
+                                           // then checked against VERIFY. Only
+                                           // a single Mach-O file or an .app is
+                                           // signed; the file in the artifacts
+                                           // folder is never changed. Must be
+                                           // in this machine's keychain.
   }
 }
 

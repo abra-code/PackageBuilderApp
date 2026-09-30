@@ -25,6 +25,9 @@
 #   report_next_step                                                - the one
 #       place the two frontends genuinely say different things, because what
 #       comes after a signed package is a button here and a command there.
+#   sign_artifacts_hint                                             - where to
+#       turn on signing the staged copies, which is a menu here and an option
+#       there.
 #
 # POSIX sh only. Validate with "sh -n", never "bash -n".
 
@@ -175,4 +178,11 @@ report_next_step() {
     append_log "its \"Sign before submitting\" option off - this package is already signed,"
     append_log "so Notarize should verify that signature rather than replace it."
     return 0
+}
+
+# --- Where signing the staged copies is turned on -----------------------------
+# Printed by the verify stage under a refusal that it would have fixed: an
+# artifact with no signature, or only an ad-hoc one.
+sign_artifacts_hint() {
+    printf '%s' "choose an Application identity on the Build tab and PackageBuilder signs the copy it packages, leaving this file as it is"
 }

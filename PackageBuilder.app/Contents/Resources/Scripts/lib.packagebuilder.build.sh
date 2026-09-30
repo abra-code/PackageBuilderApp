@@ -16,6 +16,7 @@
 pkgbuild_tool="/usr/bin/pkgbuild"
 pkgutil_tool="/usr/sbin/pkgutil"
 ditto_tool="/usr/bin/ditto"
+lsregister_tool="/System/Library/Frameworks/CoreServices.framework/Versions/Current/Frameworks/LaunchServices.framework/Versions/Current/Support/lsregister"
 
 # --- Step rail ----------------------------------------------------------------
 # Which view id belongs to which stage. The drawing itself - rail_set and
@@ -428,6 +429,14 @@ check_preconditions() {
 
     [ -z "$probe_root" ] || /bin/rm -rf "$probe_root"
 
+    # Here rather than with the installer identity, because this one is about
+    # the payload: Verify Payload and the component stage run these checks and
+    # not the signing ones, and both depend on it.
+    local application_identity="$(model_get /SIGNING/APPLICATION_IDENTITY)"
+    if [ -n "$application_identity" ] && ! application_identity_is_present "$application_identity"; then
+        fail_precondition "The application identity \"$application_identity\" is not in this machine's keychain"
+    fi
+
     [ "$precondition_failures" -eq 0 ]
 }
 
@@ -822,6 +831,271 @@ verify_signature() {
     return 0
 }
 
+# Check an artifact's signature against the assertions an entry makes, on every
+# slice. Used on a source by the verify stage and on a signed copy by staging.
+# Arguments: artifact path, label for messages, expected authority prefix,
+#            want hardened runtime, want timestamp
+verify_artifact_signature() {
+    local artifact="$1" label="$2"
+    local signed_by="$3" want_hardened="$4" want_timestamp="$5"
+    # Set by the loop below.
+    local arch
+    # Every slice, not just the one this Mac happens to run.
+    #
+    # codesign --verify and --display report the *native* architecture alone
+    # unless told otherwise, so a universal artifact whose x86_64 slice was
+    # signed without --options runtime passes every check here on an Apple
+    # Silicon machine while the notary service, which looks at all of them,
+    # rejects it. That is exactly the "half the build used the wrong settings"
+    # mistake this stage exists to catch, and it was passing. Found in review,
+    # 2026-08-06.
+    #
+    # The slice list comes from the executable when there is one. A bundle with
+    # no Mach-O inside gets a single pass with no --arch, which is what codesign
+    # does anyway.
+    local slice_list="$(artifact_slices "$artifact")"
+
+    if [ -z "$slice_list" ]; then
+        verify_signature "$artifact" "" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
+        return 0
+    fi
+
+    # The whole file first, then every slice. An --arch pass validates the slice
+    # it was aimed at and nothing else, so data appended after the signed region
+    # - which is how a signed binary gets a payload smuggled into it - passes
+    # every per-slice check and is refused only by the whole-file strict
+    # validation.
+    local whole_file_log="$(state_dir)/codesign.txt"
+    run_capture "$whole_file_log" /usr/bin/codesign --verify --strict --verbose=2 "$artifact"
+    if [ "$?" != "0" ]; then
+        stop_was_requested && return 1
+        verify_fail "$label: the code signature does not verify"
+        append_log_file "$whole_file_log"
+        return 1
+    fi
+    set -f
+    for arch in $slice_list; do
+        set +f
+        verify_signature "$artifact" "$arch" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
+        set -f
+    done
+    set +f
+    return 0
+}
+
+# The architectures of a universal artifact, space-separated, or nothing for a
+# single-slice one and for anything that is not Mach-O. Nothing means one pass
+# with no --arch, which is right for both: codesign picks the only slice there
+# is. Arguments: artifact path
+artifact_slices() {
+    local executable="$(artifact_executable "$1")"
+    # Set only when there is an executable to ask.
+    local slices=""
+    [ -z "$executable" ] || slices="$(/usr/bin/lipo -archs "$executable" 2>/dev/null)"
+    case "$slices" in
+        *' '*) printf '%s' "$slices" ;;
+    esac
+    return 0
+}
+
+# --- Signing what arrives unsigned --------------------------------------------
+# A binary straight out of "swift build", or an app from "xcodebuild build" set
+# to sign to run locally, carries no signature or only an ad-hoc one, and the
+# verify stage refuses it. With SIGNING.APPLICATION_IDENTITY set, PackageBuilder
+# signs the copy it stages instead, with the hardened runtime and a secure
+# timestamp. The artifacts folder is still only read (design 8.4), and the
+# signed copy is held to the entry's assertions before it is packaged, so what
+# ships is something the verify stage would have accepted.
+#
+# Only artifacts that need it are touched: an entry that asserts nothing about
+# signing ships as it is, and so does anything that already carries a
+# certificate's signature, even one that fails its checks. That signature was
+# somebody's decision, and replacing it would hide the mistake the verify stage
+# exists to name.
+
+# The bundled signer for an app, which signs its nested code inside out rather
+# than trusting "codesign --deep". A copy of the one in the repository root.
+codesign_applet="$app_bundle/Contents/Resources/Scripts/codesign_applet.sh"
+
+# Succeed when this is something the staging step knows how to sign: a Mach-O
+# file, or an app. Other bundles - a framework, a plug-in - have layouts the
+# bundled signer does not handle, and are left to whoever built them.
+# Arguments: artifact path
+artifact_is_signable() {
+    local artifact="$1"
+    [ -n "$(artifact_executable "$artifact")" ] || return 1
+    [ -f "$artifact" ] && return 0
+    case "${artifact%/}" in
+        *.app) [ -f "$artifact/Contents/Info.plist" ] ;;
+        *) return 1 ;;
+    esac
+}
+
+# Succeed when some slice of an artifact has no certificate's signature: no
+# signature at all, or an ad-hoc one such as the linker writes. One such slice is
+# enough, since the notary service refuses the whole file for it. Fails when
+# every slice has a certificate's signature, and for anything codesign cannot
+# answer about, which the verify stage then reports in its own words.
+# Arguments: artifact path
+artifact_lacks_certificate() {
+    local artifact="$1"
+    # Set by the loop below.
+    local arch probe_status
+    local slice_list="$(artifact_slices "$artifact")"
+    [ -n "$slice_list" ] || slice_list="native"
+    set -f
+    for arch in $slice_list; do
+        set +f
+        slice_lacks_certificate "$artifact" "$arch"
+        probe_status=$?
+        [ "$probe_status" = "0" ] && return 0
+        set -f
+    done
+    set +f
+    return 1
+}
+
+# One slice of the above. "native" asks about whichever slice codesign picks.
+# Returns 0 when the slice has no certificate, 1 when it has one, 2 when
+# codesign could not say. Arguments: artifact path, architecture or "native"
+slice_lacks_certificate() {
+    local artifact="$1" arch="$2"
+    local probe="$(state_dir)/codesign-probe.txt"
+    if [ "$arch" = "native" ]; then
+        run_capture "$probe" /usr/bin/codesign --display --verbose=4 "$artifact"
+    else
+        run_capture "$probe" /usr/bin/codesign --display --verbose=4 --arch "$arch" "$artifact"
+    fi
+    local display_status=$?
+    local unsigned_lines="$(/usr/bin/grep -c 'code object is not signed at all' "$probe" 2>/dev/null)"
+    local authority_lines="$(/usr/bin/grep -c '^Authority=' "$probe" 2>/dev/null)"
+    /bin/rm -f "$probe"
+    if [ "${unsigned_lines:-0}" != "0" ]; then
+        return 0
+    fi
+    if [ "$display_status" != "0" ]; then
+        return 2
+    fi
+    if [ "${authority_lines:-0}" = "0" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Sign an artifact in place with a Developer ID Application identity, with the
+# hardened runtime and a secure timestamp - what notarization requires.
+#
+# Signing replaces a signature rather than amending it, so what the old one
+# carried is read first and handed back: its entitlements, since an ad-hoc
+# signature can carry some (a tool that runs virtual machines is signed with
+# com.apple.security.virtualization by its build script), and for a bare
+# executable its identifier, which codesign would otherwise replace with a
+# generated one. A file with no signature at all is named after itself.
+#
+# The output goes to a file and reaches the log only on failure: a successful
+# run of the bundled signer prints a page about every nested item.
+# Arguments: artifact path, identity
+sign_artifact() {
+    local artifact="$1" identity="$2"
+    local details="$(state_dir)/sign-details.txt"
+    local entitlements="$(state_dir)/sign-entitlements.plist"
+    local sign_log="$(state_dir)/sign.txt"
+    # Set on the branch that signs a bare executable.
+    local identifier
+
+    /bin/rm -f "$details" "$entitlements"
+    # The status is not tested: a file with no signature makes codesign exit
+    # non-zero here, and that is the most common case. What it wrote is what
+    # counts.
+    /usr/bin/codesign --display --verbose=2 --entitlements - --xml "$artifact" > "$entitlements" 2> "$details"
+    [ -s "$entitlements" ] || /bin/rm -f "$entitlements"
+    # Except get-task-allow, which Xcode gives a "Sign to Run Locally" debug
+    # build so a debugger can attach. The notary service refuses any signature
+    # that carries it, and nothing in the verify stage would have said so. The
+    # status is not tested: the key is usually not there.
+    [ ! -f "$entitlements" ] || /usr/bin/plutil -remove 'com\.apple\.security\.get-task-allow' "$entitlements" > /dev/null 2>&1
+
+    if [ -d "$artifact" ]; then
+        if [ -f "$entitlements" ]; then
+            run_capture "$sign_log" "$codesign_applet" --brief --no-entitlements-search "$artifact" "$identity" "$entitlements"
+        else
+            run_capture "$sign_log" "$codesign_applet" --brief --no-entitlements-search "$artifact" "$identity"
+        fi
+        local applet_status=$?
+        # The bundled signer registers what it signed with Launch Services, which
+        # is right for an app being released and wrong for a copy in a scratch
+        # folder: a registered copy of an app that claims a URL scheme or a file
+        # type can become the one macOS opens. It is unregistered again, and a
+        # failure to do so changes nothing about the build.
+        "$lsregister_tool" -u "$artifact" > /dev/null 2>&1
+        if [ "$applet_status" != "0" ]; then
+            stop_was_requested && return 1
+            append_log_file "$sign_log"
+            return 1
+        fi
+        /bin/rm -f "$sign_log"
+        return 0
+    fi
+
+    identifier="$(/usr/bin/sed -n 's/^Identifier=//p' "$details" | /usr/bin/head -n 1)"
+    [ -n "$identifier" ] || identifier="$(/usr/bin/basename "$artifact")"
+    # A build product can arrive read-only, and codesign rewrites the file. The
+    # entry's own mode is applied after this, so the write bit does not ship.
+    /bin/chmod u+w "$artifact"
+    if [ -f "$entitlements" ]; then
+        run_capture "$sign_log" /usr/bin/codesign --force --options runtime --timestamp \
+            --identifier "$identifier" --entitlements "$entitlements" --sign "$identity" "$artifact"
+    else
+        run_capture "$sign_log" /usr/bin/codesign --force --options runtime --timestamp \
+            --identifier "$identifier" --sign "$identity" "$artifact"
+    fi
+    if [ "$?" != "0" ]; then
+        stop_was_requested && return 1
+        append_log_file "$sign_log"
+        return 1
+    fi
+    /bin/rm -f "$sign_log"
+    return 0
+}
+
+# Sign one staged entry when the document asks for it and the copy needs it,
+# then hold the signed copy to the entry's assertions. Does nothing, and
+# succeeds, in every other case.
+# Arguments: entry index, component index, source path, staged path, path
+#            relative to the staging root (for messages)
+sign_staged_entry() {
+    local entry_index="$1" component_index="$2" source="$3" target="$4" relative="$5"
+    local identity="$(model_get /SIGNING/APPLICATION_IDENTITY)"
+    [ -n "$identity" ] || return 0
+    local signed_by="$(payload_get "$entry_index" VERIFY/SIGNED_BY "$component_index")"
+    local want_hardened="$(payload_bool_get "$entry_index" VERIFY/HARDENED_RUNTIME "$component_index")"
+    local want_timestamp="$(payload_bool_get "$entry_index" VERIFY/SECURE_TIMESTAMP "$component_index")"
+    if [ -z "$signed_by" ] && [ "$want_hardened" != "1" ] && [ "$want_timestamp" != "1" ]; then
+        return 0
+    fi
+    # Asked of the source, with the very test the verify stage used to leave
+    # this item's signature checks to this step. Asked of the copy, the answer
+    # could differ - an app staged under a name without ".app" is not an app to
+    # artifact_is_signable - and the copy would ship with no signature and no
+    # check at all, after the verify stage said it would be signed.
+    artifact_is_signable "$source" || return 0
+    artifact_lacks_certificate "$source" || return 0
+
+    set_status "Signing $(/usr/bin/basename "$target")..."
+    if ! sign_artifact "$target" "$identity"; then
+        stop_was_requested && return 1
+        append_log "  ! Could not sign $relative with $identity"
+        return 1
+    fi
+    if ! verify_artifact_signature "$target" "$relative" "$signed_by" "$want_hardened" "$want_timestamp"; then
+        stop_was_requested && return 1
+        verify_note "this is the copy PackageBuilder signed with $identity"
+        return 1
+    fi
+    append_log "  signed $relative with $identity"
+    return 0
+}
+
 # Verify one payload entry against the assertions the document makes about it.
 # Succeeds when every check the entry turned on passes.
 # Arguments: entry index (0-based)
@@ -905,59 +1179,38 @@ verify_payload_entry() {
     fi
 
     if [ -n "$signed_by" ] || [ "$want_hardened" = "1" ] || [ "$want_timestamp" = "1" ]; then
-        # Every slice, not just the one this Mac happens to run.
-        #
-        # codesign --verify and --display report the *native* architecture alone
-        # unless told otherwise, so a universal artifact whose x86_64 slice was
-        # signed without --options runtime passes every check here on an Apple
-        # Silicon machine while the notary service, which looks at all of them,
-        # rejects it. That is exactly the "half the build used the wrong
-        # settings" mistake this stage exists to catch, and it was passing.
-        # Found in review, 2026-08-06.
-        #
-        # The slice list comes from the executable when there is one. A bundle
-        # with no Mach-O inside gets a single pass with no --arch, which is what
-        # codesign does anyway.
-        local slice_list=""
-        if [ -z "$executable" ]; then
-            executable="$(artifact_executable "$source")"
-        fi
-        if [ -n "$executable" ]; then
-            slice_list="$(/usr/bin/lipo -archs "$executable" 2>/dev/null || true)"
-        fi
-        # One pass with an empty architecture means "whatever codesign picks",
-        # which is right for a single-slice binary and for a non-Mach-O bundle.
-        case "$slice_list" in
-            *' '*) ;;
-            *) slice_list="" ;;
-        esac
-
-        if [ -z "$slice_list" ]; then
-            verify_signature "$source" "" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
+        local application_identity="$(model_get /SIGNING/APPLICATION_IDENTITY)"
+        if [ -n "$application_identity" ] && artifact_is_signable "$source" &&
+           artifact_lacks_certificate "$source"; then
+            # Signed later, as a copy, so its checks move with it: the staging
+            # step holds the signed copy to the same assertions. What can be
+            # known now is whether the identity it will be signed with is one
+            # the entry accepts, and finding that out after the copy was signed
+            # would mean a wasted signature and a message about the wrong thing.
+            if [ -n "$signed_by" ]; then
+                case "$application_identity" in
+                    "$signed_by"*) ;;
+                    *)
+                        verify_fail "$label: it would be signed with \"$application_identity\", but it has to be signed by \"$signed_by\""
+                        verify_note "change the application identity, or what this item's Verify settings say it is signed by"
+                        return 1
+                        ;;
+                esac
+            fi
+            append_log "  $label: no signature of its own - the staged copy will be signed with $application_identity"
         else
-            # The whole file first, then every slice. An --arch pass validates
-            # the slice it was aimed at and nothing else, so data appended after
-            # the signed region - which is how a signed binary gets a payload
-            # smuggled into it - passes every per-slice check and is refused
-            # only by the whole-file strict validation.
-            local whole_file_log="$(state_dir)/codesign.txt"
-            run_capture "$whole_file_log" /usr/bin/codesign --verify --strict --verbose=2 "$source"
-            if [ "$?" != "0" ]; then
-                stop_was_requested && return 1
-                verify_fail "$label: the code signature does not verify"
-                append_log_file "$whole_file_log"
+            if ! verify_artifact_signature "$source" "$label" "$signed_by" "$want_hardened" "$want_timestamp"; then
+                # Said only where it would have helped: an artifact with no
+                # certificate at all, of a kind the staging step knows how to
+                # sign, in a document that has not asked for that.
+                if ! stop_was_requested && [ -z "$application_identity" ] &&
+                   artifact_is_signable "$source" && artifact_lacks_certificate "$source"; then
+                    verify_note "$(sign_artifacts_hint)"
+                fi
                 return 1
             fi
-            set -f
-            for arch in $slice_list; do
-                set +f
-                verify_signature "$source" "$arch" "$label" "$signed_by" "$want_hardened" "$want_timestamp" || return 1
-                set -f
-            done
-            set +f
+            append_log "  $label: signature ok"
         fi
-
-        append_log "  $label: signature ok"
     fi
 
     if [ -n "$version_flag" ]; then
@@ -1229,6 +1482,9 @@ stage_payload_root() {
             append_log "  ! Could not copy $source"
             return 1
         fi
+        # Before the mode is applied, because signing rewrites the file and a
+        # mode such as 0555 would forbid it.
+        sign_staged_entry "$index" "$component_index" "$source" "$target" "$relative" || return 1
         if ! /bin/chmod "$(payload_get "$index" MODE "$component_index")" "$target"; then
             append_log "  ! Could not set the mode of $relative"
             return 1
