@@ -108,10 +108,12 @@ run there - before the payload verify, which is the part worth knowing about.
    owner and mode to directories that *already exist* - with a payload under
    `/usr/local` that resets a Homebrew user's directories. PackageBuilder patches
    `PackageInfo` to force this back to `false`; do not undo it.
-5. **`RELOCATABLE` must stay `false`** for bundles. `pkgbuild` marks bundles
-   relocatable, which makes Installer follow Spotlight to any existing copy of that
-   bundle identifier - a stale copy in `~/Downloads` silently becomes the install
-   target.
+5. **`RELOCATABLE` must stay `false`** for bundles. A relocatable bundle makes
+   Installer follow Spotlight to any existing copy of that bundle identifier - a
+   stale copy in `~/Downloads` silently becomes the install target. `true` makes
+   every top-level bundle in the component's payload relocatable, on any macOS
+   (PackageBuilder writes the setting rather than leaving it to `pkgbuild`, whose
+   default changed in macOS 27).
 6. **`HOST_ARCHITECTURES` must not be empty.** `productbuild` refuses a document
    with an empty `hostArchitectures`, so the installer would run nowhere.
 7. **`PACKAGE_NAME` must not contain a path separator.** It is a file name, not a

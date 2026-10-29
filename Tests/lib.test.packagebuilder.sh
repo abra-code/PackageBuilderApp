@@ -97,18 +97,32 @@ work_copy() { # <fixture-name> <destination-name>
 # version, a bare Mach-O executable, and a plain data file. Synthesized rather
 # than committed - no binaries in the repository, and the block that builds them
 # says out loud which properties the tests actually depend on. /bin/echo stands
-# in for a signed tool: it is a real universal Mach-O, which is what the drop and
-# the verify stage read.
+# in for a signed tool: it is a real universal Mach-O, which is what the verify
+# stage and the per-slice signing read.
 #
 # That last part is an environmental precondition, not a fact about this applet.
-# The drop reads the file's slices and the checks expect TWO. Apple has shipped
-# /bin/echo universal on every arm64 macOS so far; on a machine where it is thin
-# the architecture assertions fail and read exactly like an app defect, so the
+# The checks need an x86_64 and an arm64e slice (and no plain arm64): the verify
+# tests thin those two out and expect "not built for arm64". Apple has shipped
+# /bin/echo with both on every arm64 macOS so far, and macOS 27 adds a third,
+# arm64e.x1, which nothing here relies on. On a machine without them the
+# architecture assertions fail and read exactly like an app defect, so the
 # precondition is asserted here rather than discovered 200 lines later.
 make_artifacts() { # [directory, default $OMCTEST_WORK/artifacts]
     local dir="${1:-$OMCTEST_WORK/artifacts}"
-    check "fixture precondition: /bin/echo is universal" "2" \
-        "$(/usr/bin/lipo -archs /bin/echo 2>/dev/null | /usr/bin/wc -w | /usr/bin/tr -d ' ')"
+    local echo_archs
+    echo_archs=" $(/usr/bin/lipo -archs /bin/echo 2>/dev/null) "
+    # Not a case inside $(...): its patterns' ")" end the substitution early in
+    # this shell.
+    local echo_has_slices="no:$echo_archs"
+    case "$echo_archs" in
+        *" arm64 "*) ;;
+        *" x86_64 "*)
+            case "$echo_archs" in
+                *" arm64e "*) echo_has_slices="yes" ;;
+            esac
+            ;;
+    esac
+    check "fixture precondition: /bin/echo has x86_64 and arm64e slices, no arm64" "yes" "$echo_has_slices"
     /bin/mkdir -p "$dir/Widget.app/Contents/MacOS"
     /bin/cat > "$dir/Widget.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

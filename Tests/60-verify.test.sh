@@ -27,7 +27,9 @@ setup_replay_project
 pb_call payload_archs_set 0 "arm64"
 omc_run PackageBuilder.step.verify
 check "named the architecture"   "1"                          "$(log_says 'not built for arm64')"
-check "reported what is there"   "1"                          "$(log_says 'lipo reports \[x86_64 arm64e\]')"
+# What /bin/echo carries depends on the macOS: x86_64 and arm64e, and on macOS 27
+# arm64e.x1 as well. The report must name all of them, so lipo says which.
+check "reported what is there"   "1"                          "$(log_says "lipo reports \\[$(/usr/bin/lipo -archs /bin/echo)\\]")"
 # arm64e is where this one bites: it reads like a newer arm64 and is a separate
 # architecture. Saying so costs a line and saves an afternoon.
 check "explained arm64e"         "1"                          "$(log_says 'arm64e is a separate architecture')"

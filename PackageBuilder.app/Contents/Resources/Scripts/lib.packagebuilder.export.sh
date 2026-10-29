@@ -1027,21 +1027,27 @@ PB_PKGBUILD_NOPAYLOAD
             else
                 printf 'fail %s\n' "$(sh_quote "Component $((component_index + 1)): the payload is empty and there are no install scripts - there is nothing to install")"
             fi
-        elif [ "$relocatable" != "1" ]; then
+        else
+            if [ "$relocatable" = "1" ]; then
+                printf '# The document asks for relocatable bundles.\nbundle_relocatable=YES\n'
+            else
+                printf 'bundle_relocatable=NO\n'
+            fi
             /bin/cat <<'PB_RELOCATE'
-# Bundles must not be relocatable (the app's design 8.2): pkgbuild marks them
-# relocatable, which makes Installer follow Spotlight to any existing copy of
+# Bundles are not relocatable unless the document asks (the app's design 8.2): a
+# relocatable bundle makes Installer follow Spotlight to any existing copy of
 # the bundle identifier - a stale copy in ~/Downloads silently becomes the
-# install target. pkgbuild --analyze writes a component plist; every entry's
-# BundleIsRelocatable is forced false. No entries means no bundles, and the
-# plist is not passed at all.
+# install target. pkgbuild --analyze writes a component plist, and every
+# entry's BundleIsRelocatable is set to $bundle_relocatable, never left to
+# pkgbuild: up to macOS 26 it made bundles relocatable, on macOS 27 it makes
+# none. No entries means no bundles, and the plist is not passed at all.
 component_plist="$staging_dir/component.plist"
 /usr/bin/pkgbuild --analyze --root "$payload_root" "$component_plist" >/dev/null 2>&1 \
     || fail "pkgbuild --analyze failed"
 # Treating an unreadable plist as "no bundles" would drop --component-plist and
-# ship pkgbuild's default BundleIsRelocatable=true - the exact hazard this block
-# exists to prevent, with nothing printed. And "readable" is not enough: plutil
-# reads a file of garbage as an old-style plist holding one bare string. So the
+# ship pkgbuild's default for relocation, whatever this macOS makes it - the
+# exact hazard this block exists to prevent, with nothing printed. And
+# "readable" is not enough: plutil reads a file of garbage as an old-style plist holding one bare string. So the
 # file is converted to XML, and the root must be an array, which is what
 # --analyze always writes - "<array/>" when there are no bundles. Only then is a
 # missing entry 0 taken to mean there are no bundles. The root element is the
@@ -1066,18 +1072,15 @@ while true; do
         break
     fi
     # "-replace" creates the key when --analyze left it out, which it does for
-    # a bundle it does not consider relocatable in the first place.
-    /usr/bin/plutil -replace "$reloc_index.BundleIsRelocatable" -bool NO "$component_plist" \
-        || fail "Could not mark bundle $reloc_index non-relocatable"
+    # a bundle it does not consider relocatable, and on macOS 27 for every one.
+    /usr/bin/plutil -replace "$reloc_index.BundleIsRelocatable" -bool "$bundle_relocatable" "$component_plist" \
+        || fail "Could not set relocation for bundle $reloc_index"
     reloc_index=$((reloc_index + 1))
 done
 if [ "$reloc_index" -eq 0 ]; then
     component_plist=""
 fi
 PB_RELOCATE
-        else
-            printf '# The document asks for relocatable bundles, so no component plist is made.\n'
-            printf 'component_plist=""\n'
         fi
         # The scripts flag is frozen by whether the document has scripts; the
         # component plist branches at run time on whether --analyze found

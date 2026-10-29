@@ -107,9 +107,13 @@ against `ARTIFACTS_DIR` when it lives below that folder.
   tells Installer to re-own directories that already exist. With a payload under
   `/usr/local/bin`, installing resets `/usr/local` to `root:wheel` and leaves
   Homebrew unable to write.
-- **Bundles are not relocatable by default.** `pkgbuild` marks them relocatable,
-  so Installer hunts for an existing copy by bundle id via Spotlight and installs
+- **Bundles are not relocatable by default.** A relocatable bundle makes
+  Installer hunt for an existing copy by bundle id via Spotlight and install
   *there* - a stale copy in `~/Downloads` silently becomes the install target.
+  `pkgbuild` made bundles relocatable up to macOS 26 and makes none on macOS 27,
+  so PackageBuilder never leaves it to `pkgbuild`: with `RELOCATABLE` false no
+  bundle relocates, and with it true every top-level bundle in the payload does,
+  on any macOS.
 - **Unsigned intermediates never reach the output folder**, so an unsigned
   package can never sit one word away in the filename from the one you upload.
 - **Artifacts are verified before packaging**: architectures, Developer ID

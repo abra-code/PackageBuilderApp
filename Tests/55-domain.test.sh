@@ -14,7 +14,7 @@
 # hand, the way a user would after the status line told them to.
 # Two artifacts for the destination guesses: a bundle and a bare executable.
 # Made here rather than with make_artifacts, whose fixture precondition wants
-# /bin/echo to carry exactly two slices - nothing these sections read.
+# /bin/echo to carry x86_64 and arm64e slices - nothing these sections read.
 make_guess_artifacts() { # <directory>
     /bin/mkdir -p "$1/Widget.app/Contents/MacOS"
     printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.widget</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleExecutable</key><string>Widget</string></dict></plist>' > "$1/Widget.app/Contents/Info.plist"

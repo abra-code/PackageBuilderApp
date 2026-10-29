@@ -67,7 +67,7 @@ omc_run PackageBuilder.step.component
 expanded="$(expand_built)"
 check "relocate is populated"    "0"                         "$(/usr/bin/grep -c '<relocate/>' "$expanded/PackageInfo" | /usr/bin/tr -d ' ')"
 check "bundle listed for reloc"  "1"                         "$(/usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$expanded/PackageInfo" | /usr/bin/grep -c 'com.example.widget' | /usr/bin/tr -d ' ')"
-check "the choice was logged"    "1"                         "$(log_says 'left relocatable')"
+check "the choice was logged"    "1"                         "$(log_says 'marked relocatable, as the document asks')"
 pl set bool false "$(model_file)" /COMPONENTS/0/RELOCATABLE
 
 section "57. OVERWRITE_PERMISSIONS true is honored too"
@@ -512,20 +512,25 @@ STUB
 /bin/chmod 755 "$reloc_stub"
 printf 'not a plist' > "$reloc_body"
 /bin/mkdir -p "$(state_dir)"
-reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_relocation '$OMCTEST_WORK' false 0")"
 check "garbage is a failure"     "1"                          "$?"
 check "and hands back no plist"  ""                           "$reloc_out"
 /usr/bin/plutil -create xml1 "$reloc_body" >/dev/null 2>&1
-reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_relocation '$OMCTEST_WORK' false 0")"
 check "a dict is a failure too"  "1"                          "$?"
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><array/></plist>\n' > "$reloc_body"
-reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_relocation '$OMCTEST_WORK' false 0")"
 check "an empty array is no bundles" "0"                      "$?"
 check "and passes no plist"      ""                           "$reloc_out"
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><array><dict><key>RootRelativeBundlePath</key><string>x/Foo.bundle</string></dict></array></plist>\n' > "$reloc_body"
-reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_no_relocate '$OMCTEST_WORK' 0")"
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_relocation '$OMCTEST_WORK' false 0")"
 check "a bundle with no key is patched" "0"                   "$?"
 check "the key is created false" "false"                      "$(pl get value "$reloc_out" /0/BundleIsRelocatable 2>/dev/null)"
+# Relocation asked for is written too: macOS 27's --analyze leaves the key out
+# for every bundle, and pkgbuild then makes none relocatable.
+reloc_out="$(pb_build_call eval "pkgbuild_tool='$reloc_stub'; component_plist_relocation '$OMCTEST_WORK' true 0")"
+check "relocation asked for"     "0"                          "$?"
+check "the key is created true"  "true"                       "$(pl get value "$reloc_out" /0/BundleIsRelocatable 2>/dev/null)"
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                          "$(ui_unknown_writes)"

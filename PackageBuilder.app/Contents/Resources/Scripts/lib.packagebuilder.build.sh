@@ -1590,24 +1590,29 @@ add_to_path_postinstall() {
     printf '%s\n' 'exit 0'
 }
 
-# Produce a --component-plist that turns relocation off for every bundle in the
-# staged root, and print its path. Prints nothing when the root holds no bundle,
-# in which case there is nothing to pass and nothing to turn off.
+# Produce a --component-plist that sets relocation, on or off as the document
+# says, for every bundle in the staged root, and print its path. Prints nothing
+# when the root holds no bundle, in which case there is nothing to pass.
 #
-# Design 8.2: pkgbuild marks bundles relocatable, which makes Installer look for
-# an existing copy of that bundle identifier anywhere on the volume via
-# Spotlight and install there instead. A stale copy in ~/Downloads silently
-# becomes the install target.
-component_plist_no_relocate() {
-    local root="$1" component_index="$2"
+# Design 8.2: a relocatable bundle makes Installer look for an existing copy of
+# that bundle identifier anywhere on the volume via Spotlight and install there
+# instead. A stale copy in ~/Downloads silently becomes the install target.
+#
+# The value is always written, never left to pkgbuild: its default changed. Up
+# to macOS 26 pkgbuild marked bundles relocatable; on macOS 27 --analyze leaves
+# BundleIsRelocatable out and the package lists none (measured with a real app
+# bundle), so a document asking for relocation got none.
+# Arguments: root, "true" or "false", component index (default the current)
+component_plist_relocation() {
+    local root="$1" relocatable="$2" component_index="$3"
     [ -n "$component_index" ] || component_index="$PB_COMPONENT_INDEX"
     local plist="$(component_scratch component "$component_index" .plist)"
     /bin/rm -f "$plist"
     "$pkgbuild_tool" --analyze --root "$root" "$plist" >/dev/null 2>&1 || return 1
     # plister reads a file it cannot parse as a bare string and counts it as 0,
     # and a missing file counts as nothing at all - both would drop
-    # --component-plist and ship pkgbuild's default BundleIsRelocatable=true
-    # with no message. --analyze always writes an array, even an empty one, so
+    # --component-plist and ship pkgbuild's default for relocation, whatever
+    # this macOS makes it, with no message. --analyze always writes an array, even an empty one, so
     # anything else is a failure. The exported script makes the same check.
     local root_type="$("$plister" get type "$plist" / 2>/dev/null)"
     [ "$root_type" = "array" ] || return 1
@@ -1621,7 +1626,7 @@ component_plist_no_relocate() {
     fi
     local index=0
     while [ "$index" -lt "$bundle_count" ]; do
-        "$plister" set bool false "$plist" "/$index/BundleIsRelocatable" || return 1
+        "$plister" set bool "$relocatable" "$plist" "/$index/BundleIsRelocatable" || return 1
         index=$((index + 1))
     done
     printf '%s' "$plist"
@@ -1815,16 +1820,16 @@ build_component_package() {
         return 0
     fi
 
-    if [ "$(component_get_bool RELOCATABLE "$component_index")" != "1" ]; then
-        component_plist="$(component_plist_no_relocate "$root" "$component_index")" || {
-            append_log "  ! Could not analyze the staged root for bundles"
-            return 1
-        }
-        if [ -n "$component_plist" ]; then
-            append_log "  bundles in the payload marked non-relocatable"
-        fi
-    else
-        append_log "  note: bundles are left relocatable, as the document asks"
+    local relocatable="false"
+    [ "$(component_get_bool RELOCATABLE "$component_index")" != "1" ] || relocatable="true"
+    component_plist="$(component_plist_relocation "$root" "$relocatable" "$component_index")" || {
+        append_log "  ! Could not analyze the staged root for bundles"
+        return 1
+    }
+    if [ "$relocatable" = "true" ]; then
+        [ -z "$component_plist" ] || append_log "  note: bundles in the payload marked relocatable, as the document asks"
+    elif [ -n "$component_plist" ]; then
+        append_log "  bundles in the payload marked non-relocatable"
     fi
 
     # --ownership is passed explicitly rather than left to its default, so the

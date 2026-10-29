@@ -1081,7 +1081,7 @@ check "and nothing from the app" "0"                          "$(/usr/bin/grep -
 reloc_log="$OMCTEST_WORK/export-reloc.log"
 /bin/sh "$exp_reloc" --unsigned --output-dir "$OMCTEST_WORK/exported-out" > "$reloc_log" 2>&1
 check "the script succeeded"     "0"                          "$?"
-check "nothing failed to mark"   "0"                          "$(/usr/bin/grep -c 'non-relocatable' "$reloc_log" | /usr/bin/tr -d ' ')"
+check "nothing failed to mark"   "0"                          "$(/usr/bin/grep -c 'Could not set relocation' "$reloc_log" | /usr/bin/tr -d ' ')"
 /bin/rm -rf "$OMCTEST_WORK/exported-expand"
 /usr/sbin/pkgutil --expand "$OMCTEST_WORK/exported-out/replay_2.2-unsigned.pkg" "$OMCTEST_WORK/exported-expand" >/dev/null 2>&1
 reloc_info="$OMCTEST_WORK/exported-expand/replay.pkg/PackageInfo"
@@ -1093,6 +1093,26 @@ omc_run PackageBuilder.step.component
 /bin/rm -rf "$OMCTEST_WORK/app-expand"
 /usr/sbin/pkgutil --expand "$(built_pkg)" "$OMCTEST_WORK/app-expand" >/dev/null 2>&1
 check "the app's agrees"         "1"                          "$(/usr/bin/grep -c '<relocate/>' "$OMCTEST_WORK/app-expand/PackageInfo" | /usr/bin/tr -d ' ')"
+
+section "158b. relocation asked for is written, not left to pkgbuild"
+# pkgbuild's default changed: up to macOS 26 it made bundles relocatable, on
+# macOS 27 --analyze leaves BundleIsRelocatable out and it makes none. A
+# document asking for relocation has to say so in the component plist, in the
+# exported script as in the app's own build. The same two bundles.
+pl set bool true "$(model_file)" /COMPONENTS/0/RELOCATABLE
+/bin/rm -f "$exp_reloc"
+omc_dialog_answer save_as "$exp_reloc"
+omc_run PackageBuilder.export.script
+/bin/rm -rf "$OMCTEST_WORK/exported-out" "$OMCTEST_WORK/exported-expand"
+/bin/sh "$exp_reloc" --unsigned --output-dir "$OMCTEST_WORK/exported-out" > "$reloc_log" 2>&1
+check "the script succeeded"     "0"                          "$?"
+/usr/sbin/pkgutil --expand "$OMCTEST_WORK/exported-out/replay_2.2-unsigned.pkg" "$OMCTEST_WORK/exported-expand" >/dev/null 2>&1
+check "the script's relocates"   "1"                          "$(/usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$reloc_info" | /usr/bin/grep -c 'com.example.tiny' | /usr/bin/tr -d ' ')"
+omc_run PackageBuilder.step.component
+/bin/rm -rf "$OMCTEST_WORK/app-expand"
+/usr/sbin/pkgutil --expand "$(built_pkg)" "$OMCTEST_WORK/app-expand" >/dev/null 2>&1
+check "the app's agrees"         "1"                          "$(/usr/bin/sed -n '/<relocate>/,/<\/relocate>/p' "$OMCTEST_WORK/app-expand/PackageInfo" | /usr/bin/grep -c 'com.example.tiny' | /usr/bin/tr -d ' ')"
+pl set bool false "$(model_file)" /COMPONENTS/0/RELOCATABLE
 
 section "cumulative: no handler wrote to a view id the window does not declare"
 check "no undeclared ids"        ""                           "$(ui_unknown_writes)"
