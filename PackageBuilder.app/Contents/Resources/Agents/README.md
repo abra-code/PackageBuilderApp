@@ -390,7 +390,7 @@ location set to the bundle's parent.
 What a package cannot carry is where its artifacts came from. Every `SOURCE` is
 written as `${ARTIFACTS_DIR}/<name>` and the artifacts folder is left empty, so
 the document is well-formed but will not build until you set it - which is the
-point, since design 4.3 makes an unset `${ARTIFACTS_DIR}` a hard precondition
+point, since an unset `${ARTIFACTS_DIR}` is a hard precondition
 failure rather than a path that silently resolves to an installed copy.
 
 Also not imported, each named in the log: the further components of a

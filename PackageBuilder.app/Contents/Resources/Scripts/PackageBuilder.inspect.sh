@@ -21,9 +21,9 @@ if build_is_running; then
     exit 0
 fi
 
-# The most finished package there is. Design 8.3 keeps an unsigned build out of
-# the output folder, so with signing turned off there is no signed package and
-# the distribution package is the finished article; after Build Component Only
+# The most finished package there is. An unsigned build stays out of the output
+# folder, so with signing turned off there is no signed package and the
+# distribution package is the finished article; after Build Component Only
 # there is only the component. Each is worth inspecting, and which one is being
 # looked at is the first thing the report says - a user reading a signature
 # section for a component package needs to know that is what it is.

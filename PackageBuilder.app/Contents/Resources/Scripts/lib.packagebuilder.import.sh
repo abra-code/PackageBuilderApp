@@ -1,14 +1,13 @@
 #!/bin/sh
 # lib.packagebuilder.import.sh - import a Packages.app .pkgproj
 #
-# Design section 10. A .pkgproj is a plist, XML or binary, which plister reads
-# in place now that it falls back to content for an extension it does not
-# recognize (design 12.2). The interesting part is the payload hierarchy walk:
-# Packages stores a scaffold of the whole system tree in every project, and the
-# real payload references sit at TYPE = 3 leaf
-# nodes inside it. Everything else - the presentation model beyond the readme,
-# the excluded-file patterns, the requirement list, the template tree itself -
-# is dropped, and the log says so, so nothing disappears quietly.
+# A .pkgproj is a plist, XML or binary, which plister reads in place now that
+# it falls back to content for an extension it does not recognize. The
+# interesting part is the payload hierarchy walk: Packages stores a scaffold of
+# the whole system tree in every project, and the real payload references sit at
+# TYPE = 3 leaf nodes inside it. Everything else - the presentation model beyond
+# the readme, the excluded-file patterns, the requirement list, the template
+# tree itself - is dropped, and the log says so, so nothing disappears quietly.
 #
 # Sourced after lib.packagebuilder.sh, which provides plister, the model
 # accessors, store_path and the payload editing helpers.
@@ -63,7 +62,7 @@ import_resolve() {
 # Packages writes into every project, differing only in whether its outline
 # shows them. They contribute their name to the destination of what sits under
 # them, and nothing else; their UID/GID/PERMISSIONS describe /usr and /Library
-# and are exactly what a package must not touch (design 8.1).
+# and are exactly what a package must not touch.
 import_walk_node() {
     local node_path="$1" dest_prefix="$2"
     local node_type="$(import_get "$node_path/TYPE")"
@@ -180,7 +179,7 @@ import_walk_node() {
 }
 
 # Print the longest common directory prefix of every collected source, or
-# nothing when there is none worth factoring out (design section 10: a prefix
+# nothing when there is none worth factoring out (a prefix
 # of "/" or a bare volume root is left alone).
 import_common_prefix() {
     local entries_file="$(state_dir)/import.entries"
@@ -259,7 +258,7 @@ import_apply_payload() {
         # lines defaults to it, and the two disagreeing is what would split one
         # import across two components.
         "$plister" insert "$entry_index" dict "$(model_file)" "/COMPONENTS/$PB_COMPONENT_INDEX/PAYLOAD" || return 1
-        # The same verify defaults a dropped artifact gets (design 5.3): a
+        # The same verify defaults a dropped artifact gets: a
         # Mach-O starts out asserting universal, signed, hardened and
         # timestamped; a plain file or a source that is not on this disk
         # asserts nothing.
@@ -298,8 +297,8 @@ import_pkgproj() {
     # Read where it lies. This used to stage a copy under a .plist name, because
     # plister picked the format from the extension alone and .pkgproj is not an
     # extension it knows; it now falls back to the file's own content for any
-    # unknown extension, and a .pkgproj is a plist however it is named (design
-    # 12.2). Both the XML and the binary form read this way.
+    # unknown extension, and a .pkgproj is a plist however it is named. Both the
+    # XML and the binary form read this way.
     #
     # import_file now names the USER'S project, so nothing in this file may
     # write to it or delete it. The cleanup at the end of this function removes
@@ -358,7 +357,7 @@ import_pkgproj() {
     model_set "/COMPONENTS/$PB_COMPONENT_INDEX/VERSION" ""
 
     # Booleans only when the key is present, so a sparse project does not
-    # silently flip a safety default (design 8.1: overwrite-permissions).
+    # silently flip a safety default (overwrite-permissions).
     [ -z "$overwrite_flag" ] || model_set_bool "/COMPONENTS/$PB_COMPONENT_INDEX/OVERWRITE_PERMISSIONS" "$overwrite_flag"
     [ -z "$relocatable_flag" ] || model_set_bool "/COMPONENTS/$PB_COMPONENT_INDEX/RELOCATABLE" "$relocatable_flag"
 
@@ -402,7 +401,7 @@ import_pkgproj() {
         append_log "  readme: $(/usr/bin/basename "$readme_path")"
     fi
 
-    # Said out loud rather than dropped quietly (design section 10). Only what
+    # Said out loud rather than dropped quietly. Only what
     # the project actually carries is reported, so the list is what was lost,
     # not a recitation of the format.
     append_log ""

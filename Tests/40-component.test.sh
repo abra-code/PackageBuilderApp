@@ -1,10 +1,9 @@
 #!/bin/sh
 # Tests/40-component.test.sh - staging and the component package.
 #
-# Ported from Private/harness.sh sections 51 to 73. These drive the real
-# pkgbuild and then take the result apart with pkgutil --expand, which is the
-# only way to check the two corrections of design section 8: both live in
-# PackageInfo rather than in anything the build prints.
+# These drive the real pkgbuild and then take the result apart with pkgutil
+# --expand, which is the only way to check the two corrections the build
+# applies: both live in PackageInfo rather than in anything the build prints.
 #
 # Sections 68 to 73 are the regressions from the 2026-08-06 review, kept with
 # the block they belong to rather than moved in beside the other regressions.
@@ -32,13 +31,13 @@ check "it stayed in the scratch" "$(state_dir)"              "$(/usr/bin/dirname
 check "no run.pid left behind"   "no"                        "$([ -f "$(state_dir)/run.pid" ] && echo yes || echo no)"
 check "busy flag cleared"        ""                          "$(pb_get busy)"
 
-section "52. the staged root mirrors the destinations, not the sources (7.2)"
+section "52. the staged root mirrors the destinations, not the sources"
 check "bundle staged by dest"    "yes"                       "$([ -d "$(state_dir)/root/Applications/Widget.app" ] && echo yes || echo no)"
 check "tool staged by dest"      "yes"                       "$([ -f "$(state_dir)/root/usr/local/bin/mytool" ] && echo yes || echo no)"
 check "install location removed" "no"                        "$([ -e "$(state_dir)/root/Applications/Applications" ] && echo yes || echo no)"
 check "mode applied"             "755"                       "$(/usr/bin/stat -f '%Lp' "$(state_dir)/root/usr/local/bin/mytool")"
 
-section "53. overwrite-permissions is forced to what the document says (8.1)"
+section "53. overwrite-permissions is forced to what the document says"
 expanded="$(expand_built)"
 # pkgbuild always writes "true"; the document says false, so the expand/patch/
 # flatten round trip has to have happened. This is the check that stands between
@@ -49,14 +48,14 @@ check "the patch was logged"     "1"                         "$(log_says 'overwr
 check "Payload still opaque"     "yes"                       "$([ -f "$expanded/Payload" ] && echo yes || echo no)"
 check "Bom still opaque"         "yes"                       "$([ -f "$expanded/Bom" ] && echo yes || echo no)"
 
-section "54. bundles are not relocatable by default (8.2)"
+section "54. bundles are not relocatable by default"
 # The pkg-info "relocatable" attribute is not the one that matters: the element
 # that decides whether Installer hunts for an existing copy by bundle id is
 # <relocate>, and turning relocation off empties it.
 check "relocate list is empty"   "1"                         "$(/usr/bin/grep -c '<relocate/>' "$expanded/PackageInfo" | /usr/bin/tr -d ' ')"
 check "the plist was applied"    "1"                         "$(log_says 'marked non-relocatable')"
 
-section "55. the BOM records root:wheel without sudo (7.2)"
+section "55. the BOM records root:wheel without sudo"
 check "tool owned by 0 0"        "0 0"                       "$(/usr/bin/lsbom -p fug "$expanded/Bom" | /usr/bin/awk '$1 == "./usr/local/bin/mytool" {print $2, $3}')"
 check "created dirs owned 0 0"   "0 0"                       "$(/usr/bin/lsbom -p fug "$expanded/Bom" | /usr/bin/awk '$1 == "./usr/local" {print $2, $3}')"
 check "both items in the BOM"    "2"                         "$(/usr/bin/lsbom -p f "$expanded/Bom" | /usr/bin/grep -c -e './usr/local/bin/mytool' -e './Applications/Widget.app/Contents/MacOS/Widget')"
@@ -92,7 +91,7 @@ check "script in the package"    "yes"                       "$([ -f "$expanded/
 check "and it is executable"     "yes"                       "$([ -x "$expanded/Scripts/postinstall" ] && echo yes || echo no)"
 pl set string "" "$(model_file)" /COMPONENTS/0/POSTINSTALL
 
-section "59. the staging root is rebuilt from scratch every time (8.5)"
+section "59. the staging root is rebuilt from scratch every time"
 # A file left over from a previous run must not survive into the next package.
 /bin/mkdir -p "$(state_dir)/root/usr/local/bin"
 printf 'stale\n' > "$(state_dir)/root/usr/local/bin/leftover"
@@ -123,7 +122,7 @@ pl set string 'com.example.pkg.widget' "$(model_file)" /COMPONENTS/0/IDENTIFIER
 pl set string 'Widget' "$(model_file)" /PROJECT/NAME
 pl set string '0755' "$(model_file)" /COMPONENTS/0/PAYLOAD/0/MODE
 
-section "62. overlapping destinations are refused (4.1)"
+section "62. overlapping destinations are refused"
 pl set string '/Applications/Widget.app/Contents/MacOS/mytool' "$(model_file)" /COMPONENTS/0/PAYLOAD/1/DESTINATION
 omc_run PackageBuilder.step.component
 check "nesting caught"           "1"                         "$(log_says 'installs inside item')"
@@ -149,19 +148,19 @@ check "install-location recorded" 'install-location="/usr/local"' "$(pkginfo_att
 pl set string '/' "$(model_file)" /COMPONENTS/0/INSTALL_LOCATION
 pl set string '/Applications/Widget.app' "$(model_file)" /COMPONENTS/0/PAYLOAD/0/DESTINATION
 
-section '65. ${ARTIFACTS_DIR} without an artifacts folder is a hard stop (4.3)'
+section '65. ${ARTIFACTS_DIR} without an artifacts folder is a hard stop'
 pl set string '' "$(model_file)" /PROJECT/ARTIFACTS_DIR
 omc_run PackageBuilder.step.component
 check "token without a folder"   "1"                         "$(log_says 'no artifacts folder is set')"
 pl set string 'artifacts' "$(model_file)" /PROJECT/ARTIFACTS_DIR
 
-section "66. an owner the build cannot honor is said out loud (7.2)"
+section "66. an owner the build cannot honor is said out loud"
 pl set string 'daemon' "$(model_file)" /COMPONENTS/0/PAYLOAD/1/OWNER
 omc_run PackageBuilder.step.component
 check "the note was logged"      "1"                         "$(log_says 'are not applied')"
 pl set string 'root' "$(model_file)" /COMPONENTS/0/PAYLOAD/1/OWNER
 
-section "67. value validation matches the design table (4.4)"
+section "67. value validation accepts and refuses the expected values"
 check "1.0-beta2 passes"         "yes"                       "$(vcheck valid_version '1.0-beta2')"
 check "2.2.1+build7 passes"      "yes"                       "$(vcheck valid_version '2.2.1+build7')"
 check "2&2 refused"              "no"                        "$(vcheck valid_version '2&2')"
@@ -202,7 +201,7 @@ check "list survived the move"   "1"                         "$(count /COMPONENT
 check "and it is still arm64"    "arm64"                     "$(model /COMPONENTS/0/PAYLOAD/1/VERIFY/ARCHITECTURES/0)"
 check "the other one came back"  "2"                         "$(count /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES)"
 
-section "69. a framework is a bundle (design 5.3)"
+section "69. a framework is a bundle"
 # A framework keeps its Info.plist under Versions/<v>/Resources, with no
 # Contents directory, so a Contents-only test reported it was not a bundle -
 # costing it mode 0755, all four verify toggles and its version read, while the

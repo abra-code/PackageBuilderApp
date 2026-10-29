@@ -1,11 +1,10 @@
 #!/bin/sh
 # Tests/80-cli.test.sh - the agent CLI, and the traversal guards.
 #
-# Ported from Private/harness.sh sections 134 to 148. Most of this file is one
-# defect driven through seven rounds: a destination that reaches outside the
-# staging root. Each of the first five fixes was defeated by the next reviewer,
-# and the lesson that finally held is in the comments - stop comparing strings,
-# ask the file system.
+# Most of this file is one defect driven through seven rounds: a destination
+# that reaches outside the staging root. Each of the first five fixes was
+# defeated by the next reviewer, and the lesson that finally held is in the
+# comments - stop comparing strings, ask the file system.
 #
 # The canary directory is what makes those sections mean anything. Asserting
 # only that a guard SPEAKS passes against unguarded code whenever the escape
@@ -92,7 +91,7 @@ pbcli set "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES "x86_64,arm64e
 check "an arch list is written"  "0"                          "$?"
 # Read straight out of the .pkgbld. The proof of concept staged a .json copy
 # here, because plister picked its format from the extension alone; it falls
-# back to the file's content now (design 12.2).
+# back to the file's content now.
 check "as an array of two"       "2"                          "$(pl get count "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES 2>/dev/null | /usr/bin/tr -d ' ')"
 check "with the names given"     "arm64e"                     "$(field_of "$cli_doc" /COMPONENTS/0/PAYLOAD/0/VERIFY/ARCHITECTURES/1)"
 # And now that it has a payload and its artifacts are on this disk, the whole
@@ -130,7 +129,7 @@ cli_pkg="$(pbcli build "$cli_doc" 2>/dev/null)"
 check "a package was built"      "yes"                        "$([ -n "$cli_pkg" ] && [ -f "$cli_pkg" ] && echo yes || echo no)"
 /bin/rm -rf "$OMCTEST_WORK/cli/expand"
 /usr/sbin/pkgutil --expand "$cli_pkg" "$OMCTEST_WORK/cli/expand" >/dev/null 2>&1
-# The two patches design 8.1 and 8.2 exist for, applied by the same library
+# The overwrite-permissions and relocatable patches, applied by the same library
 # code the window drives.
 check "overwrite-permissions"    'overwrite-permissions="false"' "$(pkginfo_attr "$OMCTEST_WORK/cli/expand/widget.pkg" overwrite-permissions)"
 check "relocatable"              'relocatable="false"'        "$(pkginfo_attr "$OMCTEST_WORK/cli/expand/widget.pkg" relocatable)"
@@ -580,11 +579,11 @@ pbcli validate "$fold_doc" > "$trav/fold2.txt" 2>&1
 check "two different names are not"        "0"                "$(/usr/bin/grep -c 'both named' "$trav/fold2.txt" | /usr/bin/tr -d ' ')"
 
 section "146e. two destinations that name one directory are refused"
-# Design 4.1 forbids two entries nesting because the second entry's ditto would
-# race the first. The gate was a string comparison on a volume that folds case
-# and folds NFD to NFC, so two destinations differing only that way merged into
-# one directory with the document reported clean - a wrong package that builds,
-# the same class as 146d one rung along. The comparison now asks the file system
+# Two entries may not nest, because the second entry's ditto would race the
+# first. The gate was a string comparison on a volume that folds case and folds
+# NFD to NFC, so two destinations differing only that way merged into one
+# directory with the document reported clean - a wrong package that builds, the
+# same class as 146d one rung along. The comparison now asks the file system
 # what spelling it will actually use.
 /bin/mkdir -p "$trav/cf1"; printf 'one\n' > "$trav/cf1/one.txt"
 cf_doc="$trav/Case2.pkgbld"

@@ -1,10 +1,10 @@
 #!/bin/sh
 # PackageBuilder.step.verify.sh - check the payload against what the document claims
 #
-# Pipeline stage 1 of design section 7, run on its own from Actions > Verify
-# Payload. The three stages after it are marked skipped rather than left gray,
-# so the rail says what did and did not run rather than showing three circles
-# that could be read as pending.
+# Pipeline stage 1, run on its own from Actions > Verify Payload. The three
+# stages after it are marked skipped rather than left gray, so the rail says
+# what did and did not run rather than showing three circles that could be
+# read as pending.
 #
 # Nothing is written anywhere by this stage. It reads the artifacts and reports,
 # which is what makes it the one stage that is safe to run at any time - before

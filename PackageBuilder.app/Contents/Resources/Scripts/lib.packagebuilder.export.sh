@@ -1,12 +1,12 @@
 #!/bin/sh
 # lib.packagebuilder.export.sh - write the standalone packaging script
 #
-# Design section 11: the app writes a self-contained /bin/sh script that
-# reproduces the current document's package with no dependency on
-# PackageBuilder. The reason this project exists is that a GUI tool stopped
-# being maintained and took a release workflow with it; a document that can
-# regenerate its own packaging script is not exposed to that failure again, and
-# it puts the same packaging step on a CI machine with no GUI session.
+# The app writes a self-contained /bin/sh script that reproduces the current
+# document's package with no dependency on PackageBuilder. The reason this
+# project exists is that a GUI tool stopped being maintained and took a release
+# workflow with it; a document that can regenerate its own packaging script is
+# not exposed to that failure again, and it puts the same packaging step on a
+# CI machine with no GUI session.
 #
 # Sourced after lib.packagebuilder.sh and lib.packagebuilder.build.sh: the
 # values come from the model accessors, and the emitted pipeline is a
@@ -162,7 +162,7 @@ write_packaging_script() {
     # Whether any stored path leans on the artifacts folder, so the emitted
     # script can insist on --artifacts-dir instead of collapsing the token to
     # "/..." - which very likely exists and is the previously installed copy,
-    # the exact stale-artifact trap design 4.3 names.
+    # the exact stale-artifact trap.
     local needs_artifacts=0
     # Set once per iteration of the loops below.
     local index stored pair model_key
@@ -295,7 +295,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# The same value rules the app enforces (its design section 4.4): these are
+# The same value rules the app enforces: these are
 # spliced into a filename and into XML, so they are constrained before they go
 # anywhere.
 case "$project_name" in
@@ -1034,7 +1034,7 @@ PB_PKGBUILD_NOPAYLOAD
                 printf 'bundle_relocatable=NO\n'
             fi
             /bin/cat <<'PB_RELOCATE'
-# Bundles are not relocatable unless the document asks (the app's design 8.2): a
+# Bundles are not relocatable unless the document asks: a
 # relocatable bundle makes Installer follow Spotlight to any existing copy of
 # the bundle identifier - a stale copy in ~/Downloads silently becomes the
 # install target. pkgbuild --analyze writes a component plist, and every
@@ -1321,7 +1321,7 @@ if [ "$do_codesign" = "1" ]; then
     announce "PRODUCTSIGN installer package"
     # Signed in the staging directory and verified there, then landed through a
     # sibling temp file and a rename, so the output folder never holds an
-    # unsigned or half-written package under a real name (the app's design 8.3).
+    # unsigned or half-written package under a real name.
     staged_signed="$staging_dir/signed.pkg"
     /usr/bin/productsign --sign "$installer_identity" "$unsigned_package" "$staged_signed" \
         || fail "productsign failed; the output folder was not touched"

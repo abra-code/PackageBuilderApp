@@ -103,13 +103,13 @@
                                            // Homebrew user's directories.
                                            // pkgbuild always writes true; the
                                            // app patches PackageInfo back to
-                                           // this value (design 8.1).
+                                           // this value.
       "RELOCATABLE": false,                // bool. Keep false for bundles. True
                                            // lets Installer follow Spotlight to
                                            // any existing copy of the bundle
                                            // identifier and install THERE - a
                                            // stale copy in ~/Downloads becomes
-                                           // the target (design 8.2).
+                                           // the target.
       "AUTH": "Root",                      // string. "Root" or "User". Root
                                            // means the install asks for an
                                            // administrator password. Must be
@@ -255,8 +255,7 @@
                                            // required and the build refuses
                                            // without one. When false the build
                                            // produces an unsigned package and
-                                           // never writes it to OUTPUT_DIR
-                                           // (design 8.3).
+                                           // never writes it to OUTPUT_DIR.
     "INSTALLER_IDENTITY": "Developer ID Installer: Example Inc (T9NM2ZLDTY)",
                                            // string. An INSTALLER identity, not
                                            // an Application one - productsign

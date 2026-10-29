@@ -8,7 +8,7 @@
 # private layout: where its model lives, what it names its state files, which
 # pasteboard keys it uses, and how to call into its libraries directly.
 #
-# That split is deliberate (design 8): the harness has no business knowing an
+# That split is deliberate: the harness has no business knowing an
 # applet's state layout, and this file has no business reimplementing a scratch
 # directory.
 #
@@ -76,7 +76,7 @@ doc_path() { /bin/cat "$(state_dir)/doc_path.txt" 2>/dev/null; }
 # Read a field out of a .pkgbld on disk, and out of the real file rather than a
 # copy of it. plister used to pick the format from the extension alone, so this
 # had to stage the document as .json first; it now falls back to the content for
-# any extension it does not know (design 12.2).
+# any extension it does not know.
 field_of() { pl get value "$1" "$2" 2>/dev/null; }
 
 hash_of() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
@@ -93,11 +93,11 @@ work_copy() { # <fixture-name> <destination-name>
     printf '%s' "$OMCTEST_WORK/$2"
 }
 
-# The three artifact shapes design 5.3 names a rule for: a bundle carrying a
-# version, a bare Mach-O executable, and a plain data file. Synthesized rather
-# than committed - no binaries in the repository, and the block that builds them
-# says out loud which properties the tests actually depend on. /bin/echo stands
-# in for a signed tool: it is a real universal Mach-O, which is what the verify
+# The three artifact shapes the app has a rule for: a bundle carrying a version,
+# a bare Mach-O executable, and a plain data file. Synthesized rather than
+# committed - no binaries in the repository, and the block that builds them says
+# out loud which properties the tests actually depend on. /bin/echo stands in
+# for a signed tool: it is a real universal Mach-O, which is what the verify
 # stage and the per-slice signing read.
 #
 # That last part is an environmental precondition, not a fact about this applet.
@@ -290,12 +290,12 @@ setup_replay_project() {
 #
 # The four replay fixtures are copies of /bin/echo standing in for the real
 # signed tools, and a dropped Mach-O starts out asserting universal, Developer
-# ID signed, hardened and timestamped (design 5.3). /bin/echo is none of those:
+# ID signed, hardened and timestamped. /bin/echo is none of those:
 # x86_64 + arm64e, "macOS Software Signing", no secure timestamp, no hardened
 # runtime. Left in place they would stop every build below at stage 1, so the
 # assertions are cleared here and the verify stage gets its own file, where what
-# /bin/echo really is turns out to be the exact shape of the two mistakes design
-# section 7 wants named.
+# /bin/echo really is turns out to be the exact shape of the two mistakes the
+# verify stage is meant to name.
 clear_payload_assertions() {
     local entry_index=0 entry_total
     entry_total="$(count /COMPONENTS/0/PAYLOAD)"

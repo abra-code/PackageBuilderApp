@@ -20,10 +20,10 @@ fi
 abs="$(canonical_path "$chosen")"
 [ -n "$abs" ] || abs="$chosen"
 
-# The folder itself follows design 4.2: relative to the document when it is
-# below it, so a project committed next to its sources stays portable. It is
-# never written through store_path, which would try ${ARTIFACTS_DIR} first and
-# define the field in terms of itself.
+# The folder itself is stored relative to the document when it is below it, so a
+# project committed next to its sources stays portable. It is never written
+# through store_path, which would try ${ARTIFACTS_DIR} first and define the
+# field in terms of itself.
 stored="$(store_document_relative_path "$abs")"
 
 if [ "$stored" = "$(model_get /PROJECT/ARTIFACTS_DIR)" ]; then

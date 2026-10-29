@@ -1,8 +1,8 @@
 #!/bin/sh
 # Tests/50-distribution.test.sh - the distribution package, signing, acceptance.
 #
-# Ported from Private/harness.sh sections 74 to 96. Sections 90 to 96 are the
-# regressions from the phase 3 review, kept with the block they belong to.
+# Sections 90 to 96 are the regressions from the phase 3 review, kept with the
+# block they belong to.
 #
 # Two groups need something this machine may not have - the shipped reference
 # package, and a Developer ID Installer certificate. Both announce a skip rather
@@ -21,8 +21,8 @@ omc_run PackageBuilder.step.component
 omc_run PackageBuilder.step.distribution
 check "a package was written"    "yes"                       "$([ -n "$(built_dist)" ] && [ -f "$(built_dist)" ] && echo yes || echo no)"
 check "named -unsigned"          "replay-unsigned.pkg"       "$(/usr/bin/basename "$(built_dist)")"
-# Design 8.3: an unsigned artifact never reaches the output folder, so it can
-# never sit one word away in the filename from the one that gets uploaded.
+# An unsigned artifact never reaches the output folder, so it can never sit
+# one word away in the filename from the one that gets uploaded.
 check "kept in the scratch dir"  "$(state_dir)"              "$(/usr/bin/dirname "$(built_dist)")"
 check "busy flag cleared"        ""                          "$(pb_get busy)"
 
@@ -35,7 +35,7 @@ check "allowed-os-versions"      "1"                         "$(xml_has '<os-ver
 check "title"                    "1"                         "$(xml_has '<title>replay</title>')"
 check "readme by basename"       "1"                         "$(xml_has '<readme file="replay-readme.rtf"/>')"
 # auth lives on the pkg-ref and nowhere else: pkgbuild has no flag for it and
-# always writes auth="root" into PackageInfo regardless (design section 4).
+# always writes auth="root" into PackageInfo regardless.
 check "auth on the pkg-ref"      "1"                         "$(xml_has 'auth="Root"')"
 check "component referenced"     "1"                         "$(xml_has '#replay.pkg')"
 check "one choice, one line"     "1 1"                       "$(/usr/bin/grep -c '<line choice=' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ') $(/usr/bin/grep -c '<choice id=' "$(state_dir)/Distribution.xml" | /usr/bin/tr -d ' ')"
@@ -48,8 +48,8 @@ check "readme in the package"    "yes"                       "$([ -f "$OMCTEST_W
 check "component inside it"      "yes"                       "$([ -d "$OMCTEST_WORK/dist-expanded/replay.pkg" ] && echo yes || echo no)"
 
 section "78. XML-special characters in a title cannot break the document"
-# The Distribution XML's version of design 4.4's sed hazard: a title of
-# "Rock & Roll" written raw produces a document productbuild rejects outright.
+# The Distribution XML's version of the sed hazard: a title of "Rock & Roll"
+# written raw produces a document productbuild rejects outright.
 check "ampersand escaped"        "Rock &amp; Roll"           "$(pb_build_call xml_escape 'Rock & Roll')"
 check "angle brackets escaped"   "&lt;b&gt;"                 "$(pb_build_call xml_escape '<b>')"
 check "quote escaped"            "say &quot;hi&quot;"        "$(pb_build_call xml_escape 'say "hi"')"
@@ -73,10 +73,10 @@ check "missing resource refused" "1"                         "$(log_says 'LICENS
 pl set string "" "$(model_file)" /DISTRIBUTION/RESOURCES/LICENSE
 
 section "80. acceptance: the BOM matches the shipped replay_2.2.pkg"
-# Design 13's acceptance criterion for this phase. It needs a copy of the
-# shipped package, named by PACKAGEBUILDER_REFERENCE_PKG: skipped when that is
-# not set, so the suite stays usable on any checkout, and failed when it names
-# a file that is not there, so a mistyped path cannot turn the check off.
+# The acceptance check. It needs a copy of the shipped package, named by
+# PACKAGEBUILDER_REFERENCE_PKG: skipped when that is not set, so the suite
+# stays usable on any checkout, and failed when it names a file that is not
+# there, so a mistyped path cannot turn the check off.
 reference_pkg="${PACKAGEBUILDER_REFERENCE_PKG:-}"
 if [ -n "$reference_pkg" ] && [ ! -f "$reference_pkg" ]; then
     check "PACKAGEBUILDER_REFERENCE_PKG names a file" "yes" "no ($reference_pkg)"
@@ -132,7 +132,7 @@ if [ -n "$harness_identity" ]; then
     check "notarization mentioned" "1"                       "$(log_says 'NOT notarized')"
     check "busy flag cleared"      ""                        "$(pb_get busy)"
 
-    section "82. only a signed package ever reaches the output folder (8.3)"
+    section "82. only a signed package ever reaches the output folder"
     # The old Packages.app flow left replay_1.0.1-unsigned.pkg,
     # replay_1.1-unsigned.pkg and replay_2.0-unsigned.pkg next to the real ones.
     check "no unsigned in output"  "0"                       "$(/bin/ls "$OMCTEST_WORK/out" | /usr/bin/grep -c 'unsigned')"
@@ -199,7 +199,7 @@ pl set string "$OMCTEST_WORK/out" "$(model_file)" /PROJECT/OUTPUT_DIR
 omc_run PackageBuilder.step.sign
 check "refused without one"      ""                          "$(built_signed)"
 
-section "88. the identity picker resolves either value channel (5.2)"
+section "88. the identity picker resolves either value channel"
 # A Picker delivers the 1-based option index when its options are plain strings
 # and the tag when they carry one. Which a runtime-populated picker uses is not
 # established, so the reader accepts both against the ordered list.
@@ -292,7 +292,7 @@ check "backslash done first"     '\\\\\"'                    "$(pb_call json_esc
 # --- Regressions from the phase 3 review --------------------------------------
 
 section "90. a failed sign must not destroy the previous release"
-# The output folder is written into, never cleaned (design 8.4). Removing the
+# The output folder is written into, never cleaned. Removing the
 # destination before productsign meant a failed sign - a declined keychain
 # prompt, a full disk - left the folder empty where a good package had been,
 # and rebuilding the same version is the ordinary retry case.
@@ -426,17 +426,19 @@ check "it named the kind"        "1"                         "$(log_says 'Inspec
 check "the identifier"           "1"                         "$(log_says 'identifier:            com.abracode.pkg.replay')"
 check "the version"              "1"                         "$(log_says 'version:               2.2')"
 check "install-location"         "1"                         "$(log_says 'install-location:      /')"
-# Design 8.1 and 8.2, read back off the built artifact rather than off the
-# document that asked for them. This is the check that would have caught the
-# two pkgbuild defaults the whole app exists to correct.
+# The overwrite-permissions and relocatable corrections, read back off the built
+# artifact rather than off the document that asked for them. This is the check
+# that would have caught the two pkgbuild defaults the whole app exists to
+# correct.
 check "overwrite-permissions"    "1"                         "$(log_says 'overwrite-permissions: false')"
 check "not relocatable"          "1"                         "$(log_says 'relocatable:           no (empty relocate list)')"
 check "the payload count"        "1"                         "$(log_says 'Payload, 8 item(s):')"
 check "and a payload line"       "1"                         "$(log_says './usr/local/bin/replay')"
 # The four tools plus the four directories above them, and the directories are
-# the reason design 8.1 exists: the BOM carries ./usr/local as root:wheel, so an
-# install with overwrite-permissions="true" would re-own it and leave Homebrew
-# unable to write. Seeing both in one report is the point of listing the BOM.
+# the reason the overwrite-permissions correction exists: the BOM carries
+# ./usr/local as root:wheel, so an install with overwrite-permissions="true"
+# would re-own it and leave Homebrew unable to write. Seeing both in one report
+# is the point of listing the BOM.
 check "the parents are listed"   "1"                         "$(log_says './usr/local	0	0	40755')"
 # By name-prefix, not by exact name: both are pid-scoped so a second click
 # during a slow expand cannot truncate the first run's file, and the test cannot
@@ -454,7 +456,7 @@ check "the readme resource"      "1"                         "$(log_says 'readme
 # The point of the whole section. pkgbuild writes auth="root" into PackageInfo
 # whatever the document says, so a user who goes looking finds the wrong answer
 # in the obvious place. The report reads auth off the Distribution pkg-ref,
-# which is where the document's value actually lands (design section 4), and
+# which is where the document's value actually lands, and
 # labels it so nobody trusts the other one.
 check "auth from the pkg-ref"    "1"                         "$(log_says 'auth (the real one):   Root')"
 check "the component inside it"  "1"                         "$(log_says 'Component replay.pkg:')"

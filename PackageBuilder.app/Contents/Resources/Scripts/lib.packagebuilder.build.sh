@@ -6,8 +6,8 @@
 #
 # This is a separate file from lib.packagebuilder.sh on purpose. Everything here
 # is a function of the document and the filesystem and touches the window only
-# to report - which is what lets design section 11's exported standalone script
-# be a transcription of this file rather than a second implementation of it.
+# to report - which is what lets the exported standalone script be a
+# transcription of this file rather than a second implementation of it.
 #
 # POSIX sh only. No [[ ]], no arrays, no process substitution. Validate with
 # "sh -n", never "bash -n".
@@ -75,9 +75,9 @@ run_capture() {
 }
 
 # Run an external tool, mirror everything it printed into the log, and return
-# its exit status. Design 8.4: every external call captures stdout and stderr
-# and has its status checked; a failure leaves the raw output in the log view
-# rather than a summary of it.
+# its exit status. Every external call captures stdout and stderr and has its
+# status checked; a failure leaves the raw output in the log view rather than
+# a summary of it.
 run_tool() {
     local output_file="$(state_dir)/tool.log"
     run_capture "$output_file" "$@"
@@ -91,14 +91,14 @@ run_tool() {
     return $status
 }
 
-# --- Value validation (design 4.4) --------------------------------------------
+# --- Value validation ---------------------------------------------------------
 # Substitution is textual, so a bad value corrupts output silently rather than
 # loudly. These run before any expansion happens and a failure is a hard stop
 # before any file is written.
 #
 # POSIX sh has no regular expressions; each pattern below is the case-glob
-# equivalent of the one in the design's table. In a bracket expression "!" first
-# negates and "-" last is a literal hyphen.
+# equivalent of the regular expression written above it. In a bracket expression
+# "!" first negates and "-" last is a literal hyphen.
 
 # ^[0-9][0-9A-Za-z.+_-]*$
 valid_version() {
@@ -147,7 +147,7 @@ valid_mode() {
     return 1
 }
 
-# --- Preconditions (design 7) -------------------------------------------------
+# --- Preconditions ------------------------------------------------------------
 # Everything checked and reported before anything is written. Each failure is
 # appended to the log and counted in the shared precondition_failures global, so
 # one run tells the user everything that is wrong rather than one thing per
@@ -214,14 +214,14 @@ staged_relative_path() {
 # or the NFC and NFD spellings of one accented name, are a single directory there
 # while comparing unequal in the shell. Two entries whose destinations differ
 # only that way therefore merged into one directory with the document reported
-# clean - which design 4.1 forbids, because the second entry's ditto races the
+# clean - which is not allowed, because the second entry's ditto races the
 # first.
 #
 # Every destination is made inside ONE probe tree, so a case-variant sibling
 # lands in the directory its predecessor created and canonicalizes to the same
 # name. Comparing those canonical forms makes both the equality test and the
 # prefix test fold-correct, without resolving anything lexically and without
-# Python (design 12). On any failure it returns the path unchanged, so the gate
+# Python. On any failure it returns the path unchanged, so the gate
 # degrades to the string comparison it was rather than to no gate at all.
 fold_install_path() {
     local probe_root="$1" path="$2"
@@ -323,7 +323,7 @@ check_preconditions() {
         mode="$(payload_get "$index" MODE)"
 
         # ${ARTIFACTS_DIR} used without PROJECT.ARTIFACTS_DIR set is a
-        # precondition failure rather than a silent empty string (design 4.3).
+        # precondition failure rather than a silent empty string.
         # Reported here specifically, because resolve_stored_path refuses it
         # without saying why.
         if uses_unset_artifacts_dir "$stored_source"; then
@@ -388,7 +388,7 @@ check_preconditions() {
 
         # Two destinations in one component may not be equal, and one may not be
         # a strict prefix of another: the second entry's ditto would race the
-        # first (design 4.1). Only later entries are compared, so a clash is
+        # first. Only later entries are compared, so a clash is
         # reported once rather than from both ends.
         other_index=$((index + 1))
         while [ "$other_index" -lt "$entry_count" ]; do
@@ -615,8 +615,7 @@ check_distribution_preconditions() {
     # clean: the license text shipped as the readme, exactly the outcome the
     # paragraph above says this check exists to prevent. Touching one marker per
     # basename and asking whether it already exists gets case folding, Unicode
-    # folding and anything else the volume does, for free and without Python
-    # (design 12).
+    # folding and anything else the volume does, for free and without Python.
     local seen_dir base
     seen_dir="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/pbresnames.XXXXXX" 2>/dev/null)" || seen_dir=""
     for pair in $DISTRIBUTION_RESOURCE_KINDS; do
@@ -659,7 +658,7 @@ check_distribution_preconditions() {
 }
 
 # ==============================================================================
-# Verify the payload (design section 7 step 1)
+# Verify the payload (stage 1)
 # ==============================================================================
 # This stage carries the knowledge the removed build step used to embody, which
 # is why its messages name the cause rather than the symptom. A binary produced
@@ -671,7 +670,7 @@ check_distribution_preconditions() {
 # it can do is refuse them by name, and say which mistake it is looking at.
 #
 # Unlike the preconditions, which accumulate so that one run reports everything
-# wrong with the document, this stage stops at the first problem (design 7). A
+# wrong with the document, this stage stops at the first problem. A
 # precondition failure is a typo in a field and the others are worth collecting;
 # a verify failure means the artifact on disk is not the artifact the document
 # describes, and the rest of the answers are not worth the wait.
@@ -903,7 +902,7 @@ artifact_slices() {
 # to sign to run locally, carries no signature or only an ad-hoc one, and the
 # verify stage refuses it. With SIGNING.APPLICATION_IDENTITY set, PackageBuilder
 # signs the copy it stages instead, with the hardened runtime and a secure
-# timestamp. The artifacts folder is still only read (design 8.4), and the
+# timestamp. The artifacts folder is still only read, and the
 # signed copy is held to the entry's assertions before it is packaged, so what
 # ships is something the verify stage would have accepted.
 #
@@ -1224,7 +1223,7 @@ verify_payload_entry() {
         # A bundle answers from its Info.plist rather than by being launched:
         # running an .app's executable to ask what version it is starts the app.
         # The flag is still what turns the check on, so this stays the per-entry
-        # opt-in of design 7 - a payload can carry a 1.0 helper beside a 2.2 app
+        # opt-in - a payload can carry a 1.0 helper beside a 2.2 app
         # without the helper's version being read as the release's.
         reported_version="$(artifact_version "$source" "$version_flag")"
         if [ -z "$reported_version" ]; then
@@ -1314,7 +1313,7 @@ verify_payload() {
     return 0
 }
 
-# --- Staging (design 7 step 2, 8.5) -------------------------------------------
+# --- Staging (stage 2) --------------------------------------------------------
 # A scratch path belonging to one component.
 #
 # Component 0 keeps the unsuffixed name, so a single component's build lays out
@@ -1337,7 +1336,7 @@ component_scratch() {
 #
 # The root is removed and recreated every time, so an entry deleted from the
 # document cannot survive into the next package as a leftover file. rm -rf is
-# confined to the state directory (design 8.4), which state_dir owns.
+# confined to the state directory, which state_dir owns.
 stage_payload_root() {
     # Set once per iteration of the loop below.
     local source destination relative target owner group
@@ -1492,9 +1491,9 @@ stage_payload_root() {
 
         # Ownership is not applied here and does not need to be: pkgbuild runs
         # with --ownership recommended, which records root:wheel in the BOM
-        # whoever runs the build, so no sudo is involved anywhere (design 7
-        # step 2). An entry asking for something else is saying something the
-        # build cannot honor, so it is said out loud rather than ignored.
+        # whoever runs the build, so no sudo is involved anywhere. An entry
+        # asking for something else is saying something the build cannot honor,
+        # so it is said out loud rather than ignored.
         owner="$(payload_get "$index" OWNER "$component_index")"
         group="$(payload_get "$index" GROUP "$component_index")"
         if [ "$warned_ownership" = "0" ]; then
@@ -1594,9 +1593,9 @@ add_to_path_postinstall() {
 # says, for every bundle in the staged root, and print its path. Prints nothing
 # when the root holds no bundle, in which case there is nothing to pass.
 #
-# Design 8.2: a relocatable bundle makes Installer look for an existing copy of
-# that bundle identifier anywhere on the volume via Spotlight and install there
-# instead. A stale copy in ~/Downloads silently becomes the install target.
+# A relocatable bundle makes Installer look for an existing copy of that bundle
+# identifier anywhere on the volume via Spotlight and install there instead. A
+# stale copy in ~/Downloads silently becomes the install target.
 #
 # The value is always written, never left to pkgbuild: its default changed. Up
 # to macOS 26 pkgbuild marked bundles relocatable; on macOS 27 --analyze leaves
@@ -1635,14 +1634,14 @@ component_plist_relocation() {
 
 # Force PackageInfo's overwrite-permissions attribute to what the document says.
 #
-# Design 8.1: pkgbuild always writes "true", which tells Installer to apply the
-# BOM's owner and mode to directories that already exist, not only to ones it
-# creates. With a payload under /usr/local/bin the BOM carries /usr/local and
-# /usr/local/bin as root:wheel; on a Mac with Homebrew those are owned by the
-# console user, so installing resets them and leaves brew unable to write.
-# pkgbuild has no option for it, so the fix is an expand/patch/flatten round
-# trip. --expand rather than --expand-full leaves Payload and Bom opaque, so the
-# round trip cannot disturb them.
+# pkgbuild always writes "true", which tells Installer to apply the BOM's owner
+# and mode to directories that already exist, not only to ones it creates. With
+# a payload under /usr/local/bin the BOM carries /usr/local and /usr/local/bin
+# as root:wheel; on a Mac with Homebrew those are owned by the console user, so
+# installing resets them and leaves brew unable to write. pkgbuild has no option
+# for it, so the fix is an expand/patch/flatten round trip. --expand rather than
+# --expand-full leaves Payload and Bom opaque, so the round trip cannot disturb
+# them.
 #
 # Arguments: package path, wanted value ("true"/"false")
 patch_overwrite_permissions() {
@@ -1676,7 +1675,7 @@ patch_overwrite_permissions() {
     fi
     /usr/bin/sed -i '' "s/overwrite-permissions=\"[a-z]*\"/overwrite-permissions=\"$wanted\"/" "$package_info"
     # The grep is not decoration: a silently failed sed would ship the harmful
-    # package (design 8.1).
+    # package.
     if ! /usr/bin/grep -q "overwrite-permissions=\"$wanted\"" "$package_info"; then
         append_log "  ! Could not set overwrite-permissions to $wanted"
         /bin/rm -rf "$expand_dir"
@@ -1874,16 +1873,17 @@ build_component_package() {
 }
 
 # ==============================================================================
-# The distribution package (design section 7 step 3)
+# The distribution package (stage 3)
 # ==============================================================================
 
 # Escape a value for XML. "&" first, or the ampersands introduced by the later
 # substitutions would be escaped a second time.
 #
-# This is the Distribution XML's equivalent of design 4.4's sed hazard: a title
-# of "Rock & Roll" written raw produces a document productbuild rejects, and a
-# title containing "<" produces one it accepts and mis-renders. Built from
-# str_replace rather than sed for the same reason as everything else here.
+# This is the Distribution XML's equivalent of the sed hazard described under
+# Value validation: a title of "Rock & Roll" written raw produces a document
+# productbuild rejects, and a title containing "<" produces one it accepts and
+# mis-renders. Built from str_replace rather than sed for the same reason as
+# everything else here.
 xml_escape() {
     local text="$1"
     text="$(str_replace "$text" '&' '&amp;')"
@@ -1956,7 +1956,7 @@ DISTRIBUTION_RESOURCE_KINDS="README:readme LICENSE:license WELCOME:welcome CONCL
 # Files are staged flat, under their own basename, and the XML refers to them by
 # that basename. productbuild resolves a resource reference at the root of the
 # --resources directory, so this works whether the source sat in an en.lproj or
-# not. Localized resource sets are not modeled at all (design 4.6), so
+# not. Localized resource sets are not modeled at all, so
 # flattening loses nothing the document could express.
 stage_distribution_resources() {
     local resources_dir="$(state_dir)/resources"
@@ -1998,7 +1998,7 @@ stage_distribution_resources() {
         esac
         # ditto rather than cp: an .rtfd resource is a directory bundle, and cp
         # without -R would refuse it.
-        # Through run_tool like every other external call (design 8.4), which
+        # Through run_tool like every other external call, which
         # also makes this copy reachable by Stop rather than the one tool a
         # stop request could not interrupt.
         run_tool "$ditto_tool" "$source" "$resources_dir/$base" || return 1
@@ -2133,8 +2133,7 @@ generate_distribution_xml() {
 
         # auth on the pkg-ref, not in PackageInfo: pkgbuild has no flag for it
         # and always writes auth="root" into the component regardless, so the
-        # Distribution XML is the only place the document's value can land
-        # (design section 4).
+        # Distribution XML is the only place the document's value can land.
         #
         # The file name has to be the one build_component_package wrote, or
         # productbuild resolves the reference to nothing.
@@ -2164,7 +2163,7 @@ generate_distribution_xml() {
 #
 # The output stays inside the state directory. Only a signed package is ever
 # copied to the output folder, so an unsigned artifact never sits one word away
-# in the filename from the one that gets uploaded (design 8.3) - which is
+# in the filename from the one that gets uploaded - which is
 # exactly what the old Packages.app flow left behind next to every release.
 build_distribution_package() {
     local component_dir="$(state_dir)/component"
@@ -2209,7 +2208,7 @@ build_distribution_package() {
 }
 
 # ==============================================================================
-# Signing and the output folder (design section 7 step 4, 8.3)
+# Signing and the output folder (stage 4)
 # ==============================================================================
 
 # Succeed when an identity is in this machine's keychain. Whole-line, fixed
@@ -2291,8 +2290,8 @@ check_signing_preconditions() {
 # path of the result.
 #
 # This is the only step that writes outside the state directory, and it writes
-# only a signed package (design 8.3). The output folder is created if missing
-# and never cleaned (design 8.4).
+# only a signed package. The output folder is created if missing
+# and never cleaned.
 sign_package() {
     local unsigned="$1"
     local output_dir="$(output_dir_abs)"
@@ -2332,7 +2331,8 @@ sign_package() {
     # output folder for the whole duration of productsign, so a build killed
     # mid-run - app quit, which kills the recorded process group - strands a
     # partial, unsigned file named exactly like a real package. That is the one
-    # outcome design 8.3 exists to prevent. Found in review, 2026-08-06.
+    # outcome the output folder's signed-only rule exists to prevent. Found in
+    # review, 2026-08-06.
     local staged_signed="$(state_dir)/signed.pkg"
     /bin/rm -f "$staged_signed"
 
@@ -2587,7 +2587,7 @@ stop_here() {
 }
 
 # ==============================================================================
-# The whole pipeline (design section 7)
+# The whole pipeline
 # ==============================================================================
 # All four stages in one run, driven by the toolbar's Build Package and by the
 # agent CLI's "build". It lives here rather than in the handler so that the two
@@ -2611,7 +2611,7 @@ run_pipeline() {
     local component unsigned signed
 
     # Fixed once for the whole run, so a build that crosses midnight cannot
-    # name two files two different things (design 4.4).
+    # name two files two different things.
     PB_BUILD_DATE="$(/bin/date '+%Y-%m-%d')"
     export PB_BUILD_DATE
 
@@ -2729,8 +2729,8 @@ run_pipeline() {
     # --- Stage 4: sign --------------------------------------------------------
     if [ "$signing_on" != "1" ]; then
         # What becomes of an unsigned package is the frontend's business, so it
-        # is asked rather than told. Design 8.3 keeps an unsigned artifact out of
-        # the window's output folder, but a terminal caller that passed
+        # is asked rather than told. An unsigned artifact stays out of the
+        # window's output folder, but a terminal caller that passed
         # --unsigned asked for the artifact and its scratch directory is about to
         # go away. Stating either outcome here would make the log lie to one of
         # the two frontends, which is exactly what the presentation seam is for.
@@ -2767,7 +2767,7 @@ run_pipeline() {
     return 0
 }
 
-# --- Inspecting a built package (design section 6, Actions menu) --------------
+# --- Inspecting a built package (Actions menu) --------------------------------
 # How many BOM lines the report lists before it stops. A payload holding one .app
 # is tens of thousands of files, and a log view holding all of them is not a
 # report, it is a haystack. The COUNT is always exact; only the listing is
@@ -2936,7 +2936,7 @@ inspect_component_dir() {
 
     # The relocate list, not a "relocatable" attribute: pkgbuild expresses
     # relocatability by listing the bundles it will hunt for, and an empty
-    # <relocate/> is what design 8.2 forces for a non-relocatable package. So
+    # <relocate/> is what the build forces for a non-relocatable package. So
     # the honest report is which bundles Installer would go looking for.
     if /usr/bin/grep -q '<relocate/>' "$package_info"; then
         append_log "  relocatable:           no (empty relocate list)"
@@ -2953,7 +2953,7 @@ inspect_component_dir() {
 
     # auth is deliberately NOT read from here. pkgbuild always writes
     # auth="root" into PackageInfo whatever the document says, which is why the
-    # Distribution pkg-ref carries the real value (design section 4). Reporting
+    # Distribution pkg-ref carries the real value. Reporting
     # PackageInfo's copy would tell a user who chose "User" that they had chosen
     # "Root", which is precisely the confusion this whole feature is for.
 
@@ -3024,10 +3024,10 @@ inspect_package() {
     append_log "Signature:"
     "$pkgutil_tool" --check-signature "$package_path" > "$scratch" 2>&1
     # The status is not tested. An unsigned package makes pkgutil exit non-zero,
-    # and an unsigned package is a legitimate thing to be looking at - design 8.3
-    # keeps one out of the output folder but the intermediate is still here, and
-    # "is this actually signed" is one of the two questions this feature exists
-    # to answer.
+    # and an unsigned package is a legitimate thing to be looking at - the
+    # output folder never gets one but the intermediate is still here, and "is
+    # this actually signed" is one of the two questions this feature exists to
+    # answer.
     indent_file "$scratch" "  "
     append_log_file "$scratch"
     /bin/rm -f "$scratch"

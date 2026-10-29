@@ -1,12 +1,12 @@
 #!/bin/sh
 # PackageBuilder.import.pkgproj.sh - import a Packages.app project
 #
-# Design section 10: the settings, the install location, the payload hierarchy,
-# the readme and the build path come across; the presentation model beyond the
-# readme, the excluded-file patterns, the requirement list and the filesystem
-# template tree do not, and the log says so. The import lands in the current
-# document, which is why it marks the document dirty rather than saving: what
-# was imported is a proposal until the user saves it.
+# The settings, the install location, the payload hierarchy, the readme and
+# the build path come across; the presentation model beyond the readme, the
+# excluded-file patterns, the requirement list and the filesystem template
+# tree do not, and the log says so. The import lands in the current document,
+# which is why it marks the document dirty rather than saving: what was
+# imported is a proposal until the user saves it.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"

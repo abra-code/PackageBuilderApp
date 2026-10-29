@@ -1,10 +1,9 @@
 #!/bin/sh
 # Tests/10-document.test.sh - the document state machine.
 #
-# Ported from Private/harness.sh sections 1 to 17. What the port changes is the
-# scaffolding, not the assertions: omctest supplies the scratch tree, the
-# interposition directory, the alert stub and the check vocabulary, and this file
-# keeps every expected value the proof of concept had.
+# omctest supplies the scratch tree, the interposition directory, the alert stub
+# and the check vocabulary, and this file keeps every expected value the proof of
+# concept had.
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 

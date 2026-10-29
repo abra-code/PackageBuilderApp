@@ -12,7 +12,7 @@ store_browsed_path "$OUTPUT_DIR_ID" "$OMC_DLG_CHOOSE_FOLDER_PATH"
 # have every intermediate path remembered as it was typed.
 #
 # The absolute path, not what store_browsed_path recorded - that is relative to
-# the document when the folder sits below it (design 4.2), and a preference
+# the document when the folder sits below it, and a preference
 # other projects read has nothing to resolve a relative path against.
 remember_default_output_dir "$(canonical_or_self "$OMC_DLG_CHOOSE_FOLDER_PATH")"
 

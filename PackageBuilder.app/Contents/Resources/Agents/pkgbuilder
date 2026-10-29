@@ -15,10 +15,10 @@
 # stdout. Exit codes follow the verifiers: 0 ok, 2 warnings (and usage errors),
 # 1 errors.
 #
-# POSIX sh, like everything else in this app: design section 12 keeps the whole
-# thing free of an interpreter dependency, and running the CLI under the same
-# /bin/sh that OMC gives the handlers is also the cheapest proof the shared
-# libraries stay portable. Validate with "sh -n", never "bash -n".
+# POSIX sh, like everything else in this app: that keeps the whole thing free
+# of an interpreter dependency, and running the CLI under the same /bin/sh
+# that OMC gives the handlers is also the cheapest proof the shared libraries
+# stay portable. Validate with "sh -n", never "bash -n".
 #
 # See README.md in this folder for the full guide.
 
@@ -385,7 +385,7 @@ cmd_new() {
     fi
 
     # The two folders are stored the way the window stores them - relative to
-    # the document when they sit below it (design 4.2) - so the document that
+    # the document when they sit below it - so the document that
     # comes out of this is the same document the app would have written. That
     # needs the document's own location on record first, which is why the path
     # is set before either folder is.
@@ -1051,7 +1051,7 @@ cmd_build() {
     # without parsing the log. A signed run lands in the output folder. An
     # unsigned one is copied out by the console presentation layer, which owns
     # that decision because it is the one place the two frontends genuinely
-    # differ (design 8.3); it records where the package settled, and that is
+    # differ; it records where the package settled, and that is
     # what gets printed here.
     local produced="$(built_package_path)"
     if [ -n "$produced" ]; then
@@ -1181,7 +1181,7 @@ cmd_import_pkgproj() {
     new_document || return 1
     model_normalize
     # The destination on record before the import, so the paths it stores are
-    # relative to where the document will live (design 4.2).
+    # relative to where the document will live.
     set_doc_path "$destination"
     if ! import_pkgproj "$(canonical_path "$source_path")"; then
         printf 'pkgbuilder: nothing usable in %s\n' "$source_path" >&2
@@ -1227,7 +1227,7 @@ cmd_import_pkg() {
     new_document || return 1
     model_normalize
     # The destination on record before the import, so OUTPUT_DIR is stored
-    # relative to where the document will live (design 4.2).
+    # relative to where the document will live.
     set_doc_path "$destination"
     if ! import_pkg "$(canonical_path "$source_path")"; then
         printf 'pkgbuilder: nothing usable in %s\n' "$source_path" >&2

@@ -121,7 +121,7 @@ run there - before the payload verify, which is the part worth knowing about.
 8. **`arm64e` is not `arm64`.** They are separate architectures, and asserting one
    does not accept the other.
 9. **Nothing reaches the output folder under the document's package name unless
-   it is signed and signature-checked** (design 8.3). An unsigned build from the
+   it is signed and signature-checked**. An unsigned build from the
    CLI or from an exported script does land there, but with `-unsigned` before
    the extension (`widget_2.0-unsigned.pkg`), so a test package can never be
    mistaken for a release. In the window an

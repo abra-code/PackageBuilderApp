@@ -1,10 +1,9 @@
 #!/bin/sh
 # Tests/30-payload.test.sh - the payload tab.
 #
-# Ported from Private/harness.sh sections 32 to 50. Its fixtures are synthesized
-# by make_artifacts rather than committed, which is the harness's preferred
-# pattern: no binaries in the repo, and the block that builds them documents
-# exactly which properties matter.
+# Its fixtures are synthesized by make_artifacts rather than committed, which
+# is the harness's preferred pattern: no binaries in the repo, and the block
+# that builds them documents exactly which properties matter.
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 
@@ -34,7 +33,7 @@ check "bundle mode"              "0755"                      "$(payload_field 0 
 check "owner and group"          "root wheel"                "$(payload_field 0 OWNER) $(payload_field 0 GROUP)"
 check "tool destination"         "/usr/local/bin/mytool"     "$(payload_field 1 DESTINATION)"
 check "tool mode"                "0755"                      "$(payload_field 1 MODE)"
-# "anything else" takes the directory of the previously added entry (design 5.3).
+# "anything else" takes the directory of the previously added entry.
 check "data file follows prev"   "/usr/local/bin/readme.txt" "$(payload_field 2 DESTINATION)"
 check "data file mode"           "0644"                      "$(payload_field 2 MODE)"
 check "last row selected"        "2"                         "$(selected_index)"
@@ -57,7 +56,7 @@ check "data file not universal"  "0"                         "$(count /COMPONENT
 check "data file no signed-by"   ""                          "$(payload_field 2 VERIFY/SIGNED_BY)"
 check "data file not hardened"   "false"                     "$(payload_field 2 VERIFY/HARDENED_RUNTIME)"
 
-section "35. project fields fill themselves from the first artifact (4.5)"
+section "35. project fields fill themselves from the first artifact"
 check "name from basename"       "Widget"                    "$(model /PROJECT/NAME)"
 check "version from Info.plist"  "3.4.1"                     "$(model /PROJECT/VERSION)"
 check "min OS from Info.plist"   "13.0"                      "$(model /PROJECT/MIN_OS_VERSION)"
@@ -201,7 +200,7 @@ check "mode defaulted"           "0755"                      "$(payload_field 0 
 check "source preserved"         "a"                         "$(payload_field 0 SOURCE)"
 check "first row selected"       "0"                         "$(selected_index)"
 # The entry had no VERIFY dict, so a toggle write has to create one rather than
-# fail the way plister "set" does on a missing parent (design 12.3).
+# fail the way plister "set" does on a missing parent.
 omc_fire PackageBuilder.field.changed $VERIFY_HARDENED_ID "true"
 check "VERIFY created on write"  "true"                      "$(payload_field 0 VERIFY/HARDENED_RUNTIME)"
 check "and it is dirty"          "1"                         "$(dirty)"
@@ -245,7 +244,7 @@ check "the table shows all three" "3"                        "$(ui_row_count $PA
 check "last row selected"        "2"                         "$(selected_index)"
 check "the document is dirty"    "1"                         "$(dirty)"
 # A scan is a bulk add: the project fields fill from the first artifact exactly
-# as a drop's do (design 4.5).
+# as a drop's do.
 check "name from the bundle"     "alpha"                     "$(model /PROJECT/NAME)"
 check "version from Info.plist"  "1.2.3"                     "$(model /PROJECT/VERSION)"
 check_absent "no scan file left" "$(state_dir)/scan-found.txt"

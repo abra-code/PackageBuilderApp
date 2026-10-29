@@ -286,9 +286,9 @@ prefs_set() {
     "$plister" set string "$pref_value" "$prefs_file" "/$pref_name"
 }
 
-# The two defaults of design section 9. Both answer the same question - "the
-# last time I set this up by hand, what did I choose?" - for the two fields a
-# new project cannot guess and every project in one workflow shares.
+# The two defaults. Both answer the same question - "the last time I set this
+# up by hand, what did I choose?" - for the two fields a new project cannot
+# guess and every project in one workflow shares.
 PREF_DEFAULT_IDENTITY="default_installer_identity"
 PREF_DEFAULT_OUTPUT_DIR="default_output_dir"
 
@@ -303,7 +303,7 @@ remember_default_identity() {
 }
 
 # The same for an output folder, and it must be stored ABSOLUTE. The document
-# keeps this field relative when the folder sits below the project (design 4.2),
+# keeps this field relative when the folder sits below the project,
 # and a preference is read by projects that have no relation to that one - a
 # remembered "build" would resolve against whichever document asked next.
 remember_default_output_dir() {
@@ -357,7 +357,7 @@ apply_new_document_defaults() {
 }
 
 # --- Model access -------------------------------------------------------------
-# The model is a file and the window is a projection of it (design section 9.1).
+# The model is a file and the window is a projection of it.
 
 # Print a value from the model. Arguments: key path (e.g. /PROJECT/VERSION)
 model_get() {
@@ -793,7 +793,7 @@ new_document() {
 # model, so a failed open leaves the window showing what it showed before.
 #
 # The document is staged as .json before plister sees it, and that stays true
-# now that plister can read a .pkgbld in place (design 12.2). The staging does
+# now that plister can read a .pkgbld in place. The staging does
 # two jobs the in-place read does not:
 #
 #   - it is what makes the rejection total. The probe runs on the copy, so a
@@ -1034,7 +1034,7 @@ populate_payload_table() {
 }
 
 # ==============================================================================
-# Components (design section 4.5)
+# Components
 # ==============================================================================
 # A document holds an array of components, and every accessor here and in the
 # payload section below takes the component index as an OPTIONAL trailing
@@ -1554,7 +1554,7 @@ repopulate_components() {
 }
 
 # ==============================================================================
-# Payload (design sections 4.1 to 4.4 and 5.3)
+# Payload
 # ==============================================================================
 
 payload_count() {
@@ -1619,7 +1619,7 @@ deselect_payload_row() {
     "$dialog_tool" "$document_uuid" "$PAYLOAD_TABLE_ID" omc_deselect
 }
 
-# --- Paths (design 4.2, 4.3, 4.4) ---------------------------------------------
+# --- Paths --------------------------------------------------------------------
 # Absolute directory containing the document, or nothing when it is unsaved.
 document_dir() {
     local p="$(doc_path)"
@@ -1632,7 +1632,7 @@ document_dir() {
 # Not sed. Substitution here is textual and a bad value corrupts output silently
 # rather than loudly: "&" in a sed replacement means "the matched text", which is
 # how makepkg.sh once produced a readme reading "replay 2__VERSION__2" and exited
-# 0 (design 4.4). Parameter expansion has no such metacharacters.
+# 0. Parameter expansion has no such metacharacters.
 # Arguments: haystack, needle, replacement
 str_replace() {
     local haystack="$1" needle="$2" replacement="$3"
@@ -1674,7 +1674,7 @@ expand_basic_tokens() {
 }
 
 # Make a path absolute: absolute stays, ~ expands, anything else is relative to
-# the directory containing the document (design 4.2). A relative path in an
+# the directory containing the document. A relative path in an
 # unsaved document has no base to resolve against and is returned unchanged, so
 # callers see a path that does not exist rather than one resolved against the
 # working directory OMC happened to hand the handler.
@@ -1696,7 +1696,7 @@ absolutize() {
 }
 
 # Absolute PROJECT.ARTIFACTS_DIR, or nothing when it is unset. Optional by
-# design (4.3): a document may use absolute or document-relative sources and
+# design: a document may use absolute or document-relative sources and
 # never set it.
 artifacts_dir_abs() {
     local raw="$(model_get /PROJECT/ARTIFACTS_DIR)"
@@ -1709,7 +1709,7 @@ artifacts_dir_abs() {
 # Succeed when a stored value uses ${ARTIFACTS_DIR} and there is no artifacts
 # folder to resolve it against.
 #
-# This is the case design 4.3 calls a precondition failure rather than a silent
+# This is the case that counts as a precondition failure rather than a silent
 # empty string, and the reason is worth keeping in view: a source stored as
 # ${ARTIFACTS_DIR}/usr/local/bin/replay collapses to /usr/local/bin/replay,
 # which very likely *exists* - it is the previously installed copy. Reading a
@@ -1725,7 +1725,7 @@ uses_unset_artifacts_dir() {
     [ -z "$(artifacts_dir_abs)" ]
 }
 
-# Expand all five placeholders of design 4.4. Purely textual: callers that must
+# Expand all five placeholders. Purely textual: callers that must
 # not accept an empty ${ARTIFACTS_DIR} ask uses_unset_artifacts_dir first, so
 # this stays usable for the name and destination fields, where the token is not
 # expected in the first place.
@@ -2194,7 +2194,7 @@ store_browsed_path() {
 
 # Turn an absolute path into the form the document should store: relative to
 # ${ARTIFACTS_DIR} when it is below it, else relative to the document's folder
-# when it is below that, else absolute (design 4.2, 4.3).
+# when it is below that, else absolute.
 store_path() {
     local absolute_path="$1"
     # Declared apart from its assignments on purpose: "local" is itself a
@@ -2223,8 +2223,7 @@ store_path() {
 # with no Contents directory at all - so a Contents-only test reports that a
 # framework is not a bundle, which costs it mode 0755, all four verify toggles,
 # and its version read, while the destination guess still works from the
-# extension and makes the result look deliberate. Design 5.3 lists
-# Foo.framework explicitly. Found in review, 2026-08-06.
+# extension and makes the result look deliberate. Found in review, 2026-08-06.
 bundle_info_plist() {
     local bundle_path="$1"
     # Set by the "for" below.
@@ -2335,7 +2334,7 @@ is_macho_image() {
 
 # Print the executable this payload entry's checks apply to: the file itself for
 # a bare binary, the main executable for a bundle, nothing for anything else.
-# This is what decides whether the verify toggles start on (design 5.3) and what
+# This is what decides whether the verify toggles start on and what
 # a version read runs.
 artifact_executable() {
     local artifact_path="$1"
@@ -2373,7 +2372,7 @@ domain_directory() {
     printf '%s' "$directory"
 }
 
-# Where a dropped or browsed artifact installs, by its kind (design 5.3), in the
+# Where a dropped or browsed artifact installs, by its kind, in the
 # home folder when the package installs for the user.
 # Arguments: absolute source path, fallback destination directory
 guess_destination() {
@@ -2405,7 +2404,7 @@ guess_destination() {
     fi
     # No guess. The entry is added with an empty destination and the build's
     # preconditions refuse to run until it is filled in, rather than inventing
-    # one silently (design 5.3).
+    # one silently.
     return 0
 }
 
@@ -2551,7 +2550,7 @@ scan_artifacts() {
     return 0
 }
 
-# --- Reading a version out of an artifact (design 4.5) ------------------------
+# --- Reading a version out of an artifact -------------------------------------
 # Print the first version-looking token in a string, or nothing.
 first_version_token() {
     local text="$1"
@@ -2577,7 +2576,7 @@ artifact_version() {
     [ -f "$artifact_path" ] && [ -x "$artifact_path" ] || return 0
     # Every capture of a possibly-failing command ends in "|| true": a tool that
     # exits non-zero must produce an empty version that the caller reports, not
-    # a status that ends the handler (design 7). stdin is closed as well, so a
+    # a status that ends the handler. stdin is closed as well, so a
     # tool that reads it when given an unknown flag cannot leave the handler
     # waiting forever on a user who has no terminal to type into.
     local first_line="$("$artifact_path" "$version_flag" </dev/null 2>/dev/null | /usr/bin/head -n 1 || true)"
@@ -2600,7 +2599,7 @@ artifact_minos() {
 
 # --- Editing the payload array ------------------------------------------------
 # Create the VERIFY dict of an entry when it has none. plister "set" cannot
-# create an intermediate container (design 12.3), so every write below VERIFY
+# create an intermediate container, so every write below VERIFY
 # has to be preceded by this.
 ensure_payload_verify() {
     local entry_index="$1" component_index="$2"
@@ -2735,8 +2734,8 @@ payload_bool_set() {
 # Append a payload entry for an artifact and print its index.
 #
 # plister cannot append a container - "append dict" and "add dict" both fail
-# with "invalid number of arguments" while "insert <n> dict" works (design
-# 12.1) - so growth is a count-then-insert.
+# with "invalid number of arguments" while "insert <n> dict" works - so growth
+# is a count-then-insert.
 #
 # Arguments: absolute source path
 payload_append_from_path() {
@@ -2747,8 +2746,8 @@ payload_append_from_path() {
     local destination="$(guess_destination "$artifact_path" "$(last_destination_dir)")"
     local mode="$(guess_mode "$artifact_path")"
     local executable="$(artifact_executable "$artifact_path")"
-    # The checks of design 7 step 1 only have something to say about a Mach-O,
-    # so they start on for one and off for a plain file (design 5.3).
+    # The verify checks only have something to say about a Mach-O,
+    # so they start on for one and off for a plain file.
     if [ -n "$executable" ]; then verify_flag=1; else verify_flag=0; fi
 
     local entry_index="$(payload_count)"
@@ -2943,7 +2942,7 @@ show_payload_selection() {
 
 # Rebuild the table and put the selection back on a chosen row. Every edit that
 # changes the shape of the list goes through here, because setting a table's
-# rows replaces them and does not move the selection (design 5.2).
+# rows replaces them and does not move the selection.
 # Arguments: index to select, or "" for none
 repopulate_payload() {
     local wanted_index="$1"
@@ -2965,7 +2964,7 @@ repopulate_payload() {
 # Fill NAME, VERSION and MIN_OS_VERSION from a just-added artifact, but only
 # where the document has nothing yet - typing a version the artifacts do not
 # carry is the easy mistake here, and overwriting one the user chose would be a
-# worse one (design 4.5). Prints nothing; returns 0 always.
+# worse one. Prints nothing; returns 0 always.
 # Arguments: absolute artifact path
 fill_project_fields_from_artifact() {
     local artifact_path="$1"
@@ -3107,7 +3106,7 @@ missing_identity_title() {
 # The ordered list is also written to identities.txt. The options carry explicit
 # tags, so the picker should deliver the tag directly the way the Auth and
 # Customize pickers already do - but a Picker's value channel is the 1-based
-# option index when options are plain strings (design 5.2), and which of the two
+# option index when options are plain strings, and which of the two
 # a runtime-populated picker uses is not something this app has established.
 # Keeping the map costs one file and lets the reader below accept either.
 refresh_identity_picker() {
@@ -3362,7 +3361,7 @@ resolve_application_identity_value() {
     /usr/bin/sed -n "${delivered}p" "$map_file" 2>/dev/null
 }
 
-# --- Field map (design section 9.2) ------------------------------------------
+# --- Field map ---------------------------------------------------------------
 # The single place where the window's view ids and the document schema meet.
 # Print the model key path a scalar control writes to. Arguments: view id
 field_key_path() {
@@ -3475,7 +3474,7 @@ payload_field_key() {
 }
 
 # Print the destination a preset menu item fills in, without the artifact's own
-# basename, which the handler appends (design 5.3).
+# basename, which the handler appends.
 destination_preset() {
     local view_id="$1"
     case "$view_id" in
@@ -3539,7 +3538,7 @@ canonical_path() {
 # or was canceled, because the model file is the only copy of the user's work.
 cleanup_state() {
     local dir="${TMPDIR:-/tmp}/packagebuilder-state-${document_uuid}"
-    # rm -rf runs only on a path that is one of ours (design section 8.4). In a
+    # rm -rf runs only on a path that is one of ours. In a
     # case pattern "?" and "*" both match "/", so the uuid is checked separately
     # for a path separator or a parent reference rather than trusted to the glob.
     case "$document_uuid" in

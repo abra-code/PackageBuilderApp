@@ -149,9 +149,9 @@ rail_reset() {
 }
 
 # --- What becomes of an unsigned package --------------------------------------
-# Design 8.3: the output folder only ever receives a signed package. In the
-# window an unsigned build is an intermediate, so it stays in the scratch
-# directory and the log says where.
+# The output folder only ever receives a signed package. In the window an
+# unsigned build is an intermediate, so it stays in the scratch directory and
+# the log says where.
 report_unsigned_result() {
     local package_path="$1"
     append_log ""

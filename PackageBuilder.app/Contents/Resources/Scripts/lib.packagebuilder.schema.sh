@@ -17,9 +17,8 @@
 # fills in absent containers and replaces out-of-range enums - so the verifier
 # deliberately reads the file as it is, before any normalization.
 #
-# Shell only, no Python: design section 12 rules the app out of an interpreter
-# dependency, and plister's "get keys" and "get type" make key and type
-# enumeration possible without one.
+# Shell only, no Python: the app takes no interpreter dependency, and plister's
+# "get keys" and "get type" make key and type enumeration possible without one.
 #
 # POSIX sh only. Validate with "sh -n", never "bash -n".
 
@@ -30,9 +29,9 @@ schema_errors=0
 schema_warnings=0
 
 # The file under inspection, staged as a copy in the state directory so nothing
-# is written beside the user's document (design 8.4). The .json name is no
+# is written beside the user's document. The .json name is no
 # longer what makes plister read it - that falls back to the content for any
-# extension it does not know (design 12.2) - but it costs nothing and keeps the
+# extension it does not know - but it costs nothing and keeps the
 # staged file honest about what it holds.
 schema_file=""
 
@@ -316,7 +315,7 @@ schema_check_document() {
     fi
 
     # Staged in the state directory so nothing is written beside the user's
-    # document (design 8.4).
+    # document.
     schema_file="$(state_dir)/schema-check.json"
     /bin/rm -f "$schema_file"
     /bin/cp "$document_path" "$schema_file" || {
@@ -409,14 +408,14 @@ schema_check_document() {
             schema_error "$label/AUTH is Root, but DISTRIBUTION/DOMAIN is user - a package that installs for the user cannot ask for an administrator password; use User"
         fi
 
-        # Both defaults are safety decisions with a design section behind them,
-        # so a document turning either on is told what it is asking for rather
-        # than left to find out from an installed machine.
+        # Both defaults are safety decisions, so a document turning either on
+        # is told what it is asking for rather than left to find out from an
+        # installed machine.
         if [ "$(schema_value "$base/OVERWRITE_PERMISSIONS")" = "true" ]; then
-            schema_warn "$label/OVERWRITE_PERMISSIONS is true: installing will apply the payload's owner and mode to directories that already exist, which resets a Homebrew user's /usr/local when the payload lives there (design 8.1)"
+            schema_warn "$label/OVERWRITE_PERMISSIONS is true: installing will apply the payload's owner and mode to directories that already exist, which resets a Homebrew user's /usr/local when the payload lives there"
         fi
         if [ "$(schema_value "$base/RELOCATABLE")" = "true" ]; then
-            schema_warn "$label/RELOCATABLE is true: Installer will follow Spotlight to any existing copy of a bundle in the payload and install there instead (design 8.2)"
+            schema_warn "$label/RELOCATABLE is true: Installer will follow Spotlight to any existing copy of a bundle in the payload and install there instead"
         fi
 
         # Two components that cannot be told apart collide in the Distribution's

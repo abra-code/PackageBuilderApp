@@ -1,8 +1,8 @@
 #!/bin/sh
 # PackageBuilder.notarize.sh - hand the signed package to Notarize.app
 #
-# Design 11.1: PackageBuilder ends at a signed package. Notarize.app already has
-# the credential wizard, the submit/wait loop and the stapling, and takes a flat
+# PackageBuilder ends at a signed package. Notarize.app already has the
+# credential wizard, the submit/wait loop and the stapling, and takes a flat
 # .pkg as a first-class target, so duplicating any of it here would mean two
 # credential wizards to keep in step for a step run once per release.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
@@ -36,7 +36,7 @@ for candidate in /Applications/Notarize.app "$HOME/Applications/Notarize.app"; d
     fi
 done
 
-# Reported plainly rather than failing silently (design 11.1).
+# Reported plainly rather than failing silently.
 set_status "Notarize.app was not found - the signed package is at $package_path"
 
 exit 0

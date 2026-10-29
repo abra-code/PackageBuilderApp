@@ -1,11 +1,11 @@
 #!/bin/sh
 # PackageBuilder.export.script.sh - write the standalone packaging script
 #
-# Design section 11, and a first-class feature rather than a convenience: the
-# reason this app exists is that a GUI tool stopped being maintained and took a
-# release workflow with it. A document that can regenerate its own packaging
-# script is not exposed to that failure again, and the script runs the same
-# packaging step on a CI machine with no GUI session.
+# A first-class feature rather than a convenience: the reason this app exists
+# is that a GUI tool stopped being maintained and took a release workflow with
+# it. A document that can regenerate its own packaging script is not exposed to
+# that failure again, and the script runs the same packaging step on a CI
+# machine with no GUI session.
 #
 # The document is exported as it stands, valid or not: the generator quotes
 # every value, so nothing in the document can break the emitted shell, and the

@@ -605,7 +605,7 @@ importpkg_apply_payload() {
 
         # The verify block describes what the NEXT build must produce, not what
         # this package happens to contain, so the three assertions a dropped
-        # artifact starts with are what a Mach-O gets here too (design 5.3).
+        # artifact starts with are what a Mach-O gets here too.
         # ARCHITECTURES is the exception and is read for real: asserting
         # x86_64 + arm64 about an arm64-only package would fail every build
         # until someone worked out why.
@@ -969,7 +969,7 @@ import_pkg() {
     version="$(xml_element_attribute "$first_package_info" pkg-info version)"
 
     # auth, the title and the options live on the Distribution, never in
-    # PackageInfo, which always says auth="root" (design section 4). A component
+    # PackageInfo, which always says auth="root". A component
     # package has no Distribution and therefore no recorded auth, so the
     # default stands.
     title=""
@@ -991,10 +991,10 @@ import_pkg() {
 
     identity="$(importpkg_installer_identity "$package_path")"
 
-    # PROJECT.NAME becomes part of a filename and design 4.4 restricts it to
+    # PROJECT.NAME becomes part of a filename and is restricted to
     # [A-Za-z0-9._-]. An installer title is free text - "Python 3.14" - so it is
-    # folded into the allowed set rather than refused, and the package's own file
-    # name is the fallback when there is no title at all.
+    # folded into the allowed set rather than refused, and the package's own
+    # file name is the fallback when there is no title at all.
     project_name="$title"
     [ -n "$project_name" ] || project_name="${package_base%.pkg}"
     # Byte-oriented, deliberately: tr has no notion of UTF-8, so "Cafe Suite"
@@ -1041,9 +1041,9 @@ import_pkg() {
         [ -z "$whole_bundle" ] || install_location="$(/usr/bin/dirname "$whole_bundle")"
 
         # Relocatability is a list, not an attribute. pkgbuild expresses it by
-        # naming the bundles Installer will hunt for, and design 8.2 forces that
-        # list empty; PackageInfo's own relocatable="..." attribute is written by
-        # pkgbuild whatever was asked for, exactly as auth is. So the honest
+        # naming the bundles Installer will hunt for, and the build forces that
+        # list empty; PackageInfo's own relocatable="..." attribute is written
+        # by pkgbuild whatever was asked for, exactly as auth is. So the honest
         # reading is whether the relocate list has anything in it.
         if /usr/bin/grep -q '<relocate/>' "$package_info" 2>/dev/null; then
             relocatable=0
@@ -1098,7 +1098,8 @@ import_pkg() {
 
         # The two safety-relevant flags. overwrite-permissions is written only
         # when the package actually states it, so a package missing the
-        # attribute cannot silently turn design 8.1's protection off.
+        # attribute cannot silently turn the overwrite-permissions protection
+        # off.
         case "$overwrite" in
             true|TRUE|1)   component_set_bool OVERWRITE_PERMISSIONS 1 ;;
             false|FALSE|0) component_set_bool OVERWRITE_PERMISSIONS 0 ;;
@@ -1206,9 +1207,9 @@ import_pkg() {
     # --- the project and the distribution ------------------------------------
     [ -z "$project_name" ] || model_set /PROJECT/NAME "$project_name"
 
-    # A version pkgbuild was never given is written as "0", which passes design
-    # 4.4's pattern and would then be built and shipped. Taken as read, and
-    # named in the log so it is not discovered later.
+    # A version pkgbuild was never given is written as "0", which passes the
+    # version validation pattern and would then be built and shipped. Taken as
+    # read, and named in the log so it is not discovered later.
     [ -z "$version" ] || model_set /PROJECT/VERSION "$version"
     [ -z "$min_os" ] || model_set /PROJECT/MIN_OS_VERSION "$min_os"
 
@@ -1250,7 +1251,7 @@ import_pkg() {
 
     # The output folder is where this package was found, which is where the next
     # one should go. The artifacts folder is the one thing a package cannot tell
-    # us and is deliberately left empty: design 4.3 makes ${ARTIFACTS_DIR} a hard
+    # us and is deliberately left empty: ${ARTIFACTS_DIR} is a hard
     # precondition failure when it is unset, so the build refuses with a clear
     # message rather than resolving the sources to previously installed copies.
     model_set /PROJECT/OUTPUT_DIR "$(store_path "$(/usr/bin/dirname "$package_path")")"
@@ -1265,10 +1266,9 @@ import_pkg() {
         model_set /SIGNING/INSTALLER_IDENTITY "$identity"
     else
         # Faithful to what was read. An unsigned package is a real thing to
-        # import - design 8.3 keeps one out of the output folder but the
-        # intermediate exists - and turning signing on with no identity would
-        # produce a document that fails its preconditions for a reason the user
-        # did not choose.
+        # import, since the output folder never gets one but the intermediate
+        # exists. Turning signing on with no identity would produce a document
+        # that fails its preconditions for a reason the user did not choose.
         model_set_bool /SIGNING/ENABLED 0
     fi
 

@@ -1,11 +1,11 @@
 #!/bin/sh
 # PackageBuilder.step.component.sh - stage the payload and build the component package
 #
-# Pipeline stage 2 of design section 7, run on its own from Actions > Build
-# Component Only. The verify stage before it and the distribution and signing
-# stages after it are not run here; their rail stages are marked skipped so the
-# rail says what did and did not run rather than leaving three gray circles that
-# could be read as pending.
+# Pipeline stage 2, run on its own from Actions > Build Component Only. The
+# verify stage before it and the distribution and signing stages after it are
+# not run here; their rail stages are marked skipped so the rail says what did
+# and did not run rather than leaving three gray circles that could be read as
+# pending.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"
@@ -19,7 +19,7 @@ if build_is_running; then
     exit 0
 fi
 
-# ${DATE} is computed once per build and held for its whole length (design 4.4),
+# ${DATE} is computed once per build and held for its whole length,
 # so a run that crosses midnight cannot name two files two different things.
 PB_BUILD_DATE="$(/bin/date '+%Y-%m-%d')"
 export PB_BUILD_DATE

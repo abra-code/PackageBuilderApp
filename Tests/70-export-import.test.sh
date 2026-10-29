@@ -2,10 +2,9 @@
 # Tests/70-export-import.test.sh - the exported packaging script, and importing
 # a Packages.app project.
 #
-# Ported from Private/harness.sh sections 121 to 133, in the proof of concept's
-# own order: the export block first, with sections 128 to 131 sitting between it
-# and the import block exactly where they are there, because 127, 132 and 133
-# all read the document section 126 produced.
+# The export block comes first, with sections 128 to 131 sitting between it and
+# the import block, because 127, 132 and 133 all read the document section 126
+# produced.
 #
 # Sections 126b and 133c have no counterpart in the proof of concept. They came
 # in with the change that made import_pkgproj read the user's .pkgproj in place
@@ -15,9 +14,9 @@
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 
 section "121. Export Packaging Script writes a script sh accepts"
-# Design section 11: a first-class feature, because the reason this app exists
-# is that a GUI tool stopped being maintained and took a release workflow with
-# it. The handler's own contract: never leave a file behind that sh -n refuses.
+# A first-class feature, because the reason this app exists is that a GUI tool
+# stopped being maintained and took a release workflow with it. The handler's
+# own contract: never leave a file behind that sh -n refuses.
 setup_replay_project
 exported="$OMCTEST_WORK/makepkg.replay.sh"
 /bin/rm -f "$exported"
@@ -71,8 +70,8 @@ check "the pkg-ref follows"      "1"                          "$(/usr/bin/grep -
 section "124. document values with sh syntax in them stay data"
 # The generator single-quotes every value and escapes the XML heredoc, so a
 # title written to break the emitted shell is just a title. This is the export
-# equivalent of design 4.4: textual substitution corrupts silently, so the one
-# test that matters is a value built to exploit it.
+# equivalent of the value-validation rules: textual substitution corrupts
+# silently, so the one test that matters is a value built to exploit it.
 setup_replay_project
 pl set string 'Rock & Roll'\''s $(touch '"$OMCTEST_WORK"'/pwned) `touch '"$OMCTEST_WORK"'/pwned2`' "$(model_file)" /DISTRIBUTION/TITLE
 exported_hostile="$OMCTEST_WORK/makepkg.hostile.sh"
@@ -217,11 +216,11 @@ check "not refused as opaque"    "0"                          "$(/usr/bin/grep -
 # --- Importing a Packages.app project -----------------------------------------
 
 section "126. Import Packages.app Project maps the document across"
-# Design section 10, against a fixture shaped like replay_2.0.pkgproj: the
-# system-tree scaffold with its hidden (-1) nodes, TYPE = 3 payload leaves
-# under different archive directories, integer permissions, and a
-# project-relative readme and build path. plutil builds the XML plist from
-# JSON so the fixture stays readable here.
+# Against a fixture shaped like replay_2.0.pkgproj: the system-tree scaffold
+# with its hidden (-1) nodes, TYPE = 3 payload leaves under different archive
+# directories, integer permissions, and a project-relative readme and build
+# path. plutil builds the XML plist from JSON so the fixture stays readable
+# here.
 reset_state
 omc_object ""
 omc_run PackageBuilder.main.init
@@ -262,8 +261,8 @@ check "version"                  "3.1"                        "$(model /PROJECT/
 check "identifier"               "com.example.pkg.imported"   "$(model /COMPONENTS/0/IDENTIFIER)"
 check "auth 1 becomes Root"      "Root"                       "$(model /COMPONENTS/0/AUTH)"
 check "install location"         "/"                          "$(model /COMPONENTS/0/INSTALL_LOCATION)"
-# The two safety-relevant bools, which must not invert on the way in: design
-# 8.1's overwrite-permissions and 8.2's relocatable.
+# The two safety-relevant bools, which must not invert on the way in:
+# overwrite-permissions and relocatable.
 check "overwrite-permissions"    "false"                      "$(model /COMPONENTS/0/OVERWRITE_PERMISSIONS)"
 check "relocatable"              "false"                      "$(model /COMPONENTS/0/RELOCATABLE)"
 check "three entries, not the scaffold" "3"                   "$(count /COMPONENTS/0/PAYLOAD)"
@@ -488,7 +487,7 @@ check "identifier"               "com.example.pkg.demo"       "$(model /COMPONEN
 check "version"                  "4.2"                        "$(model /PROJECT/VERSION)"
 check "install location"         "/"                          "$(model /COMPONENTS/0/INSTALL_LOCATION)"
 check "title"                    "Demo Suite"                 "$(model /DISTRIBUTION/TITLE)"
-# A title is free text and PROJECT/NAME is a filename component (design 4.4),
+# A title is free text and PROJECT/NAME is a filename component,
 # so the space has to be folded rather than carried into a package file name.
 check "name folded to the safe set" "Demo_Suite"              "$(model /PROJECT/NAME)"
 check "minimum macOS"            "12.3"                       "$(model /PROJECT/MIN_OS_VERSION)"
@@ -497,11 +496,11 @@ check "require-scripts"          "true"                       "$(model /DISTRIBU
 check "one host architecture"    "1"                          "$(count /DISTRIBUTION/HOST_ARCHITECTURES)"
 check "and it is the declared one" "arm64"                    "$(model /DISTRIBUTION/HOST_ARCHITECTURES/0)"
 # auth comes from the Distribution pkg-ref, never PackageInfo, which always
-# says root whatever was asked for (design section 4).
+# says root whatever was asked for.
 check "auth from the pkg-ref"    "Root"                       "$(model /COMPONENTS/0/AUTH)"
-# design 8.1: pkgbuild writes overwrite-permissions="true" and the app patches
-# it to false. This package was built by pkgbuild alone, so it says true, and
-# the import must carry that across rather than substituting the safe default.
+# pkgbuild writes overwrite-permissions="true" and the app patches it to
+# false. This package was built by pkgbuild alone, so it says true, and the
+# import must carry that across rather than substituting the safe default.
 check "overwrite-permissions as built" "true"                 "$(model /COMPONENTS/0/OVERWRITE_PERMISSIONS)"
 check "the document is dirty"    "1"                          "$(dirty)"
 
@@ -539,8 +538,8 @@ check "plain file mode"          "0644"                       "$(payload_field 3
 check "owner"                    "root"                       "$(payload_field 2 OWNER)"
 check "group"                    "wheel"                      "$(payload_field 2 GROUP)"
 # A package cannot carry its sources. They arrive as placeholders and the
-# artifacts folder is deliberately left empty, so design 4.3 makes the build
-# refuse rather than resolving them to previously installed copies.
+# artifacts folder is deliberately left empty, so the build refuses rather
+# than resolving them to previously installed copies.
 check "source is a placeholder"  '${ARTIFACTS_DIR}/tool'      "$(payload_field 2 SOURCE)"
 check "artifacts folder left empty" ""                        "$(model /PROJECT/ARTIFACTS_DIR)"
 check "the log says so"          "1"                          "$(log_says 'placeholder')"
@@ -935,16 +934,17 @@ pbcli import-pkg "$OMCTEST_WORK/pkgin/out/Demo_4.2.pkg" "$OMCTEST_WORK/CliFromPk
 check "it wrote a document"      "1"                          "$([ -f "$OMCTEST_WORK/CliFromPkg.pkgbld" ] && echo 1 || echo 0)"
 check "with the identifier"      "com.example.pkg.demo"       "$(field_of "$OMCTEST_WORK/CliFromPkg.pkgbld" /COMPONENTS/0/IDENTIFIER)"
 check "and the payload"          "4"                          "$(pl get count "$OMCTEST_WORK/CliFromPkg.pkgbld" /COMPONENTS/0/PAYLOAD)"
-# The document is well-formed even though it cannot be built yet: design 4.3
-# makes an unset artifacts folder a precondition failure, not a format error.
+# The document is well-formed even though it cannot be built yet: an unset
+# artifacts folder is a precondition failure, not a format error.
 pbcli validate "$OMCTEST_WORK/CliFromPkg.pkgbld" > "$OMCTEST_WORK/clivalidate.txt" 2>&1
 check "no format errors"         "1"                          "$(/usr/bin/grep -c '0 error(s)' "$OMCTEST_WORK/clivalidate.txt" | /usr/bin/tr -d ' ')"
 check "and says the artifacts folder is unset" "1"            "$(/usr/bin/grep -c 'no artifacts folder is set' "$OMCTEST_WORK/clivalidate.txt" | /usr/bin/tr -d ' ' | /usr/bin/awk '{print ($1 > 0) ? 1 : 0}')"
-# The one warning is design 8.1's, and it is the right one to get: this fixture
-# was built by pkgbuild alone, so it really does say overwrite-permissions="true"
-# and the import carried that across rather than substituting the safe default.
-# An import that quietly "fixed" it would describe a package that was never
-# built, and this check is what would catch that.
+# The one warning is the overwrite-permissions one, and it is the right one to
+# get: this fixture was built by pkgbuild alone, so it really does say
+# overwrite-permissions="true" and the import carried that across rather than
+# substituting the safe default. An import that quietly "fixed" it would
+# describe a package that was never built, and this check is what would catch
+# that.
 check "the safety warning survived the import" "1"            "$(/usr/bin/grep -c 'OVERWRITE_PERMISSIONS is true' "$OMCTEST_WORK/clivalidate.txt" | /usr/bin/tr -d ' ')"
 
 section "142. a two-component document exports a script that builds the same product"
@@ -1074,7 +1074,7 @@ omc_dialog_answer save_as "$exp_reloc"
 omc_run PackageBuilder.export.script
 check "the script was written"   "yes"                        "$([ -f "$exp_reloc" ] && echo yes || echo no)"
 check "and names no PlistBuddy"  "0"                          "$(/usr/bin/grep -c 'PlistBuddy' "$exp_reloc" | /usr/bin/tr -d ' ')"
-# Standalone is the point of the export (design 11): nothing from the app, the
+# Standalone is the point of the export: nothing from the app, the
 # plist edits included, which the in-app build does with plister.
 check "and nothing from the app" "0"                          "$(/usr/bin/grep -c 'plister\|Abracode\|PackageBuilder.app/' "$exp_reloc" | /usr/bin/tr -d ' ')"
 /bin/rm -rf "$OMCTEST_WORK/exported-out"

@@ -69,9 +69,10 @@ rail_reset() { :; }
 # A terminal caller that turned signing off asked for the unsigned package, and
 # the scratch directory holding it goes away when the command exits - so unlike
 # the window, the console copies it out when the document names an output folder.
-# Design 8.3 is kept by the name rather than by the location: the file is
-# "<name>-unsigned.pkg", so nothing that looks like a finished package arrives
-# there unsigned. The path it settled on is recorded for the caller to print.
+# The output folder's signed-only rule is kept by the name rather than by the
+# location: the file is "<name>-unsigned.pkg", so nothing that looks like a
+# finished package arrives there unsigned. The path it settled on is recorded
+# for the caller to print.
 report_unsigned_result() {
     local package_path="$1"
     append_log ""

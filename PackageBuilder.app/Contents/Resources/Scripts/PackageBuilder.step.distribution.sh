@@ -1,10 +1,10 @@
 #!/bin/sh
 # PackageBuilder.step.distribution.sh - wrap the component package in a distribution
 #
-# Pipeline stage 3 of design section 7, run on its own from Actions > Build
-# Distribution Only. It consumes the component package stage 2 produced rather
-# than rebuilding it: "Only" means only, and silently running an earlier stage
-# would make the partial actions indistinguishable from the full build.
+# Pipeline stage 3, run on its own from Actions > Build Distribution Only. It
+# consumes the component package stage 2 produced rather than rebuilding it:
+# "Only" means only, and silently running an earlier stage would make the
+# partial actions indistinguishable from the full build.
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.window.sh"
 source "${OMC_APP_BUNDLE_PATH}/Contents/Resources/Scripts/lib.packagebuilder.build.sh"

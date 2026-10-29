@@ -168,8 +168,6 @@ project's, which is what most projects want. Set it when a part ships on its own
 schedule - macOS records a version per component, so a 1.0 helper tool beside a
 2.4 app is an ordinary installer and nothing complains about it.
 
-See `Private/Design.md` for the full specification and the phasing plan.
-
 ## Inspecting what was built
 
 Actions > Inspect Built Package expands the package into a scratch directory,
@@ -260,7 +258,7 @@ To trace handler execution, `touch /tmp/packagebuilder_debug` and read
 "$AB" test PackageBuilder.app --tests Tests
 ```
 
-Eight files, around 930 checks. They drive the handler scripts under a
+Twelve files, around 1430 checks. They drive the handler scripts under a
 simulated OMC environment and assert on the model file and the window calls the
 handlers produce, so the whole app is testable headlessly.
 

@@ -1,10 +1,9 @@
 #!/bin/sh
 # Tests/20-regressions.test.sh - the lifecycle regression block.
 #
-# Ported from Private/harness.sh sections 18 to 31. These are the defects a
-# review found in the document state machine; each one shipped once and each
-# check is the reproduction. Expected values are the proof of concept's,
-# unchanged.
+# These are the defects a review found in the document state machine; each one
+# shipped once and each check is the reproduction. Expected values are the
+# proof of concept's, unchanged.
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 

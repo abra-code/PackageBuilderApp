@@ -1,14 +1,13 @@
 #!/bin/sh
 # Tests/60-verify.test.sh - the payload verify, and stopping a run.
 #
-# Ported from Private/harness.sh sections 97 to 120. Sections 113 to 120 are the
-# regressions from the phase 4 review.
+# Sections 113 to 120 are the regressions from the phase 4 review.
 #
 # The fixtures make this file unusually honest. A copy of /bin/echo is a
 # genuinely signed Mach-O that genuinely lacks a secure timestamp and a hardened
-# runtime, so the two diagnostics design section 7 cares most about are tested
-# against a real binary in exactly the state an "xcodebuild build" artifact
-# arrives in, rather than against something constructed to fail.
+# runtime, so the two diagnostics that matter most here are tested against a
+# real binary in exactly the state an "xcodebuild build" artifact arrives in,
+# rather than against something constructed to fail.
 . "${OMCTEST_LIB:?set OMCTEST_LIB, or run via: appletbuilder test}"
 . "$OMCTEST_TESTS/lib.test.packagebuilder.sh"
 
@@ -131,7 +130,7 @@ omc_run PackageBuilder.step.verify
 check "a matching version passes" "1"                         "$(log_says 'reports version 2.2')"
 check "verified"                 "1"                          "$(log_says 'Every artifact matches')"
 
-section "106. verify stops at the first problem (design 7)"
+section "106. verify stops at the first problem"
 # The preconditions accumulate so one run reports everything wrong with the
 # document. This stage does not: a verify failure means the artifact on disk is
 # not the artifact the document describes, and the rest of the answers are not
