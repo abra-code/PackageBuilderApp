@@ -11,6 +11,15 @@ wrong.
 Built with [OMC](https://github.com/abracode/OMC) 5.1 and ActionUI. Shell
 handlers only - no embedded interpreter.
 
+## Requirements
+
+| Requirement | Notes |
+|---|---|
+| macOS 14.6 (Sonoma) or later | |
+| Xcode Command Line Tools | Provide `lipo` and `vtool`, which the architecture check, signing a universal artifact and reading a bare executable's minimum macOS rely on. Install with `xcode-select --install`, or install Xcode. `pkgbuild`, `productbuild`, `productsign` and `codesign` come with macOS. |
+| Developer ID Installer certificate | In your keychain, to sign the package. Without one you can still build an unsigned package. |
+| Developer ID Application certificate | Optional. Needed only to sign artifacts that arrive unsigned. |
+
 ## Scope
 
 ```
@@ -142,12 +151,11 @@ that asks the build to stop rather than killing it; `pkgbuild` with the
 generation; `productbuild` and `productsign`; export as a standalone packaging
 script; import of a Packages.app `.pkgproj`; import of a built `.pkg`; and the
 handoff to Notarize.app.
-Beyond the original plan there is an agent CLI at
-`Contents/Resources/Agents/pkgbuilder`, a document format verifier, and a skill.
+There is also an agent CLI at `Contents/Resources/Agents/pkgbuilder`, a document
+format verifier, and a skill.
 
-Phase 5 is now complete: Actions > Inspect Built Package takes the package apart
-and reports what is actually in it, and the two app-wide defaults are
-remembered.
+Actions > Inspect Built Package takes the package apart and reports what is
+actually in it, and the two app-wide defaults are remembered.
 
 A document holds an array of components and builds every one of them: one
 `pkgbuild` run and one Distribution choice each. Most projects need one - with
