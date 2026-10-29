@@ -262,8 +262,9 @@ handlers produce, so the whole app is testable headlessly.
 
 One test is machine-dependent by design: the BOM acceptance check in
 `50-distribution.test.sh` expands a package the app just built and compares it
-against the shipped `replay_2.2.pkg`. It skips itself when that package is not
-on the machine; set `PACKAGEBUILDER_REFERENCE_PKG` to point at a copy.
+against the shipped `replay_2.2.pkg`. It runs only when `PACKAGEBUILDER_REFERENCE_PKG`
+names a copy of that package, skips itself when the variable is not set, and fails
+when the variable names a file that is not there.
 
 ## License
 

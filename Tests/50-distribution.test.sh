@@ -73,11 +73,14 @@ check "missing resource refused" "1"                         "$(log_says 'LICENS
 pl set string "" "$(model_file)" /DISTRIBUTION/RESOURCES/LICENSE
 
 section "80. acceptance: the BOM matches the shipped replay_2.2.pkg"
-# Design 13's acceptance criterion for this phase. Skipped rather than failed
-# when the reference package is not on this machine, so the suite stays usable
-# on a checkout that does not carry replay's distributions.
-reference_pkg="${PACKAGEBUILDER_REFERENCE_PKG:-/Users/tkukielk/Development/replay-Distributions/build/replay_2.2.pkg}"
-if [ -f "$reference_pkg" ]; then
+# Design 13's acceptance criterion for this phase. It needs a copy of the
+# shipped package, named by PACKAGEBUILDER_REFERENCE_PKG: skipped when that is
+# not set, so the suite stays usable on any checkout, and failed when it names
+# a file that is not there, so a mistyped path cannot turn the check off.
+reference_pkg="${PACKAGEBUILDER_REFERENCE_PKG:-}"
+if [ -n "$reference_pkg" ] && [ ! -f "$reference_pkg" ]; then
+    check "PACKAGEBUILDER_REFERENCE_PKG names a file" "yes" "no ($reference_pkg)"
+elif [ -n "$reference_pkg" ]; then
     omc_run PackageBuilder.step.distribution
     /bin/rm -rf "$OMCTEST_WORK/acc-mine" "$OMCTEST_WORK/acc-ref"
     /usr/sbin/pkgutil --expand "$(built_dist)" "$OMCTEST_WORK/acc-mine" >/dev/null 2>&1
@@ -103,7 +106,7 @@ if [ -f "$reference_pkg" ]; then
     check "PackageInfo is non-empty" "yes" "$([ -s "$OMCTEST_WORK/pi-mine.txt" ] && echo yes || echo no)"
     check "PackageInfo attributes"   ""    "$(diff "$OMCTEST_WORK/pi-mine.txt" "$OMCTEST_WORK/pi-ref.txt")"
 else
-    skip_section "section 80: the reference package is not on this machine ($reference_pkg)"
+    skip_section "section 80: set PACKAGEBUILDER_REFERENCE_PKG to a copy of replay_2.2.pkg to run it"
 fi
 
 # --- Signing and the whole pipeline -------------------------------------------
